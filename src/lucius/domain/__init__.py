@@ -1,31 +1,46 @@
 """Domain contracts for Lucius Engineering."""
 
 from lucius.domain.enums import (
+    AcceptanceCriterionStatus,
+    Actor,
+    AllowedAction,
     AuthorityLevel,
+    BlockerCode,
     DetectionStatus,
     Environment,
     KnowledgeScope,
     ProjectStatus,
+    ProjectType,
     RepositoryAccessMode,
     RepositoryAdapterType,
     SnapshotMode,
     TaskComplexity,
+    TaskPriority,
+    TaskRunStatus,
+    TaskStatus,
     ValidationStatus,
 )
 from lucius.domain.ids import ENTITY_PREFIXES, format_public_id
 
 __all__ = [
+    "AcceptanceCriterionStatus",
+    "Actor",
+    "AllowedAction",
     "AuthorityLevel",
+    "BlockerCode",
     "DetectionStatus",
     "ENTITY_PREFIXES",
     "Environment",
     "KnowledgeScope",
     "ProjectStatus",
+    "ProjectType",
     "RepositoryAccessMode",
     "RepositoryAdapterType",
     "SnapshotMode",
     "TaskComplexity",
+    "TaskPriority",
+    "TaskRunStatus",
+    "TaskStatus",
     "ValidationStatus",
     "format_public_id",
 ]
-

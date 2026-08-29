@@ -3,7 +3,9 @@ ENTITY_PREFIXES: dict[str, str] = {
     "repository": "LREPO",
     "snapshot": "LSNAP",
     "task": "LTASK",
+    "task_contract": "LCONTR",
     "task_run": "LRUN",
+    "documentation_completion": "LDOC",
     "evidence": "LEVID",
     "engineering_plan": "LPLAN",
     "memory": "LMEM",
@@ -19,4 +21,3 @@ def format_public_id(entity: str, number: int) -> str:
     if number < 1:
         raise ValueError("Lucius public IDs start at 1")
     return f"{ENTITY_PREFIXES[entity]}_{number:06d}"
-

@@ -19,6 +19,8 @@ Lucius
 ├── Policy / Authority
 ├── Tooling
 ├── Workspace Isolation
+├── Project Registry
+├── Task Contracts
 ├── Audit
 └── Documentation
 
@@ -31,3 +33,22 @@ memory, policies, processes, evaluations, and engineering history.
 
 Phase 1 should build the smallest useful technical Lucius rather than a
 fully autonomous coding agent.
+
+## Phase 1 operational core
+
+Lucius now maintains a deterministic operational layer:
+
+```text
+Project
+  -> RepositoryRegistration(s)
+  -> Task
+     -> TaskContract
+        -> TaskRun
+           -> RepositorySnapshot
+```
+
+Projects are work-management containers. Repositories remain external
+canonical sources and are attached by reference. Tasks capture stable
+engineering intent. TaskContracts define acceptance criteria, authority,
+allowed actions, dependencies, repositories, and documentation requirements.
+TaskRuns preserve execution provenance and may reference repository snapshots.

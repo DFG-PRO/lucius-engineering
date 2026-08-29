@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 — Phase 1.5 Project Registry & Task Contract
+
+- Added Project Registry service with lifecycle transitions and deterministic slugs.
+- Added explicit repository attachment records for projects.
+- Added Task, TaskContract, TaskRun, and documentation completion persistence.
+- Added deterministic TaskContract validation for repositories, authority, dependencies, and documentation targets.
+- Added structured blockers and controlled Task lifecycle transitions.
+- Added TaskRun snapshot binding and actor provenance.
+- Added documentation completion gate before Task completion.
+- Added Alembic migration `0002_project_task_contracts`.
+- Added deterministic tests for Phase 1.5 behavior while preserving Phase 1.4B tests.
+- Added Phase 1.5 implementation documentation and updated architecture/foundation docs.
+
 ## 0.1.0 — Phase 1.4B Repository Core Implementation #1
 
 - Added Python package structure for domain, persistence, repositories, and audit.

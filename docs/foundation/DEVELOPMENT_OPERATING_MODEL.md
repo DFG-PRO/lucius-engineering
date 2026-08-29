@@ -37,6 +37,25 @@ A significant task should define:
 - dependencies
 - documentation requirements
 
+Phase 1.5 persists TaskContracts separately from Tasks. A Task captures
+stable intent; a TaskContract captures executable boundaries, acceptance
+criteria, allowed actions, authority, dependencies, repositories, and
+documentation targets.
+
+## Task lifecycle
+
+Current operational lifecycle:
+
+Draft
+→ Ready
+→ Running
+→ Implementation Complete
+→ Documentation Pending
+→ Complete
+
+Task status changes must go through explicit lifecycle operations. Terminal
+Phase 1.5 states are Complete and Cancelled.
+
 ## Repository reality principle
 
 Current repository state overrides remembered state.

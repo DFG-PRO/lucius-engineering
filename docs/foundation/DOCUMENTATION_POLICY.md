@@ -13,6 +13,15 @@ Capture continuously
 
 No documentation checkpoint means no phase closure.
 
+For persisted Tasks, documentation-required work cannot become complete
+until documentation evidence is recorded.
+
+Required sequence:
+
+Implementation Complete
+→ Documentation Pending
+→ Complete
+
 ## Documentation triggers
 
 Documentation must be reviewed or updated when:

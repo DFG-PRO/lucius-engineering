@@ -48,6 +48,7 @@ This file identifies the canonical Lucius documentation baseline.
 
 - `phases/PHASE_0_FOUNDATION.md`
 - `phases/PHASE_1_4B_REPOSITORY_CORE_IMPLEMENTATION.md`
+- `phases/PHASE_1_5_PROJECT_REGISTRY_TASK_CONTRACT.md`
 
 ## Reference
 
@@ -60,3 +61,5 @@ Phase 0 content: PERSISTED
 Phase 0 closure: PENDING AUDIT + GIT BASELINE COMMIT
 
 Phase 1.4B repository core: IMPLEMENTED
+
+Phase 1.5 project registry and task contract: IMPLEMENTED

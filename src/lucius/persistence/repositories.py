@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucius.domain.enums import (
+    AuthorityLevel,
+    ProjectType,
     ProjectStatus,
     RepositoryAccessMode,
     RepositoryAdapterType,
@@ -42,13 +44,22 @@ class ProjectService:
         self.session = session
 
     def register_project(self, name: str, *, description: str | None = None, actor: str = "system") -> ProjectORM:
-        existing = self.session.scalar(select(ProjectORM).where(ProjectORM.name == name))
+        from lucius.projects.service import slugify_project
+
+        slug = slugify_project(name)
+        existing = self.session.scalar(select(ProjectORM).where(ProjectORM.slug == slug))
         if existing:
             return existing
         project = ProjectORM(
             id=next_id(self.session, "project"),
             name=name,
+            slug=slug,
+            organization=None,
+            project_type=ProjectType.DFG_INTERNAL.value,
             description=description,
+            workspace_scope=None,
+            documentation_policy={},
+            default_authority_level=AuthorityLevel.L0.value,
             status=ProjectStatus.ACTIVE.value,
             created_at=utc_now(),
             updated_at=utc_now(),
@@ -245,4 +256,3 @@ def _same_material_snapshot(
         and bool(latest.is_dirty) == result.git_state.is_dirty
         and latest.dirty_summary == dirty_summary
     )
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,8 +27,14 @@ class ProjectORM(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    organization: Mapped[str | None] = mapped_column(String(255))
+    project_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    workspace_scope: Mapped[str | None] = mapped_column(Text)
+    documentation_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    default_authority_level: Mapped[str] = mapped_column(String(8), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -73,6 +79,93 @@ class RepositorySnapshotORM(Base):
     test_map: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     configuration_map: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     warnings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+
+class ProjectRepositoryAttachmentORM(Base):
+    __tablename__ = "project_repository_attachments"
+    __table_args__ = (
+        UniqueConstraint("project_id", "repository_id", name="uq_project_repository_attachment"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("repository_registrations.id"), nullable=False, index=True)
+    attached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    attached_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class TaskORM(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[str] = mapped_column(String(32), nullable=False)
+    complexity: Mapped[str] = mapped_column(String(8), nullable=False)
+    authority_level: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    blocker_code: Mapped[str | None] = mapped_column(String(64))
+    blocker_message: Mapped[str | None] = mapped_column(Text)
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class TaskContractORM(Base):
+    __tablename__ = "task_contracts"
+    __table_args__ = (
+        UniqueConstraint("task_id", "version", name="uq_task_contract_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    acceptance_criteria: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    constraints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    repository_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    allowed_actions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    allowed_tools: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    environment: Mapped[str] = mapped_column(String(32), nullable=False)
+    authority_level: Mapped[str] = mapped_column(String(8), nullable=False)
+    dependencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    documentation_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    documentation_targets: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    stop_conditions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class TaskRunORM(Base):
+    __tablename__ = "task_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    snapshot_id: Mapped[str | None] = mapped_column(ForeignKey("repository_snapshots.id"), index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_provider: Mapped[str | None] = mapped_column(String(255))
+    model_name: Mapped[str | None] = mapped_column(String(255))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    input_summary: Mapped[str | None] = mapped_column(Text)
+    output_summary: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class DocumentationCompletionORM(Base):
+    __tablename__ = "documentation_completions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, unique=True, index=True)
+    targets_completed: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    completed_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class AuditEventORM(Base):

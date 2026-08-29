@@ -6,13 +6,18 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from lucius.domain.enums import (
+    Actor,
     AuthorityLevel,
     KnowledgeScope,
     ProjectStatus,
+    ProjectType,
     RepositoryAccessMode,
     RepositoryAdapterType,
     SnapshotMode,
     TaskComplexity,
+    TaskPriority,
+    TaskRunStatus,
+    TaskStatus,
     ValidationStatus,
 )
 
@@ -24,8 +29,14 @@ class LuciusModel(BaseModel):
 class Project(LuciusModel):
     id: str
     name: str
+    slug: str
+    organization: str | None = None
+    project_type: ProjectType = ProjectType.DFG_INTERNAL
     status: ProjectStatus = ProjectStatus.ACTIVE
     description: str | None = None
+    workspace_scope: str | None = None
+    documentation_policy: dict[str, Any] = Field(default_factory=dict)
+    default_authority_level: AuthorityLevel = AuthorityLevel.L0
     created_at: datetime
     updated_at: datetime
 
@@ -65,13 +76,53 @@ class Task(LuciusModel):
     id: str
     project_id: str
     title: str
+    objective: str
+    priority: TaskPriority = TaskPriority.NORMAL
     complexity: TaskComplexity = TaskComplexity.T0
+    authority_level: AuthorityLevel = AuthorityLevel.L0
+    status: TaskStatus = TaskStatus.DRAFT
+    created_by: Actor = Actor.SYSTEM
+    blocker_code: str | None = None
+    blocker_message: str | None = None
+    blocked_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskContract(LuciusModel):
+    id: str
+    task_id: str
+    version: int
+    objective: str
+    acceptance_criteria: list[dict[str, Any]]
+    constraints: list[str] = Field(default_factory=list)
+    repository_ids: list[str] = Field(default_factory=list)
+    allowed_actions: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
+    environment: str
+    authority_level: AuthorityLevel
+    dependencies: list[str] = Field(default_factory=list)
+    documentation_required: bool = False
+    documentation_targets: list[str] = Field(default_factory=list)
+    stop_conditions: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
 
 class TaskRun(LuciusModel):
     id: str
     task_id: str
-    status: str
+    snapshot_id: str | None = None
+    status: TaskRunStatus
+    actor: Actor
+    model_provider: str | None = None
+    model_name: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    input_summary: str | None = None
+    output_summary: str | None = None
+    confidence: float | None = None
+    failure_reason: str | None = None
 
 
 class EvidenceReference(LuciusModel):
@@ -120,4 +171,3 @@ class AuditEvent(LuciusModel):
     result: str
     timestamp: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
-
