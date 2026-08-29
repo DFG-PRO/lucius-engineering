@@ -1,6 +1,6 @@
 # Documentation Index
 
-This file identifies the canonical Phase 0 documentation baseline.
+This file identifies the canonical Lucius documentation baseline.
 
 ## Foundation
 
@@ -39,10 +39,15 @@ This file identifies the canonical Phase 0 documentation baseline.
 - `adr/ADR-016-portable-knowledge.md`
 - `adr/ADR-017-continuous-evaluation.md`
 - `adr/ADR-018-versioned-human-corrections.md`
+- `adr/ADR-019-external-repository-ownership.md`
+- `adr/ADR-020-specification-driven-autonomous-development.md`
+- `adr/ADR-021-project-documentation-stewardship.md`
+- `adr/ADR-022-documentation-as-learning-source.md`
 
 ## Phase reports
 
 - `phases/PHASE_0_FOUNDATION.md`
+- `phases/PHASE_1_4B_REPOSITORY_CORE_IMPLEMENTATION.md`
 
 ## Reference
 
@@ -53,3 +58,5 @@ This file identifies the canonical Phase 0 documentation baseline.
 Phase 0 content: PERSISTED
 
 Phase 0 closure: PENDING AUDIT + GIT BASELINE COMMIT
+
+Phase 1.4B repository core: IMPLEMENTED

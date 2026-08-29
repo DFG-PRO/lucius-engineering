@@ -2,3 +2,10 @@
 ._*
 .AppleDouble
 .LSOverride
+
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3
+lucius.sqlite3
