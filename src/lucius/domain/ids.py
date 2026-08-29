@@ -13,6 +13,9 @@ ENTITY_PREFIXES: dict[str, str] = {
     "learning": "LLEARN",
     "evaluation": "LEVAL",
     "audit": "LAUDIT",
+    "model_provider": "LMPROV",
+    "model_profile": "LMPROF",
+    "model_execution": "LMEXEC",
 }
 
 

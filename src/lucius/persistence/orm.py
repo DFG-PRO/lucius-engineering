@@ -247,6 +247,79 @@ class LearningCandidateORM(Base):
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class ModelProviderORM(Base):
+    __tablename__ = "model_providers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    supports_local: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_timeout: Mapped[int | None] = mapped_column(Integer)
+    secret_reference_name: Mapped[str | None] = mapped_column(String(255))
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ModelProfileORM(Base):
+    __tablename__ = "model_profiles"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "model_name", name="uq_model_profile_provider_model"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(ForeignKey("model_providers.id"), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    privacy_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    cost_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    quality_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    supports_structured_output: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_tool_use: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_large_context: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_code: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_reasoning: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    max_context_tokens: Mapped[int | None] = mapped_column(Integer)
+    max_output_tokens: Mapped[int | None] = mapped_column(Integer)
+    input_cost_per_million: Mapped[float | None] = mapped_column(Float)
+    output_cost_per_million: Mapped[float | None] = mapped_column(Float)
+    profile_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ModelExecutionORM(Base):
+    __tablename__ = "model_executions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    task_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    provider_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    provider: Mapped[str | None] = mapped_column(String(255))
+    model_profile_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    model: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    privacy_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    routing_decision: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[float | None] = mapped_column(Float)
+    cost_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 

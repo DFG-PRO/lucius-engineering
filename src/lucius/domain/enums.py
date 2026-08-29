@@ -210,3 +210,69 @@ class SnapshotMode(StrEnum):
     FAST = "FAST"
     STANDARD = "STANDARD"
     DEEP = "DEEP"
+
+
+class ProviderType(StrEnum):
+    LOCAL = "LOCAL"
+    OPENAI = "OPENAI"
+    ANTHROPIC = "ANTHROPIC"
+    GOOGLE = "GOOGLE"
+    CUSTOM = "CUSTOM"
+
+
+class ProviderStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    DISABLED = "DISABLED"
+
+
+class ModelProfileStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    DISABLED = "DISABLED"
+
+
+class ModelCapability(StrEnum):
+    TEXT_GENERATION = "TEXT_GENERATION"
+    STRUCTURED_OUTPUT = "STRUCTURED_OUTPUT"
+    CODE_REASONING = "CODE_REASONING"
+    CODE_GENERATION = "CODE_GENERATION"
+    PLANNING = "PLANNING"
+    SUMMARIZATION = "SUMMARIZATION"
+    CLASSIFICATION = "CLASSIFICATION"
+    LONG_CONTEXT = "LONG_CONTEXT"
+    TOOL_USE = "TOOL_USE"
+    HIGH_REASONING = "HIGH_REASONING"
+    PRIVATE_INFERENCE = "PRIVATE_INFERENCE"
+
+
+class PrivacyClass(StrEnum):
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+
+
+class CostClass(StrEnum):
+    FREE = "FREE"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    PREMIUM = "PREMIUM"
+
+
+class LatencyClass(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class ModelResponseStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ModelCostSource(StrEnum):
+    REPORTED = "REPORTED"
+    ESTIMATED = "ESTIMATED"
+    UNKNOWN = "UNKNOWN"

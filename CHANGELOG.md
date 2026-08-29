@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — Phase 1.8 Model Gateway & Capability Routing
+
+- Added provider-independent model provider/profile registration.
+- Added deterministic capability routing with privacy, cost, quality, context, provider status, model status, preference, and tie-breaking rules.
+- Added provider adapter contracts and a deterministic MockProvider for offline tests.
+- Added gateway execution with structured response validation, explicit fallback, provenance, usage, cost, latency, and failure classification.
+- Added persisted model providers, profiles, and execution records through Alembic migration `0005_model_gateway`.
+- Added model audit events that avoid raw prompt/response and secret persistence.
+- Added model-inference documentation to keep responses separate from evidence and memory.
+- Added ADR-025 and Phase 1.8 implementation documentation.
+
 ## 0.4.0 — Phase 1.7 Memory v0.1
 
 - Added persisted MemoryEntries with type, scope, project, provenance,

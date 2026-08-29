@@ -45,6 +45,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `adr/ADR-022-documentation-as-learning-source.md`
 - `adr/ADR-023-evidence-bound-engineering-reasoning.md`
 - `adr/ADR-024-repository-reality-overrides-engineering-memory.md`
+- `adr/ADR-025-continuous-universe-improvement-loop.md`
 
 ## Phase reports
 
@@ -53,6 +54,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_5_PROJECT_REGISTRY_TASK_CONTRACT.md`
 - `phases/PHASE_1_6_EVIDENCE_RETRIEVAL.md`
 - `phases/PHASE_1_7_MEMORY_V0_1.md`
+- `phases/PHASE_1_8_MODEL_GATEWAY.md`
 
 ## Reference
 
@@ -71,3 +73,5 @@ Phase 1.5 project registry and task contract: IMPLEMENTED
 Phase 1.6 evidence and retrieval: IMPLEMENTED
 
 Phase 1.7 memory v0.1: IMPLEMENTED
+
+Phase 1.8 model gateway and capability routing: IMPLEMENTED
