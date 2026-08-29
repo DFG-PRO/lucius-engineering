@@ -168,6 +168,27 @@ class DocumentationCompletionORM(Base):
     completed_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class EvidenceReferenceORM(Base):
+    __tablename__ = "evidence_references"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("repository_registrations.id"), nullable=False, index=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("repository_snapshots.id"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    task_run_id: Mapped[str | None] = mapped_column(ForeignKey("task_runs.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    line_start: Mapped[int | None] = mapped_column(Integer)
+    line_end: Mapped[int | None] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    snippet: Mapped[str | None] = mapped_column(Text)
+    claim: Mapped[str | None] = mapped_column(Text)
+    relevance_score: Mapped[float] = mapped_column(Float, nullable=False)
+    match_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 

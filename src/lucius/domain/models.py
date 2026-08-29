@@ -14,6 +14,7 @@ from lucius.domain.enums import (
     RepositoryAccessMode,
     RepositoryAdapterType,
     SnapshotMode,
+    SourceType,
     TaskComplexity,
     TaskPriority,
     TaskRunStatus,
@@ -128,8 +129,20 @@ class TaskRun(LuciusModel):
 class EvidenceReference(LuciusModel):
     id: str
     project_id: str
-    source: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    repository_id: str
+    snapshot_id: str
+    task_id: str
+    task_run_id: str | None = None
+    source_type: SourceType
+    path: str
+    line_start: int | None = None
+    line_end: int | None = None
+    content_hash: str
+    snippet: str | None = None
+    claim: str | None = None
+    relevance_score: float
+    match_reasons: list[str] = Field(default_factory=list)
+    captured_at: datetime
 
 
 class EngineeringPlan(LuciusModel):

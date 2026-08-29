@@ -5,6 +5,7 @@ ENTITY_PREFIXES: dict[str, str] = {
     "task": "LTASK",
     "task_contract": "LCONTR",
     "task_run": "LRUN",
+    "context_package": "LCTX",
     "documentation_completion": "LDOC",
     "evidence": "LEVID",
     "engineering_plan": "LPLAN",

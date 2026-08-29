@@ -43,12 +43,14 @@ This file identifies the canonical Lucius documentation baseline.
 - `adr/ADR-020-specification-driven-autonomous-development.md`
 - `adr/ADR-021-project-documentation-stewardship.md`
 - `adr/ADR-022-documentation-as-learning-source.md`
+- `adr/ADR-023-evidence-bound-engineering-reasoning.md`
 
 ## Phase reports
 
 - `phases/PHASE_0_FOUNDATION.md`
 - `phases/PHASE_1_4B_REPOSITORY_CORE_IMPLEMENTATION.md`
 - `phases/PHASE_1_5_PROJECT_REGISTRY_TASK_CONTRACT.md`
+- `phases/PHASE_1_6_EVIDENCE_RETRIEVAL.md`
 
 ## Reference
 
@@ -63,3 +65,5 @@ Phase 0 closure: PENDING AUDIT + GIT BASELINE COMMIT
 Phase 1.4B repository core: IMPLEMENTED
 
 Phase 1.5 project registry and task contract: IMPLEMENTED
+
+Phase 1.6 evidence and retrieval: IMPLEMENTED

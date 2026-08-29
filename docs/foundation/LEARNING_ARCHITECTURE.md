@@ -29,6 +29,12 @@ Experience is not automatically truth.
 A successful execution is evidence, but not sufficient proof that a pattern
 should become a permanent engineering rule.
 
+## EvidenceReferences
+
+Phase 1.6 introduces persisted EvidenceReferences as repository-bound
+provenance records. They may later support learning and evaluation, but they
+are not automatically promoted into memory or validated knowledge.
+
 ## Corrections
 
 Human corrections must be versioned and traceable rather than silently

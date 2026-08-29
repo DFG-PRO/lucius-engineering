@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — Phase 1.6 Evidence & Retrieval v0.1
+
+- Added deterministic retrieval request construction and query-term derivation.
+- Added repository candidate discovery for code, documentation, tests, config, and Git state.
+- Added explainable ranking with explicit lexical weights and deterministic tie-breaking.
+- Added persisted EvidenceReferences with repository, snapshot, task, path, hash, snippet, score, and reasons.
+- Added evidence staleness checks for current, changed, and missing sources.
+- Added TechnicalContextPackage runtime objects with context budgets and coverage summaries.
+- Added security exclusions for sensitive, private-key, binary, oversized, traversal, and symlink-escape cases.
+- Added retrieval/evidence audit events.
+- Added Alembic migration `0003_evidence_retrieval`.
+- Added retrieval benchmark fixture for snapshot reuse understanding.
+- Added ADR-023 and Phase 1.6 implementation documentation.
+
 ## 0.2.0 — Phase 1.5 Project Registry & Task Contract
 
 - Added Project Registry service with lifecycle transitions and deterministic slugs.

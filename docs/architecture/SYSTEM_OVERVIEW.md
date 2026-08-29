@@ -45,6 +45,8 @@ Project
      -> TaskContract
         -> TaskRun
            -> RepositorySnapshot
+              -> EvidenceReference(s)
+              -> TechnicalContextPackage
 ```
 
 Projects are work-management containers. Repositories remain external
@@ -52,3 +54,8 @@ canonical sources and are attached by reference. Tasks capture stable
 engineering intent. TaskContracts define acceptance criteria, authority,
 allowed actions, dependencies, repositories, and documentation requirements.
 TaskRuns preserve execution provenance and may reference repository snapshots.
+
+Phase 1.6 adds deterministic retrieval. Retrieval binds to explicit
+RepositorySnapshots, ranks candidate sources with explainable lexical
+signals, captures immutable EvidenceReferences, and packages bounded technical
+context for future planning layers.

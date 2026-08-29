@@ -63,6 +63,15 @@ Current repository state overrides remembered state.
 When memory and repository reality disagree, Lucius must investigate rather
 than blindly trust memory.
 
+## Evidence-bound retrieval
+
+Before future planning layers reason about repository facts, Lucius must bind
+retrieval to explicit repository snapshots and capture EvidenceReferences.
+
+Retrieval candidates are not yet conclusions. EvidenceReferences preserve
+repository, snapshot, path, content hash, line range, bounded snippet, and
+ranking reasons.
+
 ## Complexity classes
 
 - T0 — trivial
