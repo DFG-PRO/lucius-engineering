@@ -45,3 +45,9 @@ Public or explicitly authorized reusable knowledge.
 
 Project experience must pass classification, sanitization, and review before
 being promoted outside its original scope.
+
+Phase 1.7 enforces this at the memory boundary. Client project knowledge and
+client-scoped memory are PRIVATE by default. Private knowledge cannot be
+promoted globally. Reusable global knowledge requires provenance, validation,
+non-private classification, completed sanitization where required, and an
+explicit HUMAN or SYSTEM promotion actor.

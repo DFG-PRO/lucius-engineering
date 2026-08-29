@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 — Phase 1.7 Memory v0.1
+
+- Added persisted MemoryEntries with type, scope, project, provenance,
+  confidence, validation status, tags, revalidation, and supersession fields.
+- Added persisted LearningCandidates with provenance, lifecycle state,
+  proposed scope, source classification, and sanitization status.
+- Added deterministic memory retrieval by scope, project, type, status, tags,
+  and query terms.
+- Added supersession, contradiction, deprecation, and revalidation handling
+  without erasing memory history.
+- Added documentation-derived learning candidates, failure memory capture, and
+  human correction candidates.
+- Added a baseline Knowledge Firewall for private, abstractable, and
+  globally safe knowledge with explicit global promotion rules.
+- Added memory and learning audit events.
+- Added Alembic migration `0004_memory_learning`.
+- Added ADR-024 and Phase 1.7 implementation documentation.
+
 ## 0.3.0 — Phase 1.6 Evidence & Retrieval v0.1
 
 - Added deterministic retrieval request construction and query-term derivation.

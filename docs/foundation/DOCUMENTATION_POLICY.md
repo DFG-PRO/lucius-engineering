@@ -52,3 +52,10 @@ Where applicable:
 - rollback information
 - learning candidates
 - next steps
+
+## Documentation-derived learning
+
+Documentation may be used as an explicit source for LearningCandidates.
+Documentation-derived candidates must preserve source document references and
+remain pending until reviewed. They are not automatically promoted into memory
+or global knowledge.

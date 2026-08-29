@@ -59,3 +59,16 @@ Phase 1.6 adds deterministic retrieval. Retrieval binds to explicit
 RepositorySnapshots, ranks candidate sources with explainable lexical
 signals, captures immutable EvidenceReferences, and packages bounded technical
 context for future planning layers.
+
+Phase 1.7 adds controlled engineering memory:
+
+```text
+EvidenceReference / TaskRun / Documentation / Human Correction / Failure
+  -> MemoryEntry or LearningCandidate
+  -> validation, revalidation, supersession, or explicit promotion
+```
+
+Memory is context, not repository authority. Repository snapshots and current
+EvidenceReferences remain the basis for repository-grounded claims. Memory may
+be ranked and reused only within its scope, validation status, provenance, and
+Knowledge Firewall constraints.

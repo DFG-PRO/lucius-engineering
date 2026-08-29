@@ -51,3 +51,11 @@ Special audit attention is required for:
 - production access
 - deployment
 - destructive operations
+
+## Memory safety
+
+Long-term memory must not become a bypass around workspace isolation, evidence
+freshness, or authority controls. Phase 1.7 therefore blocks autonomous global
+promotion, requires provenance for validated memory, requires evidence IDs for
+validated global memory, and marks memory for revalidation when source evidence
+becomes stale or missing.

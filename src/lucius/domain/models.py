@@ -9,6 +9,10 @@ from lucius.domain.enums import (
     Actor,
     AuthorityLevel,
     KnowledgeScope,
+    LearningCandidateStatus,
+    LearningCandidateType,
+    MemorySourceType,
+    MemoryType,
     ProjectStatus,
     ProjectType,
     RepositoryAccessMode,
@@ -154,15 +158,55 @@ class EngineeringPlan(LuciusModel):
 
 class MemoryEntry(LuciusModel):
     id: str
+    project_id: str | None = None
+    organization_id: str | None = None
+    workspace_id: str | None = None
+    memory_type: MemoryType
     scope: KnowledgeScope
-    content_ref: str
+    statement: str
+    source_type: MemorySourceType | None = None
+    source_reference: str | None = None
+    source_project_id: str | None = None
+    source_task_id: str | None = None
+    source_run_id: str | None = None
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float
     validation_status: ValidationStatus
+    context_tags: list[str] = Field(default_factory=list)
+    technology_tags: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    validated_at: datetime | None = None
+    supersedes_id: str | None = None
+    superseded_by_id: str | None = None
+    supersession_reason: str | None = None
+    requires_revalidation: bool = False
+    revalidation_reason: str | None = None
+    created_by: Actor
+    version: int = 1
 
 
 class LearningCandidate(LuciusModel):
     id: str
-    source_ref: str
-    validation_status: ValidationStatus = ValidationStatus.CANDIDATE
+    project_id: str | None = None
+    run_id: str | None = None
+    task_id: str | None = None
+    candidate_type: LearningCandidateType
+    statement: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    source_memory_ids: list[str] = Field(default_factory=list)
+    source_document_refs: list[str] = Field(default_factory=list)
+    confidence: float
+    status: LearningCandidateStatus
+    proposed_scope: KnowledgeScope
+    sanitization_status: str
+    created_at: datetime
+    updated_at: datetime
+    validated_at: datetime | None = None
+    rejected_at: datetime | None = None
+    validation_notes: str | None = None
+    rejection_reason: str | None = None
+    actor: Actor
 
 
 class EvaluationRun(LuciusModel):
