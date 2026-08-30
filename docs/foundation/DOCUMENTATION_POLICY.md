@@ -59,3 +59,10 @@ Documentation may be used as an explicit source for LearningCandidates.
 Documentation-derived candidates must preserve source document references and
 remain pending until reviewed. They are not automatically promoted into memory
 or global knowledge.
+
+## Planning documentation
+
+Phase 1.9 EngineeringPlans include documentation requirements mapped from
+TaskContract policy and planner output. Documentation recommendations remain
+requirements to satisfy during later implementation phases, not proof that
+documentation has already been completed.

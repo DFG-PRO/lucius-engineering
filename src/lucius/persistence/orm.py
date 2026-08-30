@@ -320,6 +320,50 @@ class ModelExecutionORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
+class EngineeringPlanORM(Base):
+    __tablename__ = "engineering_plans"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    task_contract_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    task_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    required_authority_level: Mapped[str] = mapped_column(String(8), nullable=False)
+    repository_snapshot_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    memory_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    model_execution_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    assumptions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    unknowns: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    open_questions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    affected_components: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    affected_files: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    acceptance_coverage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    test_strategy: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    documentation_requirements: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    rollback_considerations: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    dependencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    risks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    estimated_scope: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    validation_warnings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    blockers: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    planner_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    supersedes_plan_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    superseded_by_plan_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    supersession_reason: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 

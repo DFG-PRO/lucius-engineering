@@ -23,6 +23,17 @@ Future Engineering Planner work must distinguish:
 - retrieved candidate
 - captured evidence
 - derived inference
+- historical memory
+- explicit assumptions
+- explicit unknowns
+
+Phase 1.9 implements this decision for persisted EngineeringPlans. Every plan
+must preserve version-bound provenance to its Task, TaskContract,
+RepositorySnapshots, EvidenceReferences, MemoryEntries, and ModelExecution.
+
+Repository evidence overrides conflicting memory. Inference must never
+masquerade as evidence, and memory must never be represented as current
+repository reality.
 
 ## Consequences
 
@@ -34,6 +45,5 @@ evidence must be captured rather than rewriting old evidence.
 
 ## Review
 
-This ADR should be reviewed when Engineering Planner and inference layers are
-implemented.
-
+This ADR was reviewed and extended during Phase 1.9 when the first Engineering
+Planner and inference persistence layer were implemented.

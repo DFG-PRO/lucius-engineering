@@ -55,6 +55,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_6_EVIDENCE_RETRIEVAL.md`
 - `phases/PHASE_1_7_MEMORY_V0_1.md`
 - `phases/PHASE_1_8_MODEL_GATEWAY.md`
+- `phases/PHASE_1_9_ENGINEERING_PLANNER.md`
 
 ## Reference
 
@@ -75,3 +76,5 @@ Phase 1.6 evidence and retrieval: IMPLEMENTED
 Phase 1.7 memory v0.1: IMPLEMENTED
 
 Phase 1.8 model gateway and capability routing: IMPLEMENTED
+
+Phase 1.9 engineering planner v0.1: IMPLEMENTED

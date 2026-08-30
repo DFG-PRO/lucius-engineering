@@ -50,3 +50,10 @@ Examples:
 
 High autonomy inside controlled environments.
 Restricted authority outside them.
+
+## Planning authority
+
+Phase 1.9 EngineeringPlans estimate required authority before execution. If a
+proposed plan requires authority above the TaskContract, Lucius surfaces
+`AUTHORITY_ESCALATION_REQUIRED`. The plan may be useful, but it is not
+executable or approved by default.

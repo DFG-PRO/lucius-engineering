@@ -102,6 +102,10 @@ default.
 Memory retrieval does not replace evidence retrieval. When repository reality
 matters, Lucius must retrieve or validate current EvidenceReferences.
 
+Phase 1.9 PlanningContext uses memory as scoped historical context. If memory
+conflicts with current repository evidence, evidence wins and the memory can be
+marked for revalidation.
+
 ## History
 
 Memory is not silently overwritten. Older entries are preserved through:

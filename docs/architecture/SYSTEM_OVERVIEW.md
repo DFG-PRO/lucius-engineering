@@ -72,3 +72,21 @@ Memory is context, not repository authority. Repository snapshots and current
 EvidenceReferences remain the basis for repository-grounded claims. Memory may
 be ranked and reused only within its scope, validation status, provenance, and
 Knowledge Firewall constraints.
+
+Phase 1.8 adds provider-independent model routing. Models are replaceable
+execution resources selected through ModelGateway by capability, privacy, cost,
+quality, context, and policy.
+
+Phase 1.9 adds evidence-bound planning:
+
+```text
+Task + TaskContract + RepositorySnapshot
+  -> EvidenceReference(s) + MemoryEntry(s)
+  -> PlanningContext
+  -> ModelGateway structured inference
+  -> validated EngineeringPlan
+```
+
+EngineeringPlans are proposed, versioned, and provenance-bound. They preserve
+the distinction between repository evidence, memory, model inference,
+assumptions, and unknowns. They do not execute repository changes.

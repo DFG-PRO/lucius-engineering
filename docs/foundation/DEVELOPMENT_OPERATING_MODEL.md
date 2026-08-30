@@ -127,3 +127,13 @@ Potential resource classes:
 - general cloud model
 - advanced coding model
 - human
+
+## Evidence-bound planning
+
+Phase 1.9 introduces proposed EngineeringPlans. Planning consumes a bounded
+PlanningContext, invokes a compliant planning model through ModelGateway, and
+validates references, acceptance coverage, risk, authority, assumptions,
+unknowns, tests, and documentation before persistence.
+
+Planning is not execution. Phase 1.9 plans do not modify repositories, approve
+critical work, deploy, commit, or create pull requests.

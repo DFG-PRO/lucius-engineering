@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 — Phase 1.9 Engineering Planner v0.1
+
+- Added evidence-bound PlanningContext construction over Tasks, TaskContracts, RepositorySnapshots, EvidenceReferences, and MemoryEntries.
+- Added ModelGateway-backed EngineeringPlannerService with structured plan output validation.
+- Added persisted, versioned EngineeringPlans with evidence, memory, model execution, task contract, snapshot, risk, authority, and audit provenance.
+- Added deterministic validation for references, acceptance coverage, support status, affected-file classification, risk floors, authority floors, assumptions, and unknowns.
+- Added explicit replanning, supersession, and rejection support without overwriting plan history.
+- Added memory/evidence conflict surfacing where current repository evidence wins and stale memory is marked for revalidation.
+- Added Alembic migration `0006_engineering_planner`.
+- Added deterministic Phase 1.9 planner fixtures and tests.
+- Added Phase 1.9 documentation and extended ADR-023 for persisted evidence-bound planning.
+
 ## 0.5.0 — Phase 1.8 Model Gateway & Capability Routing
 
 - Added provider-independent model provider/profile registration.
