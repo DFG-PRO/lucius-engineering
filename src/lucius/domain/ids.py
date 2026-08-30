@@ -16,6 +16,10 @@ ENTITY_PREFIXES: dict[str, str] = {
     "model_provider": "LMPROV",
     "model_profile": "LMPROF",
     "model_execution": "LMEXEC",
+    "evaluation_suite": "LESUITE",
+    "evaluation_case": "LCASE",
+    "evaluation_run": "LERUN",
+    "evaluation_case_result": "LERES",
 }
 
 

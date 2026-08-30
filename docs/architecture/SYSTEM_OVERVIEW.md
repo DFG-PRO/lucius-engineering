@@ -90,3 +90,17 @@ Task + TaskContract + RepositorySnapshot
 EngineeringPlans are proposed, versioned, and provenance-bound. They preserve
 the distinction between repository evidence, memory, model inference,
 assumptions, and unknowns. They do not execute repository changes.
+
+Phase 1.10 adds deterministic evaluation:
+
+```text
+Golden Engineering Case
+  -> EvaluationSuite
+  -> Lucius target output
+  -> deterministic evaluators
+  -> hard gates + weighted score
+  -> EvaluationRun + report
+```
+
+Evaluations judge engineering quality and safety. They complement tests but do
+not replace them.

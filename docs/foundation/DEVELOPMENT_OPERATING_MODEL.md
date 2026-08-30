@@ -137,3 +137,9 @@ unknowns, tests, and documentation before persistence.
 
 Planning is not execution. Phase 1.9 plans do not modify repositories, approve
 critical work, deploy, commit, or create pull requests.
+
+## Evaluation gate
+
+Phase 1.10 requires versioned engineering evaluations before any future
+increase in autonomy. Passing implementation tests alone is insufficient for
+repository writes, execution, or stewardship authority.

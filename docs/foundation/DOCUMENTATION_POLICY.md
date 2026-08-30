@@ -66,3 +66,7 @@ Phase 1.9 EngineeringPlans include documentation requirements mapped from
 TaskContract policy and planner output. Documentation recommendations remain
 requirements to satisfy during later implementation phases, not proof that
 documentation has already been completed.
+
+Phase 1.10 benchmark documentation is part of the phase definition of done.
+Golden Engineering Cases must document rationale, protected failure, ground
+truth, flexible expectations, hard failures, and scored behavior.

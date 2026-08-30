@@ -364,6 +364,88 @@ class EngineeringPlanORM(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
+class EvaluationSuiteORM(Base):
+    __tablename__ = "evaluation_suites"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_evaluation_suite_name_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    case_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    scoring_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    hard_gate_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    baseline_run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class EvaluationCaseORM(Base):
+    __tablename__ = "evaluation_cases"
+    __table_args__ = (
+        UniqueConstraint("suite_id", "name", "version", name="uq_evaluation_case_suite_name_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    suite_id: Mapped[str] = mapped_column(ForeignKey("evaluation_suites.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    definition: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    difficulty: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class EvaluationRunORM(Base):
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    suite_id: Mapped[str] = mapped_column(ForeignKey("evaluation_suites.id"), nullable=False, index=True)
+    suite_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_version: Mapped[str | None] = mapped_column(String(64))
+    target_commit_sha: Mapped[str | None] = mapped_column(String(64))
+    target_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    planner_version: Mapped[str | None] = mapped_column(String(32))
+    model_provider: Mapped[str | None] = mapped_column(String(255))
+    model_profile: Mapped[str | None] = mapped_column(String(255))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    aggregate_score: Mapped[float | None] = mapped_column(Float)
+    hard_gate_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    release_decision: Mapped[str | None] = mapped_column(String(64))
+    baseline_run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    environment_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    regressions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    machine_report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    markdown_report: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class EvaluationCaseResultORM(Base):
+    __tablename__ = "evaluation_case_results"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("evaluation_runs.id"), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("evaluation_cases.id"), nullable=False, index=True)
+    case_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    metric_results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    weighted_score: Mapped[float] = mapped_column(Float, nullable=False)
+    hard_gate_passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    hard_gate_failures: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    observations: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    regressions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    actual_artifact_reference: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 

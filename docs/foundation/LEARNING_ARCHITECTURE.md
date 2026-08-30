@@ -42,6 +42,10 @@ Plans may reference EvidenceReferences and MemoryEntries, but they are not
 themselves evidence or validated memory. Future learning from plans must pass
 through explicit evaluation and promotion steps.
 
+Phase 1.10 introduces EvaluationRuns and Golden Engineering Cases as durable
+feedback artifacts. They can later feed learning, but benchmark outcomes are
+not automatically promoted into permanent knowledge.
+
 ## Phase 1.7 Learning Candidates
 
 LearningCandidates are now persisted as explicit, reviewable records. They may

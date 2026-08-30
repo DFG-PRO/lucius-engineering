@@ -18,6 +18,10 @@ This file identifies the canonical Lucius documentation baseline.
 
 - `architecture/SYSTEM_OVERVIEW.md`
 
+## Evaluation
+
+- `evaluation/LUCIUS_CORE_BENCH_V0_1.md`
+
 ## Decisions
 
 - `decisions/PHASE_0_DECISION_REGISTER.md`
@@ -46,6 +50,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `adr/ADR-023-evidence-bound-engineering-reasoning.md`
 - `adr/ADR-024-repository-reality-overrides-engineering-memory.md`
 - `adr/ADR-025-continuous-universe-improvement-loop.md`
+- `adr/ADR-026-evaluation-before-engineering-autonomy.md`
 
 ## Phase reports
 
@@ -56,6 +61,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_7_MEMORY_V0_1.md`
 - `phases/PHASE_1_8_MODEL_GATEWAY.md`
 - `phases/PHASE_1_9_ENGINEERING_PLANNER.md`
+- `phases/PHASE_1_10_EVALUATION_HARNESS.md`
 
 ## Reference
 
@@ -78,3 +84,5 @@ Phase 1.7 memory v0.1: IMPLEMENTED
 Phase 1.8 model gateway and capability routing: IMPLEMENTED
 
 Phase 1.9 engineering planner v0.1: IMPLEMENTED
+
+Phase 1.10 evaluation harness and Lucius benchmark v0.1: IMPLEMENTED

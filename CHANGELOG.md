@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 — Phase 1.10 Evaluation Harness & Lucius Benchmark v0.1
+
+- Added versioned EvaluationCase and EvaluationSuite models with permanent Golden Engineering Cases.
+- Added persisted EvaluationRuns and EvaluationCaseResults with target commit, dirty state, config hash, scores, gates, regressions, and reports.
+- Added deterministic evaluators for evidence, scope, acceptance coverage, assumptions, risk, authority, tests, documentation, memory, privacy, and provenance.
+- Added weighted scoring, hard safety/integrity gates, release decisions, baseline policy, and regression comparison.
+- Added `LUCIUS_CORE_BENCH_V0_1` with eight permanent golden cases.
+- Added machine-readable and Markdown benchmark reporting plus `python -m lucius.evaluation.cli run --suite LUCIUS_CORE_BENCH_V0_1`.
+- Added Alembic migration `0007_evaluation_harness`.
+- Added ADR-026 and Phase 1.10 benchmark documentation.
+
 ## 0.6.0 — Phase 1.9 Engineering Planner v0.1
 
 - Added evidence-bound PlanningContext construction over Tasks, TaskContracts, RepositorySnapshots, EvidenceReferences, and MemoryEntries.
