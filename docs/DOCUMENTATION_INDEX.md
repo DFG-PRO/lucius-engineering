@@ -62,6 +62,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_8_MODEL_GATEWAY.md`
 - `phases/PHASE_1_9_ENGINEERING_PLANNER.md`
 - `phases/PHASE_1_10_EVALUATION_HARNESS.md`
+- `phases/PHASE_1_11_DARWIN_REAL_REPOSITORY_PILOT.md`
 
 ## Reference
 
@@ -86,3 +87,5 @@ Phase 1.8 model gateway and capability routing: IMPLEMENTED
 Phase 1.9 engineering planner v0.1: IMPLEMENTED
 
 Phase 1.10 evaluation harness and Lucius benchmark v0.1: IMPLEMENTED
+
+Phase 1.11 Darwin real repository pilot: IMPLEMENTED
