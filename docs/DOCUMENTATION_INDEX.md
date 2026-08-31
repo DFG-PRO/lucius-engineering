@@ -73,6 +73,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_13_CANONICAL_DARWIN_REAL_REPOSITORY_PILOT_2.md`
 - `phases/PHASE_1_13A_PLANNING_EVALUATION_GATE_CORRECTION.md`
 - `phases/PHASE_1_14_FIRST_LIMITED_WRITE_PILOT_ON_DARWIN.md`
+- `phases/PHASE_1_14A_ZERO_CHANGE_EVIDENCE_CORRECTION.md`
 
 ## Reference
 
@@ -107,3 +108,5 @@ Phase 1.13 canonical Darwin real-repository pilot #2: COMPLETED READ/PLAN-ONLY; 
 Phase 1.13A planning evaluation gate correction: IMPLEMENTED; CORRECTED GATE READY_FOR_LIMITED_WRITE_PILOT
 
 Phase 1.14 first limited write pilot on Darwin: IMPLEMENTED IN ISOLATED WORKTREE; AUTONOMY GATE BLOCKED
+
+Phase 1.14A zero-change evidence correction: IMPLEMENTED; CORRECTED GATE READY_FOR_ANOTHER_LIMITED_WRITE_PILOT

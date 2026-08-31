@@ -45,24 +45,27 @@ class ReleaseGateService:
             blockers.append(f"non-canonical repository state: {state.classification}")
 
         evaluation = self.session.get(EngineeringPlanEvaluationORM, deterministic_evaluation_id) if deterministic_evaluation_id else None
+        evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+        implementation_artifact = {}
         if evaluation is None:
             blockers.append("missing deterministic plan evaluation")
         else:
-            mode = getattr(evaluation, "evaluation_mode", None) or EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+            evaluation_mode = getattr(evaluation, "evaluation_mode", None) or EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+            implementation_artifact = evaluation.implementation_artifact or {}
             if evaluation.result in {
                 EngineeringPlanEvaluationResult.FAIL.value,
                 EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE.value,
             }:
-                blockers.append(f"deterministic {mode} evaluation not passing: {evaluation.result}")
+                blockers.append(f"deterministic {evaluation_mode} evaluation not passing: {evaluation.result}")
             elif any(item.get("severity") == "CRITICAL" for item in evaluation.corrections):
                 blockers.append("unresolved critical hallucination/provenance failure")
-            leakage = evaluation.implementation_artifact.get("leakage_audit", {})
+            leakage = implementation_artifact.get("leakage_audit", {})
             leakage_failed = (
                 leakage.get("result") == "FAIL"
                 or leakage.get("leakage_detected") is True
                 or leakage.get("novelty_proven") is False
             )
-            if mode == EngineeringPlanEvaluationMode.PLANNING_ONLY.value and leakage_failed:
+            if evaluation_mode == EngineeringPlanEvaluationMode.PLANNING_ONLY.value and leakage_failed:
                 blockers.append("planning-only leakage/novelty audit failed")
 
         before = self.session.get(BenchmarkResultORM, benchmark_before_id) if benchmark_before_id else None
@@ -85,11 +88,15 @@ class ReleaseGateService:
         if rubric is None or rubric.status == HumanRubricCaptureStatus.NOT_CAPTURED.value:
             warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
-        recommendation = (
-            AutonomyRecommendation.READY_FOR_LIMITED_WRITE_PILOT
-            if not blockers
-            else AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
-        )
+        if blockers:
+            recommendation = AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
+        elif (
+            evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+            and implementation_artifact.get("pilot_stage") == "LIMITED_WRITE_PILOT"
+        ):
+            recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
+        else:
+            recommendation = AutonomyRecommendation.READY_FOR_LIMITED_WRITE_PILOT
         return ReleaseGateResult(
             recommendation=recommendation,
             passed=not blockers,

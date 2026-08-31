@@ -53,6 +53,25 @@ payload used for evaluation.
   artifact after the implementation exists. Missing implementation evidence is
   recorded as `NOT_CAPTURED`.
 
+Post-implementation comparison also accepts explicit implementation change
+evidence. This distinguishes:
+
+- `CHANGE_CONFIRMED`
+- `EXPECTED_CHANGE_MISSING`
+- `NO_CHANGE_CONFIRMED`
+- `UNEXPECTED_CHANGE_DETECTED`
+- `NOT_CAPTURED`
+
+Verified absence is positive engineering evidence. If a frozen plan expects no
+schema migration or no new dependency, and deterministic diff evidence confirms
+that absence, the evaluator records `NO_CHANGE_CONFIRMED` instead of
+`NOT_CAPTURED`.
+
+Unexpected changes are not automatic passes. If the plan expects no migration,
+dependency, configuration, persistence, or infrastructure change and the
+implementation introduces one, the relevant dimension records
+`UNEXPECTED_CHANGE_DETECTED` and fails according to materiality.
+
 Each dimension records applicability as `CAPTURED`, `NOT_CAPTURED`, or
 `NOT_APPLICABLE`. Missing data is never reinterpreted as a pass. The service
 persists per-dimension metrics and corrections, with aggregate result states:
@@ -122,6 +141,12 @@ autonomy.
 The only passing recommendation in Phase 1.12 is
 `READY_FOR_LIMITED_WRITE_PILOT`. There is no path to unrestricted autonomy, and
 non-canonical evidence remains blocked from promotion.
+
+After a successful limited-write pilot with passing post-implementation
+comparison, the next conservative recommendation is
+`READY_FOR_ANOTHER_LIMITED_WRITE_PILOT` unless stronger staged evidence and
+human review justify a higher bounded pilot. A single successful write pilot does
+not grant broad write authority.
 
 ## Phase 1.11 Lessons Preserved
 

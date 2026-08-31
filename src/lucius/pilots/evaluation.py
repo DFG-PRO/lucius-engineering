@@ -4,7 +4,13 @@ from collections.abc import Iterable
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, EngineeringPlanEvaluationMode, EngineeringPlanEvaluationResult, MetricApplicability
+from lucius.domain.enums import (
+    Actor,
+    EngineeringPlanEvaluationMode,
+    EngineeringPlanEvaluationResult,
+    ImplementationChangeEvidenceState,
+    MetricApplicability,
+)
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.schemas import EngineeringPlanEvaluation, EvaluationDimension, PlanCorrection
@@ -119,10 +125,10 @@ def _plan_vs_implementation_dimensions(plan: dict, artifact: dict) -> list[Evalu
         _set_dimension("architecture_alignment", artifact.get("architecture", []), _plan_terms(plan)),
         _set_dimension("component_coverage", artifact.get("components", []), plan.get("affected_components", [])),
         _set_dimension("file_path_prediction", artifact.get("files", []), _plan_files(plan)),
-        _presence_dimension("schema_migration_awareness", artifact.get("migrations", []), _plan_text(plan), ["migration", "schema", "alembic"]),
+        _schema_migration_implementation_dimension(plan, artifact),
         _presence_dimension("testing_strategy", artifact.get("tests", []), _plan_text(plan), ["test", "pytest", "regression"]),
         _presence_dimension("documentation_strategy", artifact.get("documentation", []), _plan_text(plan), ["docs", "documentation"]),
-        _set_dimension("dependency_awareness", artifact.get("dependencies", []), plan.get("dependencies", [])),
+        _dependency_implementation_dimension(plan, artifact),
         _classification_dimension(artifact, plan),
         _unnecessary_work_dimension(artifact.get("files", []), _plan_files(plan)),
         _hallucinated_paths_dimension(artifact.get("known_paths", []), _plan_files(plan)),
@@ -175,6 +181,106 @@ def _presence_dimension(name: str, expected: Iterable[str], plan_text: str, keyw
         expected=sorted(expected_set),
         actual=matched,
         missing=[] if matched else sorted(expected_set),
+    )
+
+
+def _schema_migration_implementation_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
+    expected_change = _plan_expects_schema_migration(plan)
+    evidence = _change_evidence(artifact, "migrations")
+    if evidence is not None:
+        return _change_evidence_dimension(
+            "schema_migration_awareness",
+            expected_change=expected_change,
+            evidence=evidence,
+            change_label="schema migration",
+        )
+    actual = _normalize_set(artifact.get("migrations", []))
+    if actual:
+        return _change_evidence_dimension(
+            "schema_migration_awareness",
+            expected_change=expected_change,
+            evidence={"state": ImplementationChangeEvidenceState.CHANGE_CONFIRMED.value, "changed_files": sorted(actual)},
+            change_label="schema migration",
+        )
+    return _not_captured_dimension("schema_migration_awareness", "Schema/migration implementation evidence was not captured.")
+
+
+def _dependency_implementation_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
+    expected_change = bool(_normalize_set(plan.get("dependencies", [])))
+    evidence = _change_evidence(artifact, "dependencies")
+    if evidence is not None:
+        return _change_evidence_dimension(
+            "dependency_awareness",
+            expected_change=expected_change,
+            evidence=evidence,
+            change_label="dependency change",
+        )
+    actual = _normalize_set(artifact.get("dependencies", []))
+    if actual:
+        return _change_evidence_dimension(
+            "dependency_awareness",
+            expected_change=expected_change,
+            evidence={"state": ImplementationChangeEvidenceState.CHANGE_CONFIRMED.value, "changed_files": sorted(actual)},
+            change_label="dependency change",
+        )
+    return _not_captured_dimension("dependency_awareness", "Dependency implementation evidence was not captured.")
+
+
+def _change_evidence(artifact: dict, key: str) -> dict | None:
+    evidence = artifact.get("change_evidence", {}).get(key)
+    if evidence is None:
+        evidence = artifact.get("implementation_evidence_manifest", {}).get("verified_changes", {}).get(key)
+    if evidence is None:
+        evidence = artifact.get("implementation_evidence_manifest", {}).get("verified_absences", {}).get(key)
+    if evidence is None:
+        return None
+    if isinstance(evidence, str):
+        return {"state": evidence}
+    if isinstance(evidence, dict):
+        return evidence
+    return {"state": ImplementationChangeEvidenceState.NOT_CAPTURED.value, "notes": "Change evidence had an unsupported shape."}
+
+
+def _change_evidence_dimension(
+    name: str,
+    *,
+    expected_change: bool,
+    evidence: dict,
+    change_label: str,
+) -> EvaluationDimension:
+    raw_state = str(evidence.get("state", ImplementationChangeEvidenceState.NOT_CAPTURED.value))
+    try:
+        state = ImplementationChangeEvidenceState(raw_state)
+    except ValueError:
+        return _not_captured_dimension(name, f"Unknown {change_label} evidence state: {raw_state}")
+    changed_files = sorted(_normalize_set(evidence.get("changed_files", [])))
+    verified_paths = sorted(_normalize_set(evidence.get("verified_paths", [])))
+    actual = [f"state={state.value}", *changed_files, *[f"verified:{path}" for path in verified_paths]]
+    expected = [f"expected_change={expected_change}"]
+    if state is ImplementationChangeEvidenceState.NOT_CAPTURED:
+        return _not_captured_dimension(name, evidence.get("notes") or f"{change_label} evidence was not captured.")
+    if expected_change and state is ImplementationChangeEvidenceState.CHANGE_CONFIRMED:
+        return EvaluationDimension(name=name, status="PASS", score=100.0, expected=expected, actual=actual)
+    if not expected_change and state is ImplementationChangeEvidenceState.NO_CHANGE_CONFIRMED:
+        return EvaluationDimension(name=name, status="PASS", score=100.0, expected=expected, actual=actual)
+    if expected_change:
+        return EvaluationDimension(
+            name=name,
+            status="FAIL",
+            score=0.0,
+            expected=[*expected, f"{change_label} implemented"],
+            actual=actual,
+            missing=[f"expected {change_label}"],
+            notes=evidence.get("notes"),
+        )
+    return EvaluationDimension(
+        name=name,
+        status="FAIL",
+        score=0.0,
+        expected=[*expected, f"no {change_label}"],
+        actual=actual,
+        unnecessary=changed_files or [f"unexpected {change_label}"],
+        notes=evidence.get("notes"),
     )
 
 
@@ -278,6 +384,13 @@ def _result(
 ) -> EngineeringPlanEvaluationResult:
     if aggregate is None or any(item.applicability == MetricApplicability.NOT_CAPTURED for item in dimensions):
         return EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    material_change_failure = any(
+        item.status == "FAIL"
+        and item.name in {"schema_migration_awareness", "dependency_awareness"}
+        for item in dimensions
+    )
+    if material_change_failure:
+        return EngineeringPlanEvaluationResult.FAIL
     if any(item.severity == "CRITICAL" for item in corrections) or aggregate < 60:
         return EngineeringPlanEvaluationResult.FAIL
     if corrections or aggregate < 85:
@@ -352,6 +465,16 @@ def _schema_migration_reasoning_dimension(required: bool | None, plan_text: str,
         expected=[f"migration_required={required}"],
         actual=[f"mentions_schema={mentions_schema}", f"plans_migration_file={plans_migration_file}"],
     )
+
+
+def _plan_expects_schema_migration(plan: dict) -> bool:
+    planned_files = _plan_files(plan)
+    if any("alembic/versions" in path or "migration" in path.lower() for path in planned_files):
+        return True
+    text = _plan_text(plan).lower()
+    if "no migration" in text or "no schema" in text:
+        return False
+    return "migration" in text or "schema" in text
 
 
 def _dependency_reasoning_dimension(plan: dict) -> EvaluationDimension:

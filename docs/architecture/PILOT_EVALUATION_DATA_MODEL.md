@@ -75,6 +75,19 @@ Each evaluation dimension stores an applicability state:
 - `NOT_APPLICABLE`: the metric does not apply to the selected evaluation mode
   and is excluded from the aggregate score.
 
+`PLAN_VS_IMPLEMENTATION` artifacts may include an
+`implementation_evidence_manifest` with changed files and verified absences.
+Verified absence is represented with implementation change states:
+
+- `CHANGE_CONFIRMED`
+- `EXPECTED_CHANGE_MISSING`
+- `NO_CHANGE_CONFIRMED`
+- `UNEXPECTED_CHANGE_DETECTED`
+- `NOT_CAPTURED`
+
+These states let Lucius score zero-change requirements such as no migration or
+no new dependency without confusing verified absence with missing evidence.
+
 `PilotEvaluationRecord` connects the target repository, repository snapshot,
 repository state, task, plan, frozen plan, deterministic evaluation, human
 rubric, before/after benchmarks, learning candidates, corrections, repository

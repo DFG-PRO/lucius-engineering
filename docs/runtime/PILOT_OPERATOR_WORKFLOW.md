@@ -38,6 +38,33 @@ The implementation artifact is JSON containing deterministic comparison fields
 such as files, known paths, tests, documentation, migrations, dependencies,
 risk, authority, architecture, and material work.
 
+When the plan expects no migration, dependency, configuration, or infrastructure
+change, the artifact should include verified absence evidence instead of leaving
+the field empty:
+
+```json
+{
+  "implementation_evidence_manifest": {
+    "changed_files": ["src/example.py"],
+    "verified_absences": {
+      "migrations": {
+        "state": "NO_CHANGE_CONFIRMED",
+        "changed_files": [],
+        "verified_paths": ["alembic/versions"]
+      },
+      "dependencies": {
+        "state": "NO_CHANGE_CONFIRMED",
+        "changed_files": [],
+        "verified_paths": ["pyproject.toml"]
+      }
+    }
+  }
+}
+```
+
+Use `UNEXPECTED_CHANGE_DETECTED` when a no-change expectation is violated, and
+`NOT_CAPTURED` only when the evidence is genuinely unavailable.
+
 For a read/plan-only pilot, use `PLANNING_ONLY`. The artifact is optional but
 should include captured planning-evaluation evidence such as known repository
 paths, provenance quality, and novelty/leakage audit state when available:
