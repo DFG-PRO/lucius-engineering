@@ -487,6 +487,8 @@ class EngineeringPlanEvaluationORM(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     plan_freeze_id: Mapped[str] = mapped_column(ForeignKey("plan_freezes.id"), nullable=False, index=True)
+    supersedes_evaluation_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    evaluation_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="PLAN_VS_IMPLEMENTATION")
     result: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     aggregate_score: Mapped[float | None] = mapped_column(Float)
     dimensions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)

@@ -44,9 +44,18 @@ payload used for evaluation.
 
 ## Deterministic Evaluation
 
-`EngineeringPlanEvaluationService` compares a frozen plan to an implementation
-artifact. It persists per-dimension metrics and corrections, with aggregate
-result states:
+`EngineeringPlanEvaluationService` supports two explicit modes:
+
+- `PLANNING_ONLY`: evaluates a frozen plan before any implementation exists.
+  Implementation-relative dimensions are recorded as `NOT_APPLICABLE` and do
+  not reduce the aggregate score.
+- `PLAN_VS_IMPLEMENTATION`: compares a frozen plan to an implementation
+  artifact after the implementation exists. Missing implementation evidence is
+  recorded as `NOT_CAPTURED`.
+
+Each dimension records applicability as `CAPTURED`, `NOT_CAPTURED`, or
+`NOT_APPLICABLE`. Missing data is never reinterpreted as a pass. The service
+persists per-dimension metrics and corrections, with aggregate result states:
 
 - `PASS`
 - `PASS_WITH_WARNINGS`
@@ -58,6 +67,10 @@ file/path prediction, schema/migration awareness, testing strategy,
 documentation strategy, dependency awareness, authority/risk classification,
 unnecessary work, hallucinated files/paths, unsupported claims, and missed
 material implementation work.
+
+Planning-only evaluations also capture repository understanding, planned path
+validity, schema/migration reasoning, dependency reasoning, provenance quality,
+novelty/leakage status, and explicit uncertainty handling.
 
 Corrections are classified `MINOR`, `MODERATE`, `MAJOR`, or `CRITICAL`.
 
@@ -96,6 +109,15 @@ Hard blockers include non-canonical repository state, missing deterministic
 evaluation, failing or insufficient deterministic evaluation, critical
 hallucination/provenance corrections, missing benchmarks, benchmark regression
 or inconclusive comparison, and target repository integrity violation.
+
+A canonical `PLANNING_ONLY` evaluation may support the first limited-write pilot
+when canonicality, benchmark, leakage, and repository-integrity gates pass.
+Post-implementation comparison remains required before any later autonomy
+promotion beyond the bounded limited-write stage.
+
+Missing human rubric input remains a warning for the first limited-write pilot
+gate and must be treated as a hard blocker before promotion beyond bounded write
+autonomy.
 
 The only passing recommendation in Phase 1.12 is
 `READY_FOR_LIMITED_WRITE_PILOT`. There is no path to unrestricted autonomy, and

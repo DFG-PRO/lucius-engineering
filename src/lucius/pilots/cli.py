@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from lucius.domain.enums import Actor, RepositoryIntegrityResult
+from lucius.domain.enums import Actor, EngineeringPlanEvaluationMode, RepositoryIntegrityResult
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
 from lucius.pilots.benchmark import BenchmarkRunnerService
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
@@ -36,7 +36,9 @@ def main() -> None:
 
     evaluate = sub.add_parser("evaluate-plan")
     evaluate.add_argument("plan_freeze_id")
-    evaluate.add_argument("implementation_artifact", type=Path)
+    evaluate.add_argument("implementation_artifact", type=Path, nargs="?")
+    evaluate.add_argument("--mode", choices=[item.value for item in EngineeringPlanEvaluationMode], default=EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value)
+    evaluate.add_argument("--supersedes-evaluation-id")
     evaluate.add_argument("--evaluator-version", default="1.12.0")
 
     rubric = sub.add_parser("record-human-rubric-not-captured")
@@ -103,10 +105,12 @@ def main() -> None:
             session.commit()
             print(result.model_dump_json(indent=2))
         elif args.command == "evaluate-plan":
-            artifact = json.loads(args.implementation_artifact.read_text(encoding="utf-8"))
+            artifact = json.loads(args.implementation_artifact.read_text(encoding="utf-8")) if args.implementation_artifact else {}
             result = EngineeringPlanEvaluationService(session).evaluate(
                 plan_freeze_id=args.plan_freeze_id,
                 implementation_artifact=artifact,
+                evaluation_mode=EngineeringPlanEvaluationMode(args.mode),
+                supersedes_evaluation_id=args.supersedes_evaluation_id,
                 evaluator_version=args.evaluator_version,
                 actor=Actor.LUCIUS,
             )

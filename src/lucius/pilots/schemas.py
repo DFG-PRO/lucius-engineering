@@ -9,8 +9,10 @@ from lucius.domain.enums import (
     AutonomyRecommendation,
     BenchmarkRegressionStatus,
     BenchmarkRunStatus,
+    EngineeringPlanEvaluationMode,
     EngineeringPlanEvaluationResult,
     HumanRubricCaptureStatus,
+    MetricApplicability,
     PilotLearningStatus,
     PlanningEvidenceMode,
     RepositoryIntegrityResult,
@@ -58,6 +60,7 @@ class PlanFreeze(BaseModel):
 class EvaluationDimension(BaseModel):
     name: str
     status: str
+    applicability: MetricApplicability = MetricApplicability.CAPTURED
     score: float | None = None
     expected: list[str] = Field(default_factory=list)
     actual: list[str] = Field(default_factory=list)
@@ -83,6 +86,8 @@ class PlanCorrection(BaseModel):
 class EngineeringPlanEvaluation(BaseModel):
     id: str
     plan_freeze_id: str
+    supersedes_evaluation_id: str | None = None
+    evaluation_mode: EngineeringPlanEvaluationMode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION
     result: EngineeringPlanEvaluationResult
     aggregate_score: float | None = None
     dimensions: list[EvaluationDimension] = Field(default_factory=list)

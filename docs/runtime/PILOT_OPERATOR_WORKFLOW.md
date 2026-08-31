@@ -38,6 +38,22 @@ The implementation artifact is JSON containing deterministic comparison fields
 such as files, known paths, tests, documentation, migrations, dependencies,
 risk, authority, architecture, and material work.
 
+For a read/plan-only pilot, use `PLANNING_ONLY`. The artifact is optional but
+should include captured planning-evaluation evidence such as known repository
+paths, provenance quality, and novelty/leakage audit state when available:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite evaluate-plan \
+  LFREEZE_000001 planning-evidence.json \
+  --mode PLANNING_ONLY \
+  --supersedes-evaluation-id LEVALPLAN_000001 \
+  --evaluator-version 1.13A.0
+```
+
+Implementation-relative metrics in `PLANNING_ONLY` are stored as
+`NOT_APPLICABLE`; missing required planning evidence is stored as
+`NOT_CAPTURED`.
+
 ## Record Human Rubric
 
 ```bash

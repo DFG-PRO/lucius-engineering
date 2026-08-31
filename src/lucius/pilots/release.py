@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from lucius.domain.enums import (
     AutonomyRecommendation,
     BenchmarkRegressionStatus,
+    EngineeringPlanEvaluationMode,
     EngineeringPlanEvaluationResult,
     HumanRubricCaptureStatus,
     RepositoryIntegrityResult,
@@ -46,13 +47,23 @@ class ReleaseGateService:
         evaluation = self.session.get(EngineeringPlanEvaluationORM, deterministic_evaluation_id) if deterministic_evaluation_id else None
         if evaluation is None:
             blockers.append("missing deterministic plan evaluation")
-        elif evaluation.result in {
-            EngineeringPlanEvaluationResult.FAIL.value,
-            EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE.value,
-        }:
-            blockers.append(f"deterministic plan evaluation not passing: {evaluation.result}")
-        elif any(item.get("severity") == "CRITICAL" for item in evaluation.corrections):
-            blockers.append("unresolved critical hallucination/provenance failure")
+        else:
+            mode = getattr(evaluation, "evaluation_mode", None) or EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+            if evaluation.result in {
+                EngineeringPlanEvaluationResult.FAIL.value,
+                EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE.value,
+            }:
+                blockers.append(f"deterministic {mode} evaluation not passing: {evaluation.result}")
+            elif any(item.get("severity") == "CRITICAL" for item in evaluation.corrections):
+                blockers.append("unresolved critical hallucination/provenance failure")
+            leakage = evaluation.implementation_artifact.get("leakage_audit", {})
+            leakage_failed = (
+                leakage.get("result") == "FAIL"
+                or leakage.get("leakage_detected") is True
+                or leakage.get("novelty_proven") is False
+            )
+            if mode == EngineeringPlanEvaluationMode.PLANNING_ONLY.value and leakage_failed:
+                blockers.append("planning-only leakage/novelty audit failed")
 
         before = self.session.get(BenchmarkResultORM, benchmark_before_id) if benchmark_before_id else None
         after = self.session.get(BenchmarkResultORM, benchmark_after_id) if benchmark_after_id else None
@@ -72,7 +83,7 @@ class ReleaseGateService:
 
         rubric = self.session.get(HumanRubricORM, human_rubric_id) if human_rubric_id else None
         if rubric is None or rubric.status == HumanRubricCaptureStatus.NOT_CAPTURED.value:
-            warnings.append("human rubric NOT_CAPTURED")
+            warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         recommendation = (
             AutonomyRecommendation.READY_FOR_LIMITED_WRITE_PILOT

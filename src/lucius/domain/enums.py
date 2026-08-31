@@ -430,6 +430,17 @@ class EngineeringPlanEvaluationResult(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
+class EngineeringPlanEvaluationMode(StrEnum):
+    PLANNING_ONLY = "PLANNING_ONLY"
+    PLAN_VS_IMPLEMENTATION = "PLAN_VS_IMPLEMENTATION"
+
+
+class MetricApplicability(StrEnum):
+    CAPTURED = "CAPTURED"
+    NOT_CAPTURED = "NOT_CAPTURED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
 class HumanRubricCaptureStatus(StrEnum):
     CAPTURED = "CAPTURED"
     NOT_CAPTURED = "NOT_CAPTURED"

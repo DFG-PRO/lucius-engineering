@@ -8,7 +8,8 @@ EngineeringPlans, and EvaluationRuns.
 
 - `repository_state_observations`: canonical/dirty repository state capture.
 - `plan_freezes`: immutable checkpoint for an EngineeringPlan before comparison.
-- `engineering_plan_evaluations`: deterministic plan-vs-implementation metrics.
+- `engineering_plan_evaluations`: deterministic planning-only or
+  plan-vs-implementation metrics.
 - `human_rubrics`: explicit human scores or `NOT_CAPTURED`.
 - `benchmark_results`: formal persisted `LUCIUS_CORE_BENCH_V0_1` run summaries.
 - `pilot_learning_candidates`: candidate lessons from pilot analysis.
@@ -59,6 +60,20 @@ on the selected commit/tag instead of the current worktree.
 Git-ref contexts, and historical snapshot-id contexts.
 
 ## Evaluation Records
+
+`engineering_plan_evaluations` records `evaluation_mode` as either
+`PLANNING_ONLY` or `PLAN_VS_IMPLEMENTATION`. It may also record
+`supersedes_evaluation_id` when a later evaluation corrects the mode or
+methodology applied to the same frozen plan. Superseding creates a new artifact;
+it does not mutate the original evaluation.
+
+Each evaluation dimension stores an applicability state:
+
+- `CAPTURED`: the metric had enough evidence to score.
+- `NOT_CAPTURED`: required evidence was absent and must not be treated as a
+  pass.
+- `NOT_APPLICABLE`: the metric does not apply to the selected evaluation mode
+  and is excluded from the aggregate score.
 
 `PilotEvaluationRecord` connects the target repository, repository snapshot,
 repository state, task, plan, frozen plan, deterministic evaluation, human
