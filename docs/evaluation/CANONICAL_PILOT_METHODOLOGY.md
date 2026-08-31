@@ -1,0 +1,109 @@
+# Canonical Pilot Methodology
+
+Phase 1.12 defines the evidence rules for reproducible real-repository pilots.
+It does not grant write autonomy and it does not reinterpret Phase 1.11 as a
+canonical run.
+
+## Canonical vs Non-Canonical Pilot
+
+A canonical pilot begins from an explicitly inspected repository state classified
+as `CANONICAL_CLEAN`. Lucius records repository path, branch, HEAD commit,
+remote, tracked modifications, staged modifications, untracked files, observed
+timestamp, and manifest hash.
+
+Non-canonical classifications are:
+
+- `NON_CANONICAL_DIRTY`
+- `NON_CANONICAL_HEAD_CHANGED`
+- `NON_CANONICAL_UNTRACKED_STATE`
+- `NON_CANONICAL_EXTERNAL_MUTATION`
+
+Non-canonical pilots may be useful exploratory data, but they must not silently
+promote autonomy readiness.
+
+## Current-State vs Historical-State Planning
+
+`CURRENT_STATE_PLANNING` means evidence is collected from the current repository
+state.
+
+`HISTORICAL_STATE_PLANNING` means evidence is collected from one selected
+historical state only. The selected state may be a Git commit, Git tag, or
+Lucius repository snapshot id resolved to its captured commit. Future/current
+implementation files are not visible to planning unless a later evaluator uses
+them after the plan is frozen.
+
+## Plan Freeze
+
+Before evaluation, an `EngineeringPlan` is frozen into a `PlanFreeze`. The
+freeze stores the plan id, task, project, repository state, snapshot ids,
+evidence ids, selected commit when available, planning mode, evaluation version,
+complete plan payload, timestamp, and actor.
+
+The freeze is effectively immutable: later plan edits do not mutate the frozen
+payload used for evaluation.
+
+## Deterministic Evaluation
+
+`EngineeringPlanEvaluationService` compares a frozen plan to an implementation
+artifact. It persists per-dimension metrics and corrections, with aggregate
+result states:
+
+- `PASS`
+- `PASS_WITH_WARNINGS`
+- `FAIL`
+- `INSUFFICIENT_EVIDENCE`
+
+Initial dimensions include architecture alignment, component coverage,
+file/path prediction, schema/migration awareness, testing strategy,
+documentation strategy, dependency awareness, authority/risk classification,
+unnecessary work, hallucinated files/paths, unsupported claims, and missed
+material implementation work.
+
+Corrections are classified `MINOR`, `MODERATE`, `MAJOR`, or `CRITICAL`.
+
+## Human Evaluation
+
+Human rubric scores are persisted separately from deterministic evaluation.
+Required 1-5 dimensions are repository understanding, architectural correctness,
+completeness, usefulness, implementation realism, risk awareness, provenance
+quality, and hallucination control.
+
+If no human rubric exists, Lucius records `NOT_CAPTURED`. Missing human scores
+are never fabricated.
+
+## Benchmark Regression
+
+Canonical pilots require formal pre-pilot and post-pilot
+`LUCIUS_CORE_BENCH_V0_1` benchmark results. A benchmark result stores suite
+version, benchmark version, Git HEAD, dirty state, environment metadata, case
+counts, duration, deterministic metrics, and artifact ids.
+
+Regression statuses are:
+
+- `NO_REGRESSION`
+- `REGRESSION`
+- `INCONCLUSIVE`
+- `NOT_RUN`
+
+Ordinary pytest output is not benchmark evidence.
+
+## Autonomy Gates
+
+The release gate consumes repository state, deterministic plan evaluation,
+before/after benchmarks, target repository integrity, and optional human rubric.
+
+Hard blockers include non-canonical repository state, missing deterministic
+evaluation, failing or insufficient deterministic evaluation, critical
+hallucination/provenance corrections, missing benchmarks, benchmark regression
+or inconclusive comparison, and target repository integrity violation.
+
+The only passing recommendation in Phase 1.12 is
+`READY_FOR_LIMITED_WRITE_PILOT`. There is no path to unrestricted autonomy, and
+non-canonical evidence remains blocked from promotion.
+
+## Phase 1.11 Lessons Preserved
+
+Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository
+understanding and planning observations informed this methodology, but its
+`NOT_CAPTURED` deterministic metrics, human rubric scores, and pre/post
+benchmark records remain `NOT_CAPTURED`.

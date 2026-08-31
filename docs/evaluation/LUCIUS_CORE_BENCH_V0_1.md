@@ -107,11 +107,27 @@ Developer entry point:
 python -m lucius.evaluation.cli run --suite LUCIUS_CORE_BENCH_V0_1
 ```
 
+Pilot evaluation entry point:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite run-core-benchmark --repo-root .
+```
+
+The pilot runner stores a formal `BenchmarkResult` (`LBENCH_*`) that links to
+the underlying `EvaluationRun`. Canonical pilots require a pre-pilot and
+post-pilot `BenchmarkResult`; ordinary pytest output is not sufficient
+benchmark evidence.
+
 ## Persistence And Audit
 
 Migration `0007_evaluation_harness` persists suites, cases, runs, and case
 results. Audit events cover run start/completion, case start/completion/failure,
 hard gate failures, regression detection, baseline creation, and release blocks.
+
+Migration `0008_pilot_evaluation_infrastructure` adds persisted benchmark
+summaries for pilot gates, including benchmark version, Git HEAD, dirty state,
+case counts, deterministic metrics, duration, environment metadata, and
+artifact ids.
 
 ## Performance
 
@@ -122,5 +138,6 @@ machine.
 ## Limitations
 
 There is no LLM judge, external stochastic model benchmark, executor
-evaluation, embeddings, fine-tuning, WorkPackage orchestration, deployment, or
-autonomy runtime in Phase 1.10.
+evaluation, embeddings, fine-tuning, WorkPackage orchestration, deployment,
+autonomous code modification loop, or unrestricted autonomy runtime in Phase
+1.12.

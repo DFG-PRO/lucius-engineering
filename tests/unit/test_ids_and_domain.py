@@ -27,6 +27,13 @@ def test_canonical_id_formatting():
     assert format_public_id("learning", 1) == "LLEARN_000001"
     assert format_public_id("evaluation", 1) == "LEVAL_000001"
     assert format_public_id("audit", 1) == "LAUDIT_000001"
+    assert format_public_id("repository_state", 1) == "LRSTATE_000001"
+    assert format_public_id("plan_freeze", 1) == "LFREEZE_000001"
+    assert format_public_id("plan_evaluation", 1) == "LEVALPLAN_000001"
+    assert format_public_id("human_rubric", 1) == "LRUBRIC_000001"
+    assert format_public_id("benchmark", 1) == "LBENCH_000001"
+    assert format_public_id("pilot_learning", 1) == "LPLEARN_000001"
+    assert format_public_id("pilot_record", 1) == "LPILOT_000001"
 
 
 def test_required_enums_exist():

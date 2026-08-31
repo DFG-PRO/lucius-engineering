@@ -20,6 +20,13 @@ ENTITY_PREFIXES: dict[str, str] = {
     "evaluation_case": "LCASE",
     "evaluation_run": "LERUN",
     "evaluation_case_result": "LERES",
+    "repository_state": "LRSTATE",
+    "plan_freeze": "LFREEZE",
+    "plan_evaluation": "LEVALPLAN",
+    "human_rubric": "LRUBRIC",
+    "benchmark": "LBENCH",
+    "pilot_learning": "LPLEARN",
+    "pilot_record": "LPILOT",
 }
 
 

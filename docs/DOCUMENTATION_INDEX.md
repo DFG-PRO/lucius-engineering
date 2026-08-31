@@ -17,10 +17,16 @@ This file identifies the canonical Lucius documentation baseline.
 ## Architecture
 
 - `architecture/SYSTEM_OVERVIEW.md`
+- `architecture/PILOT_EVALUATION_DATA_MODEL.md`
 
 ## Evaluation
 
 - `evaluation/LUCIUS_CORE_BENCH_V0_1.md`
+- `evaluation/CANONICAL_PILOT_METHODOLOGY.md`
+
+## Runtime / Operator Workflows
+
+- `runtime/PILOT_OPERATOR_WORKFLOW.md`
 
 ## Decisions
 
@@ -63,6 +69,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_9_ENGINEERING_PLANNER.md`
 - `phases/PHASE_1_10_EVALUATION_HARNESS.md`
 - `phases/PHASE_1_11_DARWIN_REAL_REPOSITORY_PILOT.md`
+- `phases/PHASE_1_12_EVALUATION_CANONICAL_PILOT_INFRASTRUCTURE.md`
 
 ## Reference
 
@@ -89,3 +96,5 @@ Phase 1.9 engineering planner v0.1: IMPLEMENTED
 Phase 1.10 evaluation harness and Lucius benchmark v0.1: IMPLEMENTED
 
 Phase 1.11 Darwin real repository pilot: IMPLEMENTED
+
+Phase 1.12 evaluation and canonical pilot infrastructure: IMPLEMENTED

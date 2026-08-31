@@ -104,3 +104,23 @@ Golden Engineering Case
 
 Evaluations judge engineering quality and safety. They complement tests but do
 not replace them.
+
+Phase 1.12 adds canonical pilot infrastructure:
+
+```text
+RepositoryStateObservation
+  -> current or historical RepositorySnapshot
+  -> EngineeringPlan
+  -> PlanFreeze
+  -> EngineeringPlanEvaluation
+  -> HumanRubric
+  -> BenchmarkResult(before/after)
+  -> PilotEvaluationRecord
+  -> ReleaseGateResult
+```
+
+Real-repository pilots now distinguish canonical clean runs from exploratory
+non-canonical runs, and historical planning can bind evidence to a commit, tag,
+or Lucius snapshot id. Frozen plans are evaluated against implementation
+artifacts without mutating the original plan. Release/autonomy gates consume
+persisted evidence and can recommend at most a limited write pilot in Phase 1.12.

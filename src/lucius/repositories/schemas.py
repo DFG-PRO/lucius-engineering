@@ -23,6 +23,8 @@ class WorkspaceContext(RepositorySchema):
     repository_id: str | None = None
     access_mode: RepositoryAccessMode = RepositoryAccessMode.READ_ONLY
     authority_level: AuthorityLevel = AuthorityLevel.L0
+    planning_mode: str = "CURRENT_STATE_PLANNING"
+    repository_ref: str | None = None
 
 
 class RepositoryIdentity(RepositorySchema):
@@ -115,4 +117,3 @@ class SnapshotResult(RepositorySchema):
     configuration_map: list[ConfigurationRecord]
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     manifest: RepositoryManifest
-
