@@ -76,6 +76,14 @@ bounded engineering run where Lucius may create and sequence multiple related
 tasks under a dependency graph. It still requires isolated implementation,
 bounded repair limits, tests, documentation, and human review before integration.
 
+`READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT` authorizes another
+one-objective bounded multi-task pilot after a successful run when human review
+or supervised-workflow evidence is still incomplete.
+
+`READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` authorizes supervised preparation
+and execution of bounded engineering work with human review gates. It does not
+authorize automatic integration or production operations.
+
 No staged autonomy recommendation authorizes automatic merge to main, automatic
 push, production deployment, credential changes, destructive Git, force push,
 broad cross-project autonomy, unrestricted architecture rewrites, silent

@@ -86,20 +86,37 @@ class ReleaseGateService:
 
         rubric = self.session.get(HumanRubricORM, human_rubric_id) if human_rubric_id else None
         human_rubric_captured = rubric is not None and rubric.status == HumanRubricCaptureStatus.CAPTURED.value
-        if not human_rubric_captured:
-            warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         is_plan_vs_implementation = (
             evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
         )
         pilot_stage = implementation_artifact.get("pilot_stage")
+        if not human_rubric_captured:
+            if pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT":
+                warnings.append(
+                    "human rubric NOT_CAPTURED; hard blocker before supervised engineering workflow promotion"
+                )
+            else:
+                warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         if blockers:
             recommendation = (
+                AutonomyRecommendation.NOT_READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING
+                if is_plan_vs_implementation and pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT"
+                else
                 AutonomyRecommendation.NOT_READY_FOR_BOUNDED_ENGINEERING
                 if is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT"
                 else AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
             )
+        elif is_plan_vs_implementation and pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT":
+            if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
+                recommendation = AutonomyRecommendation.READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
+            else:
+                recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT
+                if human_rubric_captured:
+                    warnings.append(
+                        "supervised engineering workflow promotion requires 5/5 captured human scores across all canonical rubric dimensions"
+                    )
         elif is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT":
             if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
                 recommendation = AutonomyRecommendation.READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING

@@ -206,6 +206,22 @@ autonomy, unrestricted architecture rewrites, silent migration/schema expansion,
 unlimited task spawning, unlimited repair cycles, and unrestricted autonomous
 operation.
 
+Phase 1.17 adds post-bounded-multi-task recommendations:
+
+- `NOT_READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`
+- `READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT`
+- `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`
+
+`READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT` is the normal passing
+result when a bounded multi-task pilot succeeds but human review remains
+`NOT_CAPTURED`.
+
+`READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` requires captured human review in
+addition to passing deterministic implementation comparison, passing
+orchestration/autonomy evidence, formal benchmark `NO_REGRESSION`, and unchanged
+target repository integrity. It still does not grant merge, push, deployment,
+production, credential, destructive Git, or unrestricted architecture authority.
+
 ## Phase 1.11 Lessons Preserved
 
 Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository

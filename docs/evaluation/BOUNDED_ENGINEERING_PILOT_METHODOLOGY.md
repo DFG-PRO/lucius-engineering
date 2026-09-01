@@ -104,3 +104,33 @@ No outcome grants automatic merge, push, deployment, destructive Git, credential
 changes, force push, unrestricted architecture rewrites, silent migration/schema
 expansion, unlimited task spawning, unlimited repair cycles, broad cross-project
 autonomy, or unrestricted write autonomy.
+
+## Bounded Multi-Task Pilot Model
+
+A bounded multi-task pilot is still one coherent engineering objective. The
+child tasks must be natural pieces of the objective rather than arbitrary slices
+created to inflate task count.
+
+The package must record:
+
+- objective-level novelty and subtask-level novelty;
+- existing primitives to reuse;
+- child tasks with inputs, outputs, acceptance criteria, risk, authority, and
+  zero-change expectations;
+- a dependency graph with cycle and missing-dependency checks;
+- execution order derived from the graph;
+- local decisions and deviation classifications;
+- repair budget usage;
+- task-level, integrated, and full-repository verification;
+- plan-vs-implementation and orchestration evaluation;
+- autonomy audit and human-review package.
+
+Post-multi-task outcomes are:
+
+- `NOT_READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`
+- `READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT`
+- `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`
+
+`READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` requires captured human review and
+does not imply merge, push, deploy, production, credential, destructive Git, or
+unrestricted architecture authority.

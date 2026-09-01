@@ -154,6 +154,19 @@ autonomy, unrestricted architecture rewrites, silent migration/schema expansion,
 unlimited task spawning, unlimited repair cycles, or unrestricted autonomous
 operation.
 
+For a bounded multi-task pilot, create one parent objective, independently
+derive child tasks, validate the graph, freeze the package, execute only in an
+isolated branch or worktree, record local decisions/deviations/repairs, run
+task-level and integrated verification continuously, run the full target
+repository suite, commit only on the isolated branch, and prepare a human-review
+package.
+
+The normal passing result with missing human review is
+`READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT`. A later captured human
+review may support `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`, but that result
+still does not authorize merge, push, deployment, production operations, or
+unrestricted architecture changes.
+
 ## List Pilot Evidence
 
 ```bash

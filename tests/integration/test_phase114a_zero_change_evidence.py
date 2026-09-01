@@ -306,6 +306,82 @@ def test_bounded_multi_task_tier_requires_perfect_human_scores(session):
     assert any("bounded multi-task promotion requires 5/5" in warning for warning in result.warnings)
 
 
+def test_successful_multi_task_pilot_with_missing_human_review_recommends_another_multi_task(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_multi_task_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).record_not_captured()
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_MULTI_TASK_ENGINEERING_PILOT
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
+    assert any("human rubric NOT_CAPTURED" in warning for warning in result.warnings)
+
+
+def test_human_approved_multi_task_pilot_reaches_supervised_workflow(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_multi_task_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 5,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+    assert result.warnings == []
+
+
+def test_multi_task_pilot_blocker_uses_multi_task_not_ready_result(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_multi_task_evaluation_row(
+        session,
+        EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE,
+    )
+    before = _benchmark(session, score=100.0, failed=0)
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=before.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+    )
+
+    assert result.recommendation == AutonomyRecommendation.NOT_READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING
+    assert any("deterministic PLAN_VS_IMPLEMENTATION evaluation not passing" in item for item in result.blockers)
+
+
 def test_bounded_engineering_pilot_blocker_uses_bounded_not_ready_result(session):
     state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
     evaluation = _bounded_engineering_evaluation_row(
@@ -416,6 +492,19 @@ def _bounded_engineering_evaluation_row(
     row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
     row.implementation_artifact = {"pilot_stage": "BOUNDED_ENGINEERING_PILOT"}
     row.evaluator_version = "1.16-test"
+    row.evaluated_at = utc_now()
+    session.flush()
+    return row
+
+
+def _bounded_multi_task_evaluation_row(
+    session,
+    result: EngineeringPlanEvaluationResult,
+) -> EngineeringPlanEvaluationORM:
+    row = _plan_evaluation(session, result)
+    row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+    row.implementation_artifact = {"pilot_stage": "BOUNDED_MULTI_TASK_ENGINEERING_PILOT"}
+    row.evaluator_version = "1.17-test"
     row.evaluated_at = utc_now()
     session.flush()
     return row
