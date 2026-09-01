@@ -115,8 +115,16 @@ python -m lucius.pilots.cli --database data/lucius-pilots.sqlite compute-release
 ```
 
 The command returns deterministic blockers, warnings, benchmark regression
-status, and autonomy recommendation. Phase 1.12 can recommend at most
-`READY_FOR_LIMITED_WRITE_PILOT`.
+status, and autonomy recommendation. After Phase 1.15A, a current successful
+limited-write pilot with captured human review and at least one distinct prior
+successful limited-write pilot can recommend
+`READY_FOR_BOUNDED_ENGINEERING_PILOT`.
+
+That recommendation still requires isolated implementation and human review. It
+does not authorize automatic merge to main, automatic push, force push,
+destructive Git, production deployment, credential changes, external production
+operations, broad cross-project modification, silent migration/schema expansion,
+or unlimited repair loops.
 
 ## List Pilot Evidence
 

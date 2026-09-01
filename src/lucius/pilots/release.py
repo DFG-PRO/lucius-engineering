@@ -85,7 +85,8 @@ class ReleaseGateService:
             blockers.append(f"target repository integrity violation: {repository_integrity_result.value}")
 
         rubric = self.session.get(HumanRubricORM, human_rubric_id) if human_rubric_id else None
-        if rubric is None or rubric.status == HumanRubricCaptureStatus.NOT_CAPTURED.value:
+        human_rubric_captured = rubric is not None and rubric.status == HumanRubricCaptureStatus.CAPTURED.value
+        if not human_rubric_captured:
             warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         if blockers:
@@ -94,7 +95,12 @@ class ReleaseGateService:
             evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
             and implementation_artifact.get("pilot_stage") == "LIMITED_WRITE_PILOT"
         ):
-            recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
+            if human_rubric_captured and self._has_prior_successful_limited_write_pilot(
+                current_evaluation_id=deterministic_evaluation_id,
+            ):
+                recommendation = AutonomyRecommendation.READY_FOR_BOUNDED_ENGINEERING_PILOT
+            else:
+                recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
         else:
             recommendation = AutonomyRecommendation.READY_FOR_LIMITED_WRITE_PILOT
         return ReleaseGateResult(
@@ -104,6 +110,41 @@ class ReleaseGateService:
             warnings=warnings,
             benchmark_regression_status=regression_status,
         )
+
+    def _has_prior_successful_limited_write_pilot(
+        self,
+        *,
+        current_evaluation_id: str | None,
+    ) -> bool:
+        records = self.session.query(PilotEvaluationRecordORM).all()
+        for record in records:
+            if record.deterministic_evaluation_id == current_evaluation_id:
+                continue
+            if record.repository_integrity_result != RepositoryIntegrityResult.UNCHANGED.value:
+                continue
+            gate_result = record.gate_result or {}
+            if gate_result.get("passed") is not True:
+                continue
+            if gate_result.get("benchmark_regression_status") != BenchmarkRegressionStatus.NO_REGRESSION.value:
+                continue
+            evaluation = (
+                self.session.get(EngineeringPlanEvaluationORM, record.deterministic_evaluation_id)
+                if record.deterministic_evaluation_id
+                else None
+            )
+            if evaluation is None:
+                continue
+            if evaluation.evaluation_mode != EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value:
+                continue
+            if evaluation.result in {
+                EngineeringPlanEvaluationResult.FAIL.value,
+                EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE.value,
+            }:
+                continue
+            if (evaluation.implementation_artifact or {}).get("pilot_stage") != "LIMITED_WRITE_PILOT":
+                continue
+            return True
+        return False
 
     def evaluate_record(self, record_id: str) -> ReleaseGateResult:
         record = self.session.get(PilotEvaluationRecordORM, record_id)

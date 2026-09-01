@@ -148,6 +148,34 @@ comparison, the next conservative recommendation is
 human review justify a higher bounded pilot. A single successful write pilot does
 not grant broad write authority.
 
+After two distinct successful limited-write pilot records, a current
+`PLAN_VS_IMPLEMENTATION` pass with formal pre/post benchmark `NO_REGRESSION`,
+unchanged target repository integrity, and a captured human rubric may support
+`READY_FOR_BOUNDED_ENGINEERING_PILOT`. This recommendation grants authority for
+one bounded engineering objective at a time in an isolated environment. It does
+not grant unrestricted write autonomy.
+
+## Staged Authority Matrix
+
+`READY_FOR_LIMITED_WRITE_PILOT` permits one reviewed, bounded implementation
+against an isolated branch or worktree after a frozen plan passes canonical
+planning gates.
+
+`READY_FOR_ANOTHER_LIMITED_WRITE_PILOT` permits another bounded isolated write
+pilot after a previous write pilot succeeds, but human review or staged evidence
+is still insufficient for the broader bounded-engineering tier.
+
+`READY_FOR_BOUNDED_ENGINEERING_PILOT` permits Lucius to decompose one bounded
+engineering objective into internal tasks, plan those tasks, implement in an
+isolated environment, run targeted/integration/full tests, perform bounded
+repair cycles, update documentation, capture evidence, and prepare a human
+review package.
+
+No staged recommendation permits automatic merge to main, automatic push, force
+push, destructive Git, production deployment, credential changes, external
+production operations, broad cross-project modification, silent migration/schema
+expansion, or unlimited repair loops.
+
 ## Phase 1.11 Lessons Preserved
 
 Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository

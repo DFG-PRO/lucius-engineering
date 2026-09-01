@@ -12,6 +12,7 @@ from lucius.domain.enums import (
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, utc_now
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
+from lucius.pilots.records import PilotRecordService
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.rubric import HumanRubricService
 
@@ -165,6 +166,54 @@ def test_unrestricted_autonomy_remains_impossible_for_corrected_write_pilot(sess
 
     assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
     assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_ENGINEERING_PILOT
+
+
+def test_second_successful_limited_write_pilot_with_human_review_reaches_bounded_engineering(session):
+    prior_state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    prior_evaluation = _post_write_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    prior_before = _benchmark(session, score=100.0, failed=0)
+    prior_after = _benchmark(session, score=100.0, failed=0)
+    prior_rubric = HumanRubricService(session).record_not_captured()
+    PilotRecordService(session).create(
+        repository_state_id=prior_state.id,
+        deterministic_evaluation_id=prior_evaluation.id,
+        benchmark_before_id=prior_before.id,
+        benchmark_after_id=prior_after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=prior_rubric.id,
+    )
+    current_state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    current_evaluation = _post_write_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    current_before = _benchmark(session, score=100.0, failed=0)
+    current_after = _benchmark(session, score=100.0, failed=0)
+    current_rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 5,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=current_state.id,
+        deterministic_evaluation_id=current_evaluation.id,
+        benchmark_before_id=current_before.id,
+        benchmark_after_id=current_after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=current_rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_BOUNDED_ENGINEERING_PILOT
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+    assert result.blockers == []
+    assert result.warnings == []
 
 
 def _evaluate(session, artifact: dict):

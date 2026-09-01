@@ -75,6 +75,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_14_FIRST_LIMITED_WRITE_PILOT_ON_DARWIN.md`
 - `phases/PHASE_1_14A_ZERO_CHANGE_EVIDENCE_CORRECTION.md`
 - `phases/PHASE_1_15_SECOND_LIMITED_WRITE_PILOT.md`
+- `phases/PHASE_1_15A_HUMAN_REVIEW_AND_BOUNDED_READINESS.md`
 
 ## Reference
 
@@ -113,3 +114,5 @@ Phase 1.14 first limited write pilot on Darwin: IMPLEMENTED IN ISOLATED WORKTREE
 Phase 1.14A zero-change evidence correction: IMPLEMENTED; CORRECTED GATE READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
 
 Phase 1.15 second limited write pilot on Darwin: IMPLEMENTED IN ISOLATED WORKTREE; GATE READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
+
+Phase 1.15A human review and bounded readiness: IMPLEMENTED; GATE READY_FOR_BOUNDED_ENGINEERING_PILOT
