@@ -23,6 +23,7 @@ This file identifies the canonical Lucius documentation baseline.
 
 - `evaluation/LUCIUS_CORE_BENCH_V0_1.md`
 - `evaluation/CANONICAL_PILOT_METHODOLOGY.md`
+- `evaluation/BOUNDED_ENGINEERING_PILOT_METHODOLOGY.md`
 
 ## Runtime / Operator Workflows
 
@@ -76,6 +77,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_14A_ZERO_CHANGE_EVIDENCE_CORRECTION.md`
 - `phases/PHASE_1_15_SECOND_LIMITED_WRITE_PILOT.md`
 - `phases/PHASE_1_15A_HUMAN_REVIEW_AND_BOUNDED_READINESS.md`
+- `phases/PHASE_1_16_FIRST_BOUNDED_ENGINEERING_PILOT.md`
 
 ## Reference
 
@@ -116,3 +118,5 @@ Phase 1.14A zero-change evidence correction: IMPLEMENTED; CORRECTED GATE READY_F
 Phase 1.15 second limited write pilot on Darwin: IMPLEMENTED IN ISOLATED WORKTREE; GATE READY_FOR_ANOTHER_LIMITED_WRITE_PILOT
 
 Phase 1.15A human review and bounded readiness: IMPLEMENTED; GATE READY_FOR_BOUNDED_ENGINEERING_PILOT
+
+Phase 1.16 first bounded engineering pilot: IMPLEMENTED IN ISOLATED WORKTREE; HUMAN REVIEW NOT_CAPTURED

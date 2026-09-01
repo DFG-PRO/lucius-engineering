@@ -89,12 +89,20 @@ class ReleaseGateService:
         if not human_rubric_captured:
             warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
-        if blockers:
-            recommendation = AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
-        elif (
+        is_plan_vs_implementation = (
             evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
-            and implementation_artifact.get("pilot_stage") == "LIMITED_WRITE_PILOT"
-        ):
+        )
+        pilot_stage = implementation_artifact.get("pilot_stage")
+
+        if blockers:
+            recommendation = (
+                AutonomyRecommendation.NOT_READY_FOR_BOUNDED_ENGINEERING
+                if is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT"
+                else AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
+            )
+        elif is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT":
+            recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT
+        elif is_plan_vs_implementation and pilot_stage == "LIMITED_WRITE_PILOT":
             if human_rubric_captured and self._has_prior_successful_limited_write_pilot(
                 current_evaluation_id=deterministic_evaluation_id,
             ):

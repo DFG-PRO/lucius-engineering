@@ -176,6 +176,16 @@ push, destructive Git, production deployment, credential changes, external
 production operations, broad cross-project modification, silent migration/schema
 expansion, or unlimited repair loops.
 
+Phase 1.16 adds post-bounded-pilot recommendations:
+
+- `NOT_READY_FOR_BOUNDED_ENGINEERING`
+- `READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT`
+- `READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`
+
+The first successful bounded engineering pilot should normally recommend another
+bounded engineering pilot. The multi-task tier requires stronger repeated
+bounded-pilot evidence and must not be inferred from a single success.
+
 ## Phase 1.11 Lessons Preserved
 
 Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository

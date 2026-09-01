@@ -126,6 +126,12 @@ destructive Git, production deployment, credential changes, external production
 operations, broad cross-project modification, silent migration/schema expansion,
 or unlimited repair loops.
 
+For a bounded engineering pilot, create one parent objective, decompose it into
+real dependent subtasks, freeze the package before implementation, execute in an
+isolated worktree, and record both objective-level plan-vs-implementation and
+orchestration evaluations. The first successful bounded engineering pilot should
+normally recommend `READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT`.
+
 ## List Pilot Evidence
 
 ```bash

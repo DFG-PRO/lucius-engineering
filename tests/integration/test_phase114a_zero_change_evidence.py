@@ -216,6 +216,48 @@ def test_second_successful_limited_write_pilot_with_human_review_reaches_bounded
     assert result.warnings == []
 
 
+def test_successful_bounded_engineering_pilot_recommends_another_bounded_pilot(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_engineering_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).record_not_captured()
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+
+
+def test_bounded_engineering_pilot_blocker_uses_bounded_not_ready_result(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_engineering_evaluation_row(
+        session,
+        EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE,
+    )
+    before = _benchmark(session, score=100.0, failed=0)
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=before.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+    )
+
+    assert result.recommendation == AutonomyRecommendation.NOT_READY_FOR_BOUNDED_ENGINEERING
+    assert any("deterministic PLAN_VS_IMPLEMENTATION evaluation not passing" in item for item in result.blockers)
+
+
 def _evaluate(session, artifact: dict):
     _project, _task, _contract, plan = _project_task_plan(session)
     _make_plan_ready(plan)
@@ -293,6 +335,19 @@ def _post_write_evaluation_row(session, result: EngineeringPlanEvaluationResult)
     row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
     row.implementation_artifact = {"pilot_stage": "LIMITED_WRITE_PILOT"}
     row.evaluator_version = "1.14A-test"
+    row.evaluated_at = utc_now()
+    session.flush()
+    return row
+
+
+def _bounded_engineering_evaluation_row(
+    session,
+    result: EngineeringPlanEvaluationResult,
+) -> EngineeringPlanEvaluationORM:
+    row = _plan_evaluation(session, result)
+    row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+    row.implementation_artifact = {"pilot_stage": "BOUNDED_ENGINEERING_PILOT"}
+    row.evaluator_version = "1.16-test"
     row.evaluated_at = utc_now()
     session.flush()
     return row
