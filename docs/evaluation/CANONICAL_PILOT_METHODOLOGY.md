@@ -103,6 +103,11 @@ quality, and hallucination control.
 If no human rubric exists, Lucius records `NOT_CAPTURED`. Missing human scores
 are never fabricated.
 
+When Daniel supplies additional review dimensions that are not part of the
+canonical persisted rubric, Lucius records them as review metadata or phase
+documentation. They must not be added to persisted score payloads unless the
+data model explicitly supports them.
+
 ## Benchmark Regression
 
 Canonical pilots require formal pre-pilot and post-pilot
@@ -182,9 +187,24 @@ Phase 1.16 adds post-bounded-pilot recommendations:
 - `READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT`
 - `READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`
 
-The first successful bounded engineering pilot should normally recommend another
-bounded engineering pilot. The multi-task tier requires stronger repeated
-bounded-pilot evidence and must not be inferred from a single success.
+The first successful bounded engineering pilot normally recommends another
+bounded engineering pilot while human review is missing. After explicit captured
+human approval, a bounded engineering pilot with passing plan-vs-implementation
+evaluation, no benchmark regression, unchanged target repository integrity, and
+5/5 scores across all canonical human rubric dimensions may recommend
+`READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`.
+
+`READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING` permits one coherent bounded
+engineering objective at a time with internal multi-task decomposition,
+dependency graph construction, frozen planning, isolated implementation,
+bounded repair loops, targeted/integration/full tests, documentation, evidence
+capture, and review-package preparation.
+
+It still forbids automatic merge to main, automatic push, production
+deployment, credential changes, destructive Git, force push, broad cross-project
+autonomy, unrestricted architecture rewrites, silent migration/schema expansion,
+unlimited task spawning, unlimited repair cycles, and unrestricted autonomous
+operation.
 
 ## Phase 1.11 Lessons Preserved
 

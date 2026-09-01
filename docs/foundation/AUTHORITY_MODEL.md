@@ -57,3 +57,27 @@ Phase 1.9 EngineeringPlans estimate required authority before execution. If a
 proposed plan requires authority above the TaskContract, Lucius surfaces
 `AUTHORITY_ESCALATION_REQUIRED`. The plan may be useful, but it is not
 executable or approved by default.
+
+## Staged autonomy matrix
+
+`READY_FOR_LIMITED_WRITE_PILOT` authorizes one reviewed, bounded implementation
+in an isolated branch or worktree after canonical planning gates pass.
+
+`READY_FOR_ANOTHER_LIMITED_WRITE_PILOT` authorizes another bounded isolated
+write pilot, but not broader engineering autonomy.
+
+`READY_FOR_BOUNDED_ENGINEERING_PILOT` authorizes one bounded engineering
+objective at a time with internal task decomposition, isolated implementation,
+bounded repair loops, tests, documentation, evidence capture, and review-package
+preparation.
+
+`READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING` authorizes a larger one-objective
+bounded engineering run where Lucius may create and sequence multiple related
+tasks under a dependency graph. It still requires isolated implementation,
+bounded repair limits, tests, documentation, and human review before integration.
+
+No staged autonomy recommendation authorizes automatic merge to main, automatic
+push, production deployment, credential changes, destructive Git, force push,
+broad cross-project autonomy, unrestricted architecture rewrites, silent
+migration/schema expansion, unlimited task spawning, unlimited repair cycles, or
+unrestricted autonomous operation.

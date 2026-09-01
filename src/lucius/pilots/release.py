@@ -101,7 +101,14 @@ class ReleaseGateService:
                 else AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
             )
         elif is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT":
-            recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT
+            if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
+                recommendation = AutonomyRecommendation.READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING
+            else:
+                recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT
+                if human_rubric_captured:
+                    warnings.append(
+                        "bounded multi-task promotion requires 5/5 captured human scores across all canonical rubric dimensions"
+                    )
         elif is_plan_vs_implementation and pilot_stage == "LIMITED_WRITE_PILOT":
             if human_rubric_captured and self._has_prior_successful_limited_write_pilot(
                 current_evaluation_id=deterministic_evaluation_id,
@@ -153,6 +160,15 @@ class ReleaseGateService:
                 continue
             return True
         return False
+
+    @staticmethod
+    def _rubric_scores_meet_multi_task_threshold(rubric: HumanRubricORM | None) -> bool:
+        if rubric is None:
+            return False
+        scores = rubric.scores or {}
+        if not scores:
+            return False
+        return all(isinstance(score, int) and score == 5 for score in scores.values())
 
     def evaluate_record(self, record_id: str) -> ReleaseGateResult:
         record = self.session.get(PilotEvaluationRecordORM, record_id)

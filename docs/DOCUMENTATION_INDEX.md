@@ -78,6 +78,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_15_SECOND_LIMITED_WRITE_PILOT.md`
 - `phases/PHASE_1_15A_HUMAN_REVIEW_AND_BOUNDED_READINESS.md`
 - `phases/PHASE_1_16_FIRST_BOUNDED_ENGINEERING_PILOT.md`
+- `phases/PHASE_1_16A_HUMAN_REVIEW_AND_MULTI_TASK_READINESS.md`
 
 ## Reference
 
@@ -120,3 +121,5 @@ Phase 1.15 second limited write pilot on Darwin: IMPLEMENTED IN ISOLATED WORKTRE
 Phase 1.15A human review and bounded readiness: IMPLEMENTED; GATE READY_FOR_BOUNDED_ENGINEERING_PILOT
 
 Phase 1.16 first bounded engineering pilot: IMPLEMENTED IN ISOLATED WORKTREE; HUMAN REVIEW NOT_CAPTURED
+
+Phase 1.16A human review and multi-task readiness: IMPLEMENTED; GATE READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING

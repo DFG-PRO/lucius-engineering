@@ -238,6 +238,74 @@ def test_successful_bounded_engineering_pilot_recommends_another_bounded_pilot(s
     assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
 
 
+def test_human_approved_bounded_engineering_pilot_reaches_multi_task_tier(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_engineering_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 5,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+    assert result.blockers == []
+    assert result.warnings == []
+
+
+def test_bounded_multi_task_tier_requires_perfect_human_scores(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _bounded_engineering_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 4,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT
+    assert any("bounded multi-task promotion requires 5/5" in warning for warning in result.warnings)
+
+
 def test_bounded_engineering_pilot_blocker_uses_bounded_not_ready_result(session):
     state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
     evaluation = _bounded_engineering_evaluation_row(

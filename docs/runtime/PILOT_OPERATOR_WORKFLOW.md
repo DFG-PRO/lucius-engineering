@@ -132,6 +132,28 @@ isolated worktree, and record both objective-level plan-vs-implementation and
 orchestration evaluations. The first successful bounded engineering pilot should
 normally recommend `READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT`.
 
+After explicit human approval is captured for that bounded pilot, recompute the
+gate with the captured rubric id. If all canonical rubric dimensions are scored
+5/5 and the hard gates still pass, the result may advance to
+`READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite compute-release-gate \
+  --repository-state-id LRSTATE_000001 \
+  --deterministic-evaluation-id LEVALPLAN_000001 \
+  --benchmark-before-id LBENCH_000001 \
+  --benchmark-after-id LBENCH_000002 \
+  --human-rubric-id LRUBRIC_000002 \
+  --repository-integrity-result UNCHANGED
+```
+
+This tier still authorizes only one coherent bounded objective at a time. It
+does not authorize automatic merge to main, automatic push, production
+deployment, credential changes, destructive Git, force push, broad cross-project
+autonomy, unrestricted architecture rewrites, silent migration/schema expansion,
+unlimited task spawning, unlimited repair cycles, or unrestricted autonomous
+operation.
+
 ## List Pilot Evidence
 
 ```bash

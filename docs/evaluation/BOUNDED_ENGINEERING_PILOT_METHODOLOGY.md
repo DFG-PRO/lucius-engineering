@@ -83,7 +83,24 @@ Post-bounded-pilot outcomes are:
 - `READY_FOR_ANOTHER_BOUNDED_ENGINEERING_PILOT`
 - `READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING`
 
-One successful bounded engineering pilot normally supports another bounded
-engineering pilot, not the multi-task tier. No outcome grants automatic merge,
-push, deployment, destructive Git, credential changes, or unrestricted write
-autonomy.
+One successful bounded engineering pilot with missing human review normally
+supports another bounded engineering pilot, not the multi-task tier.
+
+`READY_FOR_BOUNDED_MULTI_TASK_ENGINEERING` requires all hard gates to pass plus
+captured human review with 5/5 scores across every canonical persisted rubric
+dimension. The current canonical rubric dimensions are repository
+understanding, architectural correctness, completeness, usefulness,
+implementation realism, risk awareness, provenance quality, and hallucination
+control. Extra Daniel review dimensions may be documented as review context, but
+must not be invented as persisted scores.
+
+The multi-task tier permits Lucius to receive one bounded engineering objective,
+decompose it into multiple related tasks, construct a dependency graph,
+internally sequence tasks, freeze plans, implement in an isolated branch or
+worktree, use bounded repair loops, run targeted/integration/full tests, update
+documentation, capture evidence, and prepare a review package.
+
+No outcome grants automatic merge, push, deployment, destructive Git, credential
+changes, force push, unrestricted architecture rewrites, silent migration/schema
+expansion, unlimited task spawning, unlimited repair cycles, broad cross-project
+autonomy, or unrestricted write autonomy.

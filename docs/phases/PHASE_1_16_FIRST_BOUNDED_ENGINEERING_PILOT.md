@@ -153,6 +153,8 @@ Human review:
 
 - artifact: `LRUBRIC_000005`
 - state: `NOT_CAPTURED`
+- follow-up: Phase 1.16A preserved this historical artifact and captured
+  Daniel's explicit review as `LRUBRIC_000006`
 
 ## Integrity
 
@@ -176,3 +178,6 @@ benchmark must run against a clean committed Lucius state.
 Should the isolated Phase 1.16 Darwin implementation commit
 `1ee8f49bb85aaeefd0abdd1e2ce94c652547fc17` be accepted for integration after
 human review?
+
+Phase 1.16A answered this review question affirmatively for evaluation purposes
+and did not automatically merge or push the Darwin implementation.
