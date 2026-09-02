@@ -93,6 +93,20 @@ credential/security changes, unplanned migration or schema expansion, material
 new external dependencies, architecture expansion outside the frozen objective,
 cross-project modifications, or material scope changes.
 
+`NOT_READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` means a supervised workflow had
+blocking deterministic, benchmark, repository-integrity, or canonicality
+evidence and cannot proceed as successful supervised evidence.
+
+`READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW` means a supervised workflow
+passed deterministic and integrity gates, but evidence required for persistent
+supervised engineering remains incomplete or below the promotion threshold.
+
+`READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING` means supervised engineering has
+passing deterministic evidence, no benchmark regression, unchanged target
+repository integrity, and captured 5/5 human review across all canonical rubric
+dimensions. It still does not authorize automatic merge, push, deployment,
+credentials, destructive Git, or unrestricted operation.
+
 No staged autonomy recommendation authorizes automatic merge to main, automatic
 push, production deployment, credential changes, destructive Git, force push,
 broad cross-project autonomy, unrestricted architecture rewrites, silent

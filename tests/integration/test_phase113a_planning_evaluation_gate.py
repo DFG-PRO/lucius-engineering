@@ -151,6 +151,24 @@ def test_planning_only_unsupported_claims_are_critical(session):
     assert any(item.dimension == "unsupported_claims" and item.severity == "CRITICAL" for item in result.corrections)
 
 
+def test_planning_only_evidence_backed_verified_assumptions_are_supported(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    _make_planning_ready(plan)
+    plan.assumptions = [{"statement": "Supported repository fact.", "verified": True, "evidence_ids": ["LEVID_000001"]}]
+    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_planning_artifact(),
+        evaluation_mode=EngineeringPlanEvaluationMode.PLANNING_ONLY,
+    )
+
+    unsupported = next(item for item in result.dimensions if item.name == "unsupported_claims")
+
+    assert result.result != EngineeringPlanEvaluationResult.FAIL
+    assert unsupported.status == "PASS"
+
+
 def test_planning_only_provenance_quality_deficiency_is_major_warning_not_fabricated_pass(session):
     freeze = _planning_freeze(session)
 

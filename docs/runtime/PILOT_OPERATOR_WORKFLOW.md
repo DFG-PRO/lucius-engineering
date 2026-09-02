@@ -185,6 +185,13 @@ Suggested workflow states for a supervised run are `OBJECTIVE_ACCEPTED`,
 `CHECKPOINT_REVIEW_REQUIRED`, `BLOCKED`, `APPROVED_TO_CONTINUE`,
 `COMPLETED_PENDING_INTEGRATION`, and `CLOSED`.
 
+For a completed supervised workflow with human review still `NOT_CAPTURED`, the
+release gate should recommend
+`READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW`. Promotion to
+`READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING` requires captured 5/5 human review
+across all canonical dimensions in addition to passing deterministic,
+benchmark, and repository-integrity gates.
+
 ## List Pilot Evidence
 
 ```bash

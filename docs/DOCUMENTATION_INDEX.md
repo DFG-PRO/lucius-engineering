@@ -81,6 +81,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_16A_HUMAN_REVIEW_AND_MULTI_TASK_READINESS.md`
 - `phases/PHASE_1_17_FIRST_BOUNDED_MULTI_TASK_ENGINEERING_PILOT.md`
 - `phases/PHASE_1_17A_HUMAN_REVIEW_AND_SUPERVISED_READINESS.md`
+- `phases/PHASE_1_18_FIRST_SUPERVISED_ENGINEERING_WORKFLOW.md`
 
 ## Reference
 
@@ -129,3 +130,5 @@ Phase 1.16A human review and multi-task readiness: IMPLEMENTED; GATE READY_FOR_B
 Phase 1.17 first bounded multi-task engineering pilot: IMPLEMENTED IN ISOLATED WORKTREE; HUMAN REVIEW NOT_CAPTURED
 
 Phase 1.17A human review and supervised readiness: IMPLEMENTED; GATE READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
+
+Phase 1.18 first supervised engineering workflow: IMPLEMENTED IN ISOLATED DARWIN WORKTREE; HUMAN REVIEW NOT_CAPTURED; INTEGRATION PENDING

@@ -123,6 +123,44 @@ def test_verified_zero_change_does_not_produce_insufficient_evidence(session):
     assert all(item.applicability != MetricApplicability.NOT_CAPTURED for item in result.dimensions)
 
 
+def test_pydantic_schema_files_do_not_imply_database_migration(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    _make_plan_ready(plan)
+    plan.objective = "Add read-only Pydantic schemas without migrations."
+    plan.summary = "Implement service and Pydantic schemas; no dependency change required."
+    plan.affected_files = [
+        {"path": "src/pilots/schemas.py", "status": "EXISTING_VERIFIED", "evidence_ids": ["LEVID_000001"]},
+    ]
+    plan.steps = [
+        {
+            "step_id": "STEP-1",
+            "title": "service schemas",
+            "description": "Update service and Pydantic schemas.",
+            "affected_files": ["src/pilots/schemas.py"],
+        }
+    ]
+    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_artifact(
+            files=["src/pilots/schemas.py"],
+            migration_state=ImplementationChangeEvidenceState.NO_CHANGE_CONFIRMED,
+        )
+        | {
+            "architecture": ["service", "pilot"],
+            "components": ["service", "pilot"],
+            "known_paths": ["src/pilots/schemas.py"],
+        },
+        evaluation_mode=EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION,
+    )
+
+    dimension = _dimension(result, "schema_migration_awareness")
+
+    assert dimension.status == "PASS"
+    assert "expected_change=False" in dimension.expected
+
+
 def test_plan_vs_implementation_passes_with_changed_and_confirmed_unchanged_evidence(session):
     result = _evaluate(session, _artifact(files=["src/pilots/evaluation.py"]))
 
@@ -362,6 +400,115 @@ def test_human_approved_multi_task_pilot_reaches_supervised_workflow(session):
     assert result.warnings == []
 
 
+def test_supervised_workflow_with_missing_human_review_recommends_another_supervised_workflow(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _supervised_workflow_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).record_not_captured()
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+    assert any("human rubric NOT_CAPTURED" in warning for warning in result.warnings)
+
+
+def test_human_approved_supervised_workflow_reaches_persistent_supervised_engineering(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _supervised_workflow_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 5,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING
+    assert result.recommendation != AutonomyRecommendation.READY_FOR_BOUNDED_WRITE_AUTONOMY
+    assert result.warnings == []
+
+
+def test_supervised_workflow_persistent_tier_requires_perfect_human_scores(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _supervised_workflow_evaluation_row(session, EngineeringPlanEvaluationResult.PASS)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+    rubric = HumanRubricService(session).capture(
+        evaluator="Daniel",
+        scores={
+            "repository_understanding": 5,
+            "architectural_correctness": 5,
+            "completeness": 5,
+            "usefulness": 5,
+            "implementation_realism": 5,
+            "risk_awareness": 5,
+            "provenance_quality": 5,
+            "hallucination_control": 4,
+        },
+    )
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+        human_rubric_id=rubric.id,
+    )
+
+    assert result.passed is True
+    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW
+    assert any("persistent supervised engineering promotion requires 5/5" in warning for warning in result.warnings)
+
+
+def test_supervised_workflow_blocker_uses_supervised_not_ready_result(session):
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    evaluation = _supervised_workflow_evaluation_row(
+        session,
+        EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE,
+    )
+    before = _benchmark(session, score=100.0, failed=0)
+
+    result = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=before.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+    )
+
+    assert result.recommendation == AutonomyRecommendation.NOT_READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
+    assert any("deterministic PLAN_VS_IMPLEMENTATION evaluation not passing" in item for item in result.blockers)
+
+
 def test_multi_task_pilot_blocker_uses_multi_task_not_ready_result(session):
     state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
     evaluation = _bounded_multi_task_evaluation_row(
@@ -505,6 +652,19 @@ def _bounded_multi_task_evaluation_row(
     row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
     row.implementation_artifact = {"pilot_stage": "BOUNDED_MULTI_TASK_ENGINEERING_PILOT"}
     row.evaluator_version = "1.17-test"
+    row.evaluated_at = utc_now()
+    session.flush()
+    return row
+
+
+def _supervised_workflow_evaluation_row(
+    session,
+    result: EngineeringPlanEvaluationResult,
+) -> EngineeringPlanEvaluationORM:
+    row = _plan_evaluation(session, result)
+    row.evaluation_mode = EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
+    row.implementation_artifact = {"pilot_stage": "SUPERVISED_ENGINEERING_WORKFLOW"}
+    row.evaluator_version = "1.18-test"
     row.evaluated_at = utc_now()
     session.flush()
     return row

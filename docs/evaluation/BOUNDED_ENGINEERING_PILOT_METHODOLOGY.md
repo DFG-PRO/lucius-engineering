@@ -166,3 +166,22 @@ The conceptual state model is:
 
 Phase 1.17A defined these semantics without adding new workflow-state
 persistence.
+
+## Persistent Supervised Engineering Gate
+
+Phase 1.18 adds post-supervised-workflow recommendations:
+
+- `NOT_READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`
+- `READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW`
+- `READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING`
+
+`READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW` is the normal passing result
+when a supervised workflow reaches review with human rubric state
+`NOT_CAPTURED`.
+
+`READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING` requires passing deterministic
+plan-vs-implementation evaluation, no unacceptable benchmark regression,
+unchanged target repository integrity, and captured 5/5 human review across all
+canonical rubric dimensions. It does not authorize automatic merge, push,
+deployment, credential changes, destructive Git, or unrestricted engineering
+autonomy.

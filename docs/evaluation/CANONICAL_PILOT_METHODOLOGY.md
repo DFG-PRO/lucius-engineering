@@ -222,6 +222,21 @@ orchestration/autonomy evidence, formal benchmark `NO_REGRESSION`, and unchanged
 target repository integrity. It still does not grant merge, push, deployment,
 production, credential, destructive Git, or unrestricted architecture authority.
 
+Phase 1.18 adds post-supervised-workflow recommendations:
+
+- `NOT_READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`
+- `READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW`
+- `READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING`
+
+`READY_FOR_ANOTHER_SUPERVISED_ENGINEERING_WORKFLOW` is the expected passing
+state when a supervised workflow reaches a human checkpoint with human review
+still `NOT_CAPTURED`.
+
+`READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING` additionally requires captured
+5/5 human scores across all canonical rubric dimensions and still does not grant
+automatic merge, push, deployment, credentials, destructive Git, or unrestricted
+operation.
+
 ## Phase 1.11 Lessons Preserved
 
 Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository

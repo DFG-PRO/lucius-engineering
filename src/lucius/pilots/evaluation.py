@@ -336,7 +336,11 @@ def _hallucinated_paths_dimension(known_paths: Iterable[str], planned_files: Ite
 
 
 def _unsupported_claims_dimension(plan: dict) -> EvaluationDimension:
-    unsupported = [item for item in plan.get("assumptions", []) if item.get("verified")]
+    unsupported = [
+        item
+        for item in plan.get("assumptions", [])
+        if item.get("verified") and not item.get("evidence_ids")
+    ]
     score = 100.0 if not unsupported else 0.0
     return EvaluationDimension(
         name="unsupported_claims",
@@ -469,12 +473,25 @@ def _schema_migration_reasoning_dimension(required: bool | None, plan_text: str,
 
 def _plan_expects_schema_migration(plan: dict) -> bool:
     planned_files = _plan_files(plan)
-    if any("alembic/versions" in path or "migration" in path.lower() for path in planned_files):
+    if any("alembic/versions" in path or "migrations/" in path.lower() for path in planned_files):
         return True
-    text = _plan_text(plan).lower()
-    if "no migration" in text or "no schema" in text:
+    text = " ".join(
+        [
+            str(plan.get("summary", "")),
+            str(plan.get("objective", "")),
+            " ".join(_plan_terms(plan)),
+            " ".join(str(item.get("description", "")) for item in plan.get("test_strategy", [])),
+            " ".join(str(item.get("target", "")) for item in plan.get("documentation_requirements", [])),
+        ]
+    ).lower()
+    if (
+        "no migration" in text
+        or "without migration" in text
+        or "no database schema" in text
+        or "without database schema" in text
+    ):
         return False
-    return "migration" in text or "schema" in text
+    return "migration" in text or "alembic" in text or "database schema" in text or "db schema" in text
 
 
 def _dependency_reasoning_dimension(plan: dict) -> EvaluationDimension:
