@@ -76,6 +76,9 @@ def main() -> None:
     queue_global_next = sub.add_parser("queue-global-next")
     queue_global_next.add_argument("workflow_ids", nargs="*")
 
+    queue_global_start = sub.add_parser("queue-global-start")
+    queue_global_start.add_argument("workflow_ids", nargs="*")
+
     args = parser.parse_args()
     engine = create_sqlite_engine(args.database)
     create_all(engine)
@@ -194,6 +197,10 @@ def main() -> None:
             print(result.model_dump_json(indent=2))
         elif args.command == "queue-global-next":
             result = NonBlockingQueueService(session).select_global_next(args.workflow_ids or None)
+            print(result.model_dump_json(indent=2))
+        elif args.command == "queue-global-start":
+            result = NonBlockingQueueService(session).start_global_next(args.workflow_ids or None, actor=Actor.LUCIUS)
+            session.commit()
             print(result.model_dump_json(indent=2))
 
 

@@ -30,6 +30,7 @@ BLOCKED_STATES = {
 TERMINAL_STATES = {QueueWorkItemState.COMPLETED, QueueWorkItemState.FAILED}
 ELIGIBLE_STATES = {QueueWorkItemState.READY, QueueWorkItemState.READY_TO_RESUME}
 PRIORITY_RANK = {"CRITICAL": 0, "HIGH": 1, "NORMAL": 2, "LOW": 3}
+VALID_PRIORITIES = set(PRIORITY_RANK)
 STATE_CLASS_RANK = {
     QueueWorkItemState.READY_TO_RESUME: 0,
     QueueWorkItemState.READY: 1,
@@ -108,6 +109,10 @@ class NonBlockingQueueService:
             return selection
         items = self._items(workflow)
         item = self._item(items, selection.selected_item_id)
+        execution_state = _execution_state(item)
+        if execution_state not in ELIGIBLE_STATES:
+            raise QueueStateError(f"Selected queue work item is not executable: {execution_state.value}")
+        _execution_priority(item)
         self._set_state(item, QueueWorkItemState.RUNNING)
         item["started_at"] = _now_iso()
         item["run_generation"] = int(item.get("run_generation", 0)) + 1
@@ -300,7 +305,7 @@ class NonBlockingQueueService:
         workflow_ids = [workflow.id for workflow in schedulable_workflows]
         items = self._global_items(schedulable_workflows)
         legacy_unschedulable = [item for item in items if not item.queue_state_present]
-        executable_items = [item for item in items if item.queue_state_present]
+        executable_items = [item for item in items if item.schedulable]
         selection = self.select_global_next([workflow.id for workflow in workflows])
         return GlobalQueueStatus(
             observed_workflow_ids=[workflow.id for workflow in workflows],
@@ -333,14 +338,15 @@ class NonBlockingQueueService:
         schedulable_workflows, lifecycle_excluded = self._partition_global_workflows(workflows)
         items = self._global_items(schedulable_workflows)
         legacy_unschedulable = [item for item in items if not item.queue_state_present]
-        executable_items = [item for item in items if item.queue_state_present]
+        stateful_items = [item for item in items if item.queue_state_present]
+        executable_items = [item for item in items if item.schedulable]
         excluded_items = [
             item
             for exclusion in lifecycle_excluded
             for item in exclusion.items
-        ] + legacy_unschedulable
-        self._validate_global_running_identities(executable_items)
-        running = [item for item in executable_items if item.state == QueueWorkItemState.RUNNING]
+        ] + [item for item in items if not item.schedulable]
+        self._validate_global_running_identities(stateful_items)
+        running = [item for item in stateful_items if item.state == QueueWorkItemState.RUNNING]
         if running:
             return GlobalQueueSelection(
                 reason="GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION",
@@ -365,6 +371,7 @@ class NonBlockingQueueService:
             selected_project_id=selected.project_id,
             selected_workflow_id=selected.workflow_id,
             selected_item_id=selected.item_id,
+            selected_item_version=selected.version,
             reason=_global_selection_reason(selected),
             eligible_items=ordered,
             blocked_items=blocked,
@@ -378,10 +385,18 @@ class NonBlockingQueueService:
         actor: Actor = Actor.LUCIUS,
     ) -> GlobalQueueSelection:
         selection = self.select_global_next(workflow_ids)
+        return self.start_selected_global_item(selection, workflow_ids=workflow_ids, actor=actor)
+
+    def start_selected_global_item(
+        self,
+        selection: GlobalQueueSelection,
+        *,
+        workflow_ids: list[str] | None = None,
+        actor: Actor = Actor.LUCIUS,
+    ) -> GlobalQueueSelection:
         if selection.selected_workflow_id is None:
             return selection
-        self.start_next(selection.selected_workflow_id, actor=actor)
-        return selection
+        return self._start_global_selection(selection, workflow_ids=workflow_ids, actor=actor)
 
     def validate_fresh_global_reconstruction(self, workflow_ids: list[str] | None = None) -> GlobalQueueStatus:
         return self.inspect_global(workflow_ids)
@@ -409,9 +424,7 @@ class NonBlockingQueueService:
         return _state(item) in ELIGIBLE_STATES and self._dependencies_complete(item, items)
 
     def _validate_unique_items(self, items: list[dict[str, Any]]) -> None:
-        item_ids = [_item_id(item) for item in items]
-        if len(item_ids) != len(set(item_ids)):
-            raise QueueStateError("Duplicate queue work item id detected.")
+        _validate_unique_item_ids(items)
         running_logical = {
             item.get("logical_task_id", _item_id(item))
             for item in items
@@ -460,13 +473,16 @@ class NonBlockingQueueService:
         global_items: list[GlobalQueueItem] = []
         for workflow in workflows:
             items = self._items(workflow)
-            self._validate_unique_items(items)
+            _validate_unique_item_ids(items)
             for item in items:
                 item_id = _item_id(item)
-                explicit_state = _explicit_state(item)
-                item_exclusion_reason = exclusion_reason
-                if explicit_state is None and item_exclusion_reason is None:
-                    item_exclusion_reason = "LEGACY_UNSCHEDULABLE_MISSING_QUEUE_STATE"
+                state_result = _parse_global_state(item)
+                priority_result = _parse_global_priority(item)
+                item_exclusion_reason = (
+                    exclusion_reason
+                    or state_result["exclusion_reason"]
+                    or priority_result["exclusion_reason"]
+                )
                 global_items.append(
                     GlobalQueueItem(
                         project_id=workflow.project_id,
@@ -476,14 +492,18 @@ class NonBlockingQueueService:
                         item_id=item_id,
                         logical_task_id=str(item.get("logical_task_id") or item.get("task_id") or item_id),
                         title=item.get("title"),
-                        state=explicit_state,
-                        state_label=explicit_state.value if explicit_state else "LEGACY_UNSCHEDULABLE",
-                        priority=str(item.get("priority", "NORMAL")).upper(),
+                        state=state_result["state"],
+                        state_label=state_result["state_label"],
+                        raw_state=state_result["raw_state"],
+                        priority=priority_result["priority"],
+                        raw_priority=priority_result["raw_priority"],
                         created_order=int(item.get("created_order", 0)),
+                        version=int(item.get("version", 0)),
                         dependencies=[str(dependency) for dependency in item.get("dependencies", [])],
                         current_block_checkpoint_id=item.get("current_block_checkpoint_id"),
-                        queue_state_present=explicit_state is not None,
-                        schedulable=explicit_state is not None and item_exclusion_reason is None,
+                        queue_state_present=state_result["state"] is not None,
+                        priority_valid=priority_result["exclusion_reason"] is None,
+                        schedulable=state_result["state"] is not None and item_exclusion_reason is None,
                         exclusion_reason=item_exclusion_reason,
                         item=deepcopy(item),
                     )
@@ -507,9 +527,100 @@ class NonBlockingQueueService:
         if len(scoped_identities) != len(set(scoped_identities)):
             raise QueueStateError("Duplicate global RUNNING logical work item detected.")
 
+    def _start_global_selection(
+        self,
+        selection: GlobalQueueSelection,
+        *,
+        workflow_ids: list[str] | None,
+        actor: Actor,
+    ) -> GlobalQueueSelection:
+        workflow = self._workflow(selection.selected_workflow_id or "")
+        if workflow_ids and workflow.id not in set(workflow_ids):
+            raise QueueStateError("Global selection workflow is outside requested scope.")
+        if _global_workflow_exclusion_reason(workflow) is not None:
+            raise QueueStateError("Stale global selection: workflow is no longer schedulable.")
+        current_selection = self.select_global_next(workflow_ids)
+        if (
+            current_selection.selected_project_id != selection.selected_project_id
+            or current_selection.selected_workflow_id != selection.selected_workflow_id
+            or current_selection.selected_item_id != selection.selected_item_id
+            or current_selection.selected_item_version != selection.selected_item_version
+        ):
+            raise QueueStateError("Stale global selection: caller must re-run global selection.")
+        items = self._items(workflow)
+        parsed = self._global_items([workflow])
+        self._validate_global_running_identities([item for item in parsed if item.queue_state_present])
+        running = [item for item in parsed if item.state == QueueWorkItemState.RUNNING]
+        if running:
+            raise QueueStateError("Stale global selection: running item active, no preemption allowed.")
+        item = self._item(items, selection.selected_item_id or "")
+        selected = next((candidate for candidate in parsed if candidate.item_id == selection.selected_item_id), None)
+        if selected is None:
+            raise QueueStateError("Stale global selection: selected item no longer exists.")
+        if not selected.schedulable:
+            raise QueueStateError(f"Selected global item is not schedulable: {selected.exclusion_reason}")
+        if selected.state not in ELIGIBLE_STATES:
+            raise QueueStateError(f"Selected global item is no longer eligible: {selected.state_label}")
+        if not self._global_dependencies_complete(selected, parsed):
+            raise QueueStateError("Selected global item dependencies are no longer complete.")
+        if _global_selection_key(selected) != _global_selection_key(current_selection.eligible_items[0]):
+            raise QueueStateError("Stale global selection: ordering changed, caller must re-run global selection.")
+
+        previous_state = selected.state.value
+        previous_version = int(item.get("version", 0))
+        self._set_state(item, QueueWorkItemState.RUNNING)
+        item["started_at"] = _now_iso()
+        item["run_generation"] = int(item.get("run_generation", 0)) + 1
+        workflow.active_task_id = _item_id(item)
+        workflow.task_backlog = items
+        workflow.updated_at = utc_now()
+        self.session.flush()
+        new_version = int(item.get("version", 0))
+        if (
+            selection.selected_project_id != workflow.project_id
+            or selection.selected_workflow_id != workflow.id
+            or selection.selected_item_id != _item_id(item)
+        ):
+            raise QueueStateError("Global selection identity did not match mutation identity.")
+        self.audit.record(
+            event_type="GLOBAL_QUEUE_WORK_ITEM_STARTED",
+            actor=actor.value,
+            project_id=workflow.project_id,
+            repository_id=workflow.repository_id,
+            task_id=workflow.task_id,
+            action="start_global_queue_work_item",
+            result=_item_id(item),
+            metadata={
+                "workflow_id": workflow.id,
+                "selection_reason": selection.reason,
+                "selected_item_version": selection.selected_item_version,
+                "started_previous_version": previous_version,
+                "started_new_version": new_version,
+                "mutation_identity_matches_selection": True,
+            },
+        )
+        return selection.model_copy(
+            update={
+                "started_project_id": workflow.project_id,
+                "started_workflow_id": workflow.id,
+                "started_item_id": _item_id(item),
+                "started_previous_state": previous_state,
+                "started_new_state": QueueWorkItemState.RUNNING.value,
+                "started_previous_version": previous_version,
+                "started_new_version": new_version,
+                "mutation_identity_matches_selection": True,
+            }
+        )
+
 
 def _item_id(item: dict[str, Any]) -> str:
     return str(item.get("item_id") or item.get("task_id"))
+
+
+def _validate_unique_item_ids(items: list[dict[str, Any]]) -> None:
+    item_ids = [_item_id(item) for item in items]
+    if len(item_ids) != len(set(item_ids)):
+        raise QueueStateError("Duplicate queue work item id detected.")
 
 
 def _state(item: dict[str, Any]) -> QueueWorkItemState:
@@ -520,6 +631,80 @@ def _explicit_state(item: dict[str, Any]) -> QueueWorkItemState | None:
     if "state" not in item or item.get("state") is None:
         return None
     return QueueWorkItemState(str(item["state"]))
+
+
+def _execution_state(item: dict[str, Any]) -> QueueWorkItemState:
+    if "state" not in item:
+        raise QueueStateError("Queue work item is not executable: missing queue state.")
+    if item.get("state") is None:
+        raise QueueStateError("Queue work item is not executable: null queue state.")
+    try:
+        return QueueWorkItemState(str(item["state"]))
+    except ValueError as error:
+        raise QueueStateError(f"Queue work item is not executable: unknown queue state {item['state']!r}.") from error
+
+
+def _execution_priority(item: dict[str, Any]) -> str:
+    if "priority" not in item or item.get("priority") is None:
+        return "NORMAL"
+    raw_priority = str(item["priority"])
+    if raw_priority not in VALID_PRIORITIES:
+        raise QueueStateError(f"Queue work item is not executable: unknown priority {raw_priority!r}.")
+    return raw_priority
+
+
+def _parse_global_state(item: dict[str, Any]) -> dict[str, Any]:
+    if "state" not in item:
+        return {
+            "state": None,
+            "state_label": "LEGACY_UNSCHEDULABLE",
+            "raw_state": None,
+            "exclusion_reason": "LEGACY_UNSCHEDULABLE:MISSING_STATE",
+        }
+    if item.get("state") is None:
+        return {
+            "state": None,
+            "state_label": "MALFORMED_UNSCHEDULABLE",
+            "raw_state": None,
+            "exclusion_reason": "MALFORMED_UNSCHEDULABLE:NULL_STATE",
+        }
+    raw_state = str(item["state"])
+    try:
+        state = QueueWorkItemState(raw_state)
+    except ValueError:
+        return {
+            "state": None,
+            "state_label": "MALFORMED_UNSCHEDULABLE",
+            "raw_state": raw_state,
+            "exclusion_reason": f"MALFORMED_UNSCHEDULABLE:UNKNOWN_STATE:{raw_state}",
+        }
+    return {
+        "state": state,
+        "state_label": state.value,
+        "raw_state": raw_state,
+        "exclusion_reason": None,
+    }
+
+
+def _parse_global_priority(item: dict[str, Any]) -> dict[str, Any]:
+    if "priority" not in item or item.get("priority") is None:
+        return {
+            "priority": "NORMAL",
+            "raw_priority": None,
+            "exclusion_reason": None,
+        }
+    raw_priority = str(item["priority"])
+    if raw_priority not in VALID_PRIORITIES:
+        return {
+            "priority": raw_priority,
+            "raw_priority": raw_priority,
+            "exclusion_reason": f"MALFORMED_UNSCHEDULABLE:UNKNOWN_PRIORITY:{raw_priority}",
+        }
+    return {
+        "priority": raw_priority,
+        "raw_priority": raw_priority,
+        "exclusion_reason": None,
+    }
 
 
 def _global_workflow_exclusion_reason(workflow: PersistentWorkflowORM) -> str | None:

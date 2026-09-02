@@ -253,12 +253,21 @@ inspectable historical state from executable queue state.
 
 ```bash
 python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-next LWORK_000001 LWORK_000002
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-start LWORK_000001 LWORK_000002
 ```
 
 `queue-global-next` returns the deterministic global scheduling decision
 without starting work. The ordering rule is priority, resume class, creation
 order, project id, workflow id, then item id. If any item is already running,
 the command reports `GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION`.
+
+`queue-global-start` uses the actual global dispatch path. It first computes the
+global selection, then starts exactly that selected item only after validating
+the selected project/workflow/item, item version, workflow lifecycle, item state,
+priority, dependencies, no-preemption rule, and ordering. It must not fall back
+to another item. If the selection is stale or malformed, the command fails and
+the operator should rerun global selection after the underlying state is
+resolved.
 
 For Phase 1.21 pilot reconstruction, provide the workflow ids explicitly so the
 evaluated global scope is unambiguous. Omitting workflow ids asks Lucius to
@@ -277,6 +286,12 @@ Missing item `state` means legacy or ambiguous backlog data. It is reported with
 `state_label: LEGACY_UNSCHEDULABLE`, `queue_state_present: false`,
 `schedulable: false`, and an exclusion reason. It must not be treated as
 `READY` for global execution.
+
+Unknown or null item `state`, and unknown priority values, are malformed
+unschedulable data. Operator output preserves raw state/priority where present
+and reports reasons such as `MALFORMED_UNSCHEDULABLE:UNKNOWN_STATE:<value>`,
+`MALFORMED_UNSCHEDULABLE:NULL_STATE`, or
+`MALFORMED_UNSCHEDULABLE:UNKNOWN_PRIORITY:<value>`.
 
 ## List Pilot Evidence
 

@@ -142,9 +142,10 @@ task, work-item id, logical task id, queue state, derived state label, priority,
 creation order, dependencies, current block checkpoint, original item payload,
 and derived execution-eligibility fields.
 
-`GlobalQueueSelection` records the selected project/workflow/item plus eligible,
-blocked, running, and excluded item groups. `GlobalQueueStatus` records observed
-workflows, active schedulable workflows, active projects, state-grouped items,
+`GlobalQueueSelection` records the selected project/workflow/item, selected item
+version, mutation evidence when dispatch occurs, and eligible, blocked, running,
+and excluded item groups. `GlobalQueueStatus` records observed workflows, active
+schedulable workflows, active projects, state-grouped items,
 legacy-unschedulable items, lifecycle-excluded workflows, and the next global
 selection.
 
@@ -156,3 +157,9 @@ such as `LIFECYCLE_EXCLUDED:COMPLETED_PENDING_INTEGRATION`.
 
 Global queue state remains derived from existing `PersistentWorkflow` rows. No
 new queue table is introduced in Phase 1.21.
+
+Phase 1.21C extends the read model with raw state, raw priority, item version,
+priority validity, and mutation identity evidence. Malformed state or priority
+is represented as unschedulable inspection data rather than normalized storage.
+Exact global dispatch validates the selected identity and version immediately
+before mutation and records whether the mutated identity matched selection.

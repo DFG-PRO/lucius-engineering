@@ -309,11 +309,15 @@ class GlobalQueueItem(BaseModel):
     title: str | None = None
     state: QueueWorkItemState | None = None
     state_label: str | None = None
+    raw_state: str | None = None
     priority: str = "NORMAL"
+    raw_priority: str | None = None
     created_order: int = 0
+    version: int = 0
     dependencies: list[str] = Field(default_factory=list)
     current_block_checkpoint_id: str | None = None
     queue_state_present: bool = True
+    priority_valid: bool = True
     schedulable: bool = True
     exclusion_reason: str | None = None
     item: dict[str, Any] = Field(default_factory=dict)
@@ -333,6 +337,15 @@ class GlobalQueueSelection(BaseModel):
     selected_workflow_id: str | None = None
     selected_item_id: str | None = None
     reason: str
+    selected_item_version: int | None = None
+    started_project_id: str | None = None
+    started_workflow_id: str | None = None
+    started_item_id: str | None = None
+    started_previous_state: str | None = None
+    started_new_state: str | None = None
+    started_previous_version: int | None = None
+    started_new_version: int | None = None
+    mutation_identity_matches_selection: bool | None = None
     eligible_items: list[GlobalQueueItem] = Field(default_factory=list)
     blocked_items: list[GlobalQueueItem] = Field(default_factory=list)
     running_items: list[GlobalQueueItem] = Field(default_factory=list)

@@ -264,7 +264,7 @@ when any eligible workflow has a running item, excludes
 blocked/terminal/dependency-incomplete work, and selects by priority, state
 class, creation order, project id, workflow id, then item id.
 
-After Phase 1.21B, global execution eligibility fails closed. Only `PLAN_READY`,
+After Phase 1.21B, global read/select eligibility fails closed. Only `PLAN_READY`,
 `IMPLEMENTING`, `VERIFYING`, `CHECKPOINT_REVIEW_REQUIRED`,
 `RESUME_VALIDATION`, `BLOCKED`, and `APPROVED_TO_CONTINUE` workflows can
 participate in active global scheduling. `OBJECTIVE_ACCEPTED`, `PLANNING`,
@@ -272,6 +272,17 @@ participate in active global scheduling. `OBJECTIVE_ACCEPTED`, `PLANNING`,
 are lifecycle-excluded. Queue items without an explicit queue `state` are
 classified as legacy unschedulable and are never treated as `READY` by the global
 scheduler.
+
+After Phase 1.21C, global execution also requires exact item validation. A
+global selection is not execution authority until the selected project,
+workflow, item id, item version, lifecycle state, dependencies, priority, and
+ordering are revalidated immediately before mutation. Global dispatch must not
+call scoped `start_next` or perform any second scheduling decision. If the
+selected item becomes stale, blocked, completed, dependency-incomplete,
+lifecycle-ineligible, malformed, or outranked before dispatch, execution rejects
+and the caller must rerun global selection. Malformed persisted state or
+priority remains inspectable with raw values and exclusion reasons, but is not
+schedulable.
 
 The cross-project priority rule is explicit: higher priority `READY` work in
 one project beats lower-priority `READY_TO_RESUME` work in another project.
@@ -287,5 +298,7 @@ Promotion to `READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE` requires passing
 cross-project evaluation, global scheduler evaluation, fresh-context
 reconstruction, duplicate protection, project isolation, safe interruption,
 stale-history safety, lifecycle-scope safety, safe unscoped global
-reconstruction, formal benchmarks, and target-integrity checks. The result does
-not authorize multi-worker concurrency.
+reconstruction, exact global dispatch, global selection equals mutation,
+malformed persistence safety, stale-selection safety, formal benchmarks, and
+target-integrity checks. The result does not authorize multi-worker
+concurrency.

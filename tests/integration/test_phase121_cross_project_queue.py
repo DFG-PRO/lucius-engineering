@@ -70,6 +70,7 @@ def test_cross_project_queue_pilot_scenario(session):
     assert [item.item_id for item in after_block.dependency_blocked] == ["B2", "B3"]
 
     queue.start_global_next(workflow_ids)
+    assert queue.inspect(workflow_b.id).running[0]["item_id"] == "B1"
     queue.complete_item(workflow_b.id, "B1", completed_substeps=["shared.validate", "B1.docs"])
 
     after_b1 = queue.inspect_global(workflow_ids)
@@ -92,6 +93,7 @@ def test_cross_project_queue_pilot_scenario(session):
     assert priority_case.eligible_items[1].item_id == "A1"
 
     queue.start_global_next(workflow_ids)
+    assert queue.inspect(workflow_b.id).running[0]["item_id"] == "B2"
     no_preempt = queue.select_global_next(workflow_ids)
     assert no_preempt.selected_item_id is None
     assert no_preempt.reason == "GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION"
@@ -104,6 +106,7 @@ def test_cross_project_queue_pilot_scenario(session):
     assert after_b2.reason.startswith(f"project=PROJECT_A workflow={workflow_a.id}")
 
     queue.start_global_next(workflow_ids)
+    assert queue.inspect(workflow_a.id).running[0]["item_id"] == "A1"
     completed_a = queue.complete_item(workflow_a.id, "A1", completed_substeps=["A1.finish"])
     assert completed_a["completed_substeps"] == ["shared.validate", "A1.service", "A1.finish"]
 
@@ -395,6 +398,10 @@ def _cross_project_evaluation_row(
         "stale_history_safety": {"result": "PASS"},
         "lifecycle_scope_safety": {"result": "PASS"},
         "unscoped_global_reconstruction": {"result": "PASS"},
+        "exact_global_dispatch": {"result": "PASS"},
+        "global_selection_equals_mutation": {"result": "PASS"},
+        "malformed_persistence_safety": {"result": "PASS"},
+        "stale_selection_safety": {"result": "PASS"},
         "multi_project_non_blocking_tested": True,
     }
     row.evaluator_version = "1.21-test"

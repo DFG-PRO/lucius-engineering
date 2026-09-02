@@ -177,6 +177,10 @@ class ReleaseGateService:
                 implementation_artifact.get("stale_history_safety", {}).get("result") == "PASS",
                 implementation_artifact.get("lifecycle_scope_safety", {}).get("result") == "PASS",
                 implementation_artifact.get("unscoped_global_reconstruction", {}).get("result") == "PASS",
+                implementation_artifact.get("exact_global_dispatch", {}).get("result") == "PASS",
+                implementation_artifact.get("global_selection_equals_mutation", {}).get("result") == "PASS",
+                implementation_artifact.get("malformed_persistence_safety", {}).get("result") == "PASS",
+                implementation_artifact.get("stale_selection_safety", {}).get("result") == "PASS",
                 implementation_artifact.get("multi_project_non_blocking_tested") is True,
             ]
             if all(required_checks):

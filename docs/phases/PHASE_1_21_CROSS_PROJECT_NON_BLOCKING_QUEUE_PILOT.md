@@ -126,10 +126,11 @@ python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-st
 python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-next LWORK_000001 LWORK_000002
 ```
 
-When workflow ids are omitted, the service inspects all non-closed workflows
-with queue backlog state. After Phase 1.21B, omitted workflow ids are safe by
-default because lifecycle-ineligible workflows and legacy items without explicit
-queue state remain inspectable but cannot enter the executable candidate set.
+When workflow ids are omitted, the service inspects workflows with queue backlog
+state. After Phase 1.21B and 1.21C, omitted workflow ids are safe by default
+because lifecycle-ineligible workflows, legacy items without explicit queue
+state, and malformed persisted queue items remain inspectable but cannot enter
+the executable candidate set.
 Supplying workflow ids is still preferred for pilot reconstruction because it
 makes the evaluated scope explicit.
 
@@ -187,6 +188,25 @@ Phase 1.21B repaired the defect without rewriting historical rows:
   `NO_GLOBAL_ELIGIBLE_WORK` for stale history instead of selecting old backlog.
 - Exclusion reasons are machine-readable in `lifecycle_excluded`,
   `legacy_unschedulable`, and `excluded_items`.
+
+Independent Phase 1.21B closure audit artifact `LRUBRIC_000018` then found a
+CRITICAL follow-on defect: `start_global_next` globally selected one item but
+delegated mutation to scoped `start_next`, allowing a legacy missing-state item
+to hijack dispatch. Phase 1.21C repairs that exact-dispatch boundary:
+
+- `LPLAN_000010` / `LFREEZE_000010` froze the bounded exact-dispatch repair
+  plan.
+- Global selection is not execution authority until exact item validation
+  passes.
+- Global dispatch preserves selected project/workflow/item identity and item
+  version through mutation; it performs no local re-selection.
+- Stale selected item, dependency, lifecycle, version, or ordering changes are
+  rejected and require the caller to rerun global selection.
+- Unknown/null item state and unknown priority are exposed as malformed
+  unschedulable items with raw persisted values and exclusion reasons.
+- Release readiness now requires evidence that global selection equals
+  mutation, including legacy, lifecycle, malformed, stale-selection, and
+  fresh-context dispatch cases.
 
 No human rubric is invented. If no human scoring is captured, the rubric remains
 `NOT_CAPTURED`.
