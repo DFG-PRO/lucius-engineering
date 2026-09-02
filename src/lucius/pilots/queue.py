@@ -7,10 +7,17 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, QueueWorkItemState
+from lucius.domain.enums import Actor, PersistentWorkflowState, QueueWorkItemState
 from lucius.persistence.orm import PersistentWorkflowORM, utc_now
 from lucius.persistence.repositories import next_id
-from lucius.pilots.schemas import QueueBlockCheckpoint, QueueSelection, QueueStatus
+from lucius.pilots.schemas import (
+    GlobalQueueItem,
+    GlobalQueueSelection,
+    GlobalQueueStatus,
+    QueueBlockCheckpoint,
+    QueueSelection,
+    QueueStatus,
+)
 
 
 BLOCKED_STATES = {
@@ -277,6 +284,69 @@ class NonBlockingQueueService:
     def validate_fresh_reconstruction(self, workflow_id: str) -> QueueStatus:
         return self.inspect(workflow_id)
 
+    def inspect_global(self, workflow_ids: list[str] | None = None) -> GlobalQueueStatus:
+        workflows = self._global_workflows(workflow_ids)
+        workflow_ids = [workflow.id for workflow in workflows]
+        items = self._global_items(workflows)
+        selection = self.select_global_next(workflow_ids)
+        return GlobalQueueStatus(
+            workflow_ids=workflow_ids,
+            active_project_ids=sorted({item.project_id for item in items if item.project_id}),
+            running=[item for item in items if item.state == QueueWorkItemState.RUNNING],
+            blocked=[item for item in items if item.state in BLOCKED_STATES],
+            ready=[item for item in items if item.state == QueueWorkItemState.READY and self._global_dependencies_complete(item, items)],
+            ready_to_resume=[
+                item
+                for item in items
+                if item.state == QueueWorkItemState.READY_TO_RESUME and self._global_dependencies_complete(item, items)
+            ],
+            dependency_blocked=[item for item in items if not self._global_dependencies_complete(item, items)],
+            completed=[item for item in items if item.state == QueueWorkItemState.COMPLETED],
+            failed=[item for item in items if item.state == QueueWorkItemState.FAILED],
+            next_selection=selection,
+        )
+
+    def select_global_next(self, workflow_ids: list[str] | None = None) -> GlobalQueueSelection:
+        workflows = self._global_workflows(workflow_ids)
+        items = self._global_items(workflows)
+        self._validate_global_running_identities(items)
+        running = [item for item in items if item.state == QueueWorkItemState.RUNNING]
+        if running:
+            return GlobalQueueSelection(reason="GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION", running_items=running)
+        eligible = [item for item in items if self._global_is_eligible(item, items)]
+        blocked = [
+            item
+            for item in items
+            if item.state in BLOCKED_STATES or not self._global_dependencies_complete(item, items)
+        ]
+        if not eligible:
+            return GlobalQueueSelection(reason="NO_GLOBAL_ELIGIBLE_WORK", blocked_items=blocked)
+        ordered = sorted(eligible, key=_global_selection_key)
+        selected = ordered[0]
+        return GlobalQueueSelection(
+            selected_project_id=selected.project_id,
+            selected_workflow_id=selected.workflow_id,
+            selected_item_id=selected.item_id,
+            reason=_global_selection_reason(selected),
+            eligible_items=ordered,
+            blocked_items=blocked,
+        )
+
+    def start_global_next(
+        self,
+        workflow_ids: list[str] | None = None,
+        *,
+        actor: Actor = Actor.LUCIUS,
+    ) -> GlobalQueueSelection:
+        selection = self.select_global_next(workflow_ids)
+        if selection.selected_workflow_id is None:
+            return selection
+        self.start_next(selection.selected_workflow_id, actor=actor)
+        return selection
+
+    def validate_fresh_global_reconstruction(self, workflow_ids: list[str] | None = None) -> GlobalQueueStatus:
+        return self.inspect_global(workflow_ids)
+
     def _workflow(self, workflow_id: str) -> PersistentWorkflowORM:
         row = self.session.get(PersistentWorkflowORM, workflow_id)
         if row is None:
@@ -316,6 +386,60 @@ class NonBlockingQueueService:
         item["version"] = int(item.get("version", 0)) + 1
         item["updated_at"] = _now_iso()
 
+    def _global_workflows(self, workflow_ids: list[str] | None) -> list[PersistentWorkflowORM]:
+        if workflow_ids:
+            workflows = [self._workflow(workflow_id) for workflow_id in workflow_ids]
+        else:
+            workflows = list(self.session.query(PersistentWorkflowORM).order_by(PersistentWorkflowORM.id).all())
+        return [
+            workflow
+            for workflow in workflows
+            if workflow.task_backlog and workflow.workflow_state != PersistentWorkflowState.CLOSED.value
+        ]
+
+    def _global_items(self, workflows: list[PersistentWorkflowORM]) -> list[GlobalQueueItem]:
+        global_items: list[GlobalQueueItem] = []
+        for workflow in workflows:
+            items = self._items(workflow)
+            self._validate_unique_items(items)
+            for item in items:
+                item_id = _item_id(item)
+                global_items.append(
+                    GlobalQueueItem(
+                        project_id=workflow.project_id,
+                        workflow_id=workflow.id,
+                        repository_id=workflow.repository_id,
+                        workflow_task_id=workflow.task_id,
+                        item_id=item_id,
+                        logical_task_id=str(item.get("logical_task_id") or item.get("task_id") or item_id),
+                        title=item.get("title"),
+                        state=_state(item),
+                        priority=str(item.get("priority", "NORMAL")).upper(),
+                        created_order=int(item.get("created_order", 0)),
+                        dependencies=[str(dependency) for dependency in item.get("dependencies", [])],
+                        current_block_checkpoint_id=item.get("current_block_checkpoint_id"),
+                        item=deepcopy(item),
+                    )
+                )
+        return global_items
+
+    def _global_dependencies_complete(self, item: GlobalQueueItem, items: list[GlobalQueueItem]) -> bool:
+        completed = {
+            candidate.item_id
+            for candidate in items
+            if candidate.workflow_id == item.workflow_id and candidate.state == QueueWorkItemState.COMPLETED
+        }
+        return all(dependency in completed for dependency in item.dependencies)
+
+    def _global_is_eligible(self, item: GlobalQueueItem, items: list[GlobalQueueItem]) -> bool:
+        return item.state in ELIGIBLE_STATES and self._global_dependencies_complete(item, items)
+
+    def _validate_global_running_identities(self, items: list[GlobalQueueItem]) -> None:
+        running = [item for item in items if item.state == QueueWorkItemState.RUNNING]
+        scoped_identities = [(item.project_id, item.logical_task_id) for item in running]
+        if len(scoped_identities) != len(set(scoped_identities)):
+            raise QueueStateError("Duplicate global RUNNING logical work item detected.")
+
 
 def _item_id(item: dict[str, Any]) -> str:
     return str(item.get("item_id") or item.get("task_id"))
@@ -338,6 +462,24 @@ def _selection_reason(item: dict[str, Any]) -> str:
     return (
         f"priority={str(item.get('priority', 'NORMAL')).upper()} "
         f"state={_state(item).value} order={int(item.get('created_order', 0))}"
+    )
+
+
+def _global_selection_key(item: GlobalQueueItem) -> tuple[int, int, int, str, str, str]:
+    return (
+        PRIORITY_RANK.get(item.priority.upper(), PRIORITY_RANK["NORMAL"]),
+        STATE_CLASS_RANK.get(item.state, 9),
+        item.created_order,
+        item.project_id or "",
+        item.workflow_id,
+        item.item_id,
+    )
+
+
+def _global_selection_reason(item: GlobalQueueItem) -> str:
+    return (
+        f"project={item.project_id} workflow={item.workflow_id} "
+        f"priority={item.priority.upper()} state={item.state.value} order={item.created_order}"
     )
 
 

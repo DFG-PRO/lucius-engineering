@@ -238,6 +238,30 @@ duplicate-work protection, workflow isolation, safe interruption, and explicit
 multi-project non-blocking testing. This recommendation does not authorize
 multi-worker concurrency or unrestricted write autonomy.
 
+## Inspect Global Queue State
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-status LWORK_000001 LWORK_000002
+```
+
+This command returns JSON across the supplied workflows: active projects,
+running items, blocked items, ready items, ready-to-resume items,
+dependency-blocked items, completed items, failed items, and the global next
+selection.
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-next LWORK_000001 LWORK_000002
+```
+
+`queue-global-next` returns the deterministic global scheduling decision
+without starting work. The ordering rule is priority, resume class, creation
+order, project id, workflow id, then item id. If any item is already running,
+the command reports `GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION`.
+
+For Phase 1.21 pilot reconstruction, provide the workflow ids explicitly so the
+evaluated global scope is unambiguous. Omitting workflow ids asks Lucius to
+inspect every non-closed persistent workflow with queue backlog state.
+
 ## List Pilot Evidence
 
 ```bash

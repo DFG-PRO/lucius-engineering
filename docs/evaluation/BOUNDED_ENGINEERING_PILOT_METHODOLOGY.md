@@ -250,3 +250,31 @@ passing project isolation, passing safe-interruption checks, and explicit
 evidence that multi-project non-blocking selection was tested. It does not
 authorize multi-worker concurrency, automatic merge, push, deployment,
 credential work, destructive Git, or unrestricted autonomy.
+
+## Cross-Project Non-Blocking Queue Pilot
+
+Phase 1.21 extends the queue pilot to a global scheduler over multiple
+persistent workflows. It still assumes one logical execution capacity and safe
+checkpoint boundaries rather than worker concurrency.
+
+The global scheduler gathers non-closed workflows with queue backlogs, validates
+per-workflow duplicate item ids, validates duplicate running logical identities
+by project scope, refuses unsafe global preemption when any item is already
+running, excludes blocked/terminal/dependency-incomplete work, and selects by
+priority, state class, creation order, project id, workflow id, then item id.
+
+The cross-project priority rule is explicit: higher priority `READY` work in
+one project beats lower-priority `READY_TO_RESUME` work in another project.
+Within equal priority, `READY_TO_RESUME` may outrank `READY`.
+
+Post-cross-project outcomes are:
+
+- `NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE`
+- `READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT`
+- `READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE`
+
+Promotion to `READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE` requires passing
+cross-project evaluation, global scheduler evaluation, fresh-context
+reconstruction, duplicate protection, project isolation, safe interruption,
+formal benchmarks, and target-integrity checks. The result does not authorize
+multi-worker concurrency.

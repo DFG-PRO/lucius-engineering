@@ -1,4 +1,5 @@
 from lucius.domain.enums import (
+    AutonomyRecommendation,
     AuthorityLevel,
     DetectionStatus,
     Environment,
@@ -52,6 +53,10 @@ def test_required_enums_exist():
     assert SnapshotMode.STANDARD.value == "STANDARD"
     assert QueueWorkItemState.READY_TO_RESUME.value == "READY_TO_RESUME"
     assert ExportedQueueWorkItemState.WAITING_EXTERNAL.value == "WAITING_EXTERNAL"
+    assert (
+        AutonomyRecommendation.READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT.value
+        == "READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT"
+    )
 
 
 def test_project_registration_creates_project_and_audit_event(session):

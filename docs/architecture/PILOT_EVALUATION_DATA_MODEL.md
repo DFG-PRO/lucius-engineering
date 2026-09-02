@@ -135,3 +135,15 @@ The queue read model is computed from persisted workflow state and reports
 running, blocked, ready, ready-to-resume, dependency-blocked, completed, failed,
 and next-selection groups. Read-only queue inspection must not mutate the
 workflow.
+
+Phase 1.21 adds global queue read models over multiple persistent workflows.
+`GlobalQueueItem` includes the owning project, workflow, repository, workflow
+task, work-item id, logical task id, queue state, priority, creation order,
+dependencies, current block checkpoint, and original item payload.
+
+`GlobalQueueSelection` records the selected project/workflow/item plus eligible,
+blocked, and running item groups. `GlobalQueueStatus` records active projects,
+active workflows, state-grouped items, and the next global selection.
+
+Global queue state remains derived from existing `PersistentWorkflow` rows. No
+new queue table is introduced in Phase 1.21.

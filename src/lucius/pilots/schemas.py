@@ -297,3 +297,43 @@ class QueueStatus(BaseModel):
     failed: list[dict[str, Any]] = Field(default_factory=list)
     next_selection: QueueSelection
     generated_at: datetime = Field(default_factory=utc_now)
+
+
+class GlobalQueueItem(BaseModel):
+    project_id: str | None = None
+    workflow_id: str
+    repository_id: str | None = None
+    workflow_task_id: str | None = None
+    item_id: str
+    logical_task_id: str
+    title: str | None = None
+    state: QueueWorkItemState
+    priority: str = "NORMAL"
+    created_order: int = 0
+    dependencies: list[str] = Field(default_factory=list)
+    current_block_checkpoint_id: str | None = None
+    item: dict[str, Any] = Field(default_factory=dict)
+
+
+class GlobalQueueSelection(BaseModel):
+    selected_project_id: str | None = None
+    selected_workflow_id: str | None = None
+    selected_item_id: str | None = None
+    reason: str
+    eligible_items: list[GlobalQueueItem] = Field(default_factory=list)
+    blocked_items: list[GlobalQueueItem] = Field(default_factory=list)
+    running_items: list[GlobalQueueItem] = Field(default_factory=list)
+
+
+class GlobalQueueStatus(BaseModel):
+    workflow_ids: list[str] = Field(default_factory=list)
+    active_project_ids: list[str] = Field(default_factory=list)
+    running: list[GlobalQueueItem] = Field(default_factory=list)
+    blocked: list[GlobalQueueItem] = Field(default_factory=list)
+    ready: list[GlobalQueueItem] = Field(default_factory=list)
+    ready_to_resume: list[GlobalQueueItem] = Field(default_factory=list)
+    dependency_blocked: list[GlobalQueueItem] = Field(default_factory=list)
+    completed: list[GlobalQueueItem] = Field(default_factory=list)
+    failed: list[GlobalQueueItem] = Field(default_factory=list)
+    next_selection: GlobalQueueSelection
+    generated_at: datetime = Field(default_factory=utc_now)

@@ -108,13 +108,18 @@ class ReleaseGateService:
                 warnings.append(
                     "human rubric NOT_CAPTURED; warning for non-blocking queue pilot, hard blocker before broader autonomy"
                 )
+            elif pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
+                warnings.append(
+                    "human rubric NOT_CAPTURED; warning for cross-project queue pilot, hard blocker before broader autonomy"
+                )
             else:
                 warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         if blockers:
             recommendation = (
                 AutonomyRecommendation.NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE
-                if is_plan_vs_implementation and pilot_stage == "NON_BLOCKING_PROJECT_QUEUE_PILOT"
+                if is_plan_vs_implementation
+                and pilot_stage in {"NON_BLOCKING_PROJECT_QUEUE_PILOT", "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT"}
                 else
                 AutonomyRecommendation.NOT_READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING
                 if is_plan_vs_implementation and pilot_stage == "PERSISTENT_SUPERVISED_WORKFLOW"
@@ -161,6 +166,20 @@ class ReleaseGateService:
                 recommendation = AutonomyRecommendation.READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE
             else:
                 recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_NON_BLOCKING_PROJECT_QUEUE_PILOT
+        elif is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
+            required_checks = [
+                implementation_artifact.get("cross_project_evaluation", {}).get("result") == "PASS",
+                implementation_artifact.get("global_scheduler_evaluation", {}).get("result") == "PASS",
+                implementation_artifact.get("fresh_context_reconstruction", {}).get("result") == "PASS",
+                implementation_artifact.get("duplicate_work_protection", {}).get("result") == "PASS",
+                implementation_artifact.get("project_isolation", {}).get("result") == "PASS",
+                implementation_artifact.get("safe_interruption", {}).get("result") == "PASS",
+                implementation_artifact.get("multi_project_non_blocking_tested") is True,
+            ]
+            if all(required_checks):
+                recommendation = AutonomyRecommendation.READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE
+            else:
+                recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT
         elif is_plan_vs_implementation and pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT":
             if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
                 recommendation = AutonomyRecommendation.READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
