@@ -16,6 +16,7 @@ from lucius.domain.enums import (
     PilotLearningStatus,
     PlanningEvidenceMode,
     PersistentWorkflowState,
+    QueueWorkItemState,
     RepositoryIntegrityResult,
     RepositoryStateClassification,
     ResumeValidationResult,
@@ -254,3 +255,45 @@ class ResumeValidation(BaseModel):
     next_eligible_task_id: str | None = None
     notes: str | None = None
     validated_at: datetime
+
+
+class QueueSelection(BaseModel):
+    selected_item_id: str | None = None
+    reason: str
+    eligible_item_ids: list[str] = Field(default_factory=list)
+    blocked_item_ids: list[str] = Field(default_factory=list)
+    running_item_ids: list[str] = Field(default_factory=list)
+
+
+class QueueBlockCheckpoint(BaseModel):
+    id: str
+    workflow_id: str
+    item_id: str
+    prior_state: QueueWorkItemState
+    blocking_state: QueueWorkItemState
+    blocking_reason: str
+    blocker_category: str
+    work_completed: list[str] = Field(default_factory=list)
+    implementation_head: str | None = None
+    pending_decision_or_dependency: str | None = None
+    resume_condition: str
+    known_risks: list[str] = Field(default_factory=list)
+    relevant_artifacts: list[str] = Field(default_factory=list)
+    repair_counters: dict[str, Any] = Field(default_factory=dict)
+    approval_requirements: list[str] = Field(default_factory=list)
+    next_safe_action: str
+    stale_state_validation_requirements: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class QueueStatus(BaseModel):
+    workflow_id: str
+    running: list[dict[str, Any]] = Field(default_factory=list)
+    blocked: list[dict[str, Any]] = Field(default_factory=list)
+    ready: list[dict[str, Any]] = Field(default_factory=list)
+    ready_to_resume: list[dict[str, Any]] = Field(default_factory=list)
+    dependency_blocked: list[dict[str, Any]] = Field(default_factory=list)
+    completed: list[dict[str, Any]] = Field(default_factory=list)
+    failed: list[dict[str, Any]] = Field(default_factory=list)
+    next_selection: QueueSelection
+    generated_at: datetime = Field(default_factory=utc_now)

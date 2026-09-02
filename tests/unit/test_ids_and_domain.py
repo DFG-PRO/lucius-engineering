@@ -4,12 +4,14 @@ from lucius.domain.enums import (
     Environment,
     KnowledgeScope,
     ProjectStatus,
+    QueueWorkItemState,
     RepositoryAccessMode,
     RepositoryAdapterType,
     SnapshotMode,
     TaskComplexity,
     ValidationStatus,
 )
+from lucius.domain import QueueWorkItemState as ExportedQueueWorkItemState
 from lucius.domain.ids import format_public_id
 from lucius.persistence.orm import AuditEventORM
 from lucius.persistence.repositories import ProjectService
@@ -34,6 +36,7 @@ def test_canonical_id_formatting():
     assert format_public_id("benchmark", 1) == "LBENCH_000001"
     assert format_public_id("pilot_learning", 1) == "LPLEARN_000001"
     assert format_public_id("pilot_record", 1) == "LPILOT_000001"
+    assert format_public_id("queue_checkpoint", 1) == "LQCHK_000001"
 
 
 def test_required_enums_exist():
@@ -47,6 +50,8 @@ def test_required_enums_exist():
     assert ValidationStatus.VALIDATED.value == "VALIDATED"
     assert DetectionStatus.UNKNOWN.value == "UNKNOWN"
     assert SnapshotMode.STANDARD.value == "STANDARD"
+    assert QueueWorkItemState.READY_TO_RESUME.value == "READY_TO_RESUME"
+    assert ExportedQueueWorkItemState.WAITING_EXTERNAL.value == "WAITING_EXTERNAL"
 
 
 def test_project_registration_creates_project_and_audit_event(session):

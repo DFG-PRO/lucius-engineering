@@ -9,6 +9,7 @@ from lucius.persistence.database import create_all, create_sqlite_engine, make_s
 from lucius.pilots.benchmark import BenchmarkRunnerService
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
+from lucius.pilots.queue import NonBlockingQueueService
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.repository_state import RepositoryStateError, RepositoryStateService
 from lucius.pilots.rubric import HumanRubricService
@@ -62,6 +63,12 @@ def main() -> None:
     gate.add_argument("--benchmark-after-id")
     gate.add_argument("--human-rubric-id")
     gate.add_argument("--repository-integrity-result", default=RepositoryIntegrityResult.UNCHANGED.value)
+
+    queue_status = sub.add_parser("queue-status")
+    queue_status.add_argument("workflow_id")
+
+    queue_next = sub.add_parser("queue-next")
+    queue_next.add_argument("workflow_id")
 
     args = parser.parse_args()
     engine = create_sqlite_engine(args.database)
@@ -169,6 +176,12 @@ def main() -> None:
                 repository_integrity_result=RepositoryIntegrityResult(args.repository_integrity_result),
                 human_rubric_id=args.human_rubric_id,
             )
+            print(result.model_dump_json(indent=2))
+        elif args.command == "queue-status":
+            result = NonBlockingQueueService(session).inspect(args.workflow_id)
+            print(result.model_dump_json(indent=2))
+        elif args.command == "queue-next":
+            result = NonBlockingQueueService(session).select_next(args.workflow_id)
             print(result.model_dump_json(indent=2))
 
 

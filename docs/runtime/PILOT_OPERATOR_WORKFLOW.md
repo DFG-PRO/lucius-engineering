@@ -205,6 +205,39 @@ pause/resume pilot. Operators should record the `LWORK_*`, `LWCHK_*`, and
 readiness, repair counters, and pending human approvals before allowing the
 workflow to leave `RESUME_VALIDATION`.
 
+## Inspect Non-Blocking Queue State
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-status LWORK_000001
+```
+
+The command returns JSON for running, blocked, ready, ready-to-resume,
+dependency-blocked, completed, failed, and next-selection groups. It is
+read-only.
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-next LWORK_000001
+```
+
+`queue-next` returns the deterministic scheduler decision without starting work.
+The scheduler validates duplicate ids, rejects duplicate `RUNNING` logical
+tasks, refuses unsafe mid-task preemption when a work item is already running,
+excludes blocked/terminal/dependency-incomplete work, and selects by priority,
+resume class, creation order, then id.
+
+When a work item blocks, persist a queue checkpoint with its reason, category,
+completed substeps, resume condition, approvals, repair counters, next safe
+action, and stale validation rules. When the blocker resolves, require the
+current checkpoint id and expected item version before moving the item to
+`READY_TO_RESUME`.
+
+For a non-blocking queue pilot, the release gate may recommend
+`READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE` only when the deterministic
+artifact reports passing queue evaluation, fresh-context reconstruction,
+duplicate-work protection, workflow isolation, safe interruption, and explicit
+multi-project non-blocking testing. This recommendation does not authorize
+multi-worker concurrency or unrestricted write autonomy.
+
 ## List Pilot Evidence
 
 ```bash

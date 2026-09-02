@@ -41,6 +41,7 @@ The public ID generator now includes Phase 1.12 prefixes:
 - `LBENCH_*`
 - `LPLEARN_*`
 - `LPILOT_*`
+- `LQCHK_*`
 
 ## Repository State
 
@@ -111,3 +112,26 @@ next action.
 `ResumeValidation` stores the result of a fresh resume audit. Its checks must
 come from durable workflow/checkpoint rows plus repository and filesystem
 verification, not conversational reconstruction.
+
+## Non-Blocking Queue State
+
+Phase 1.20 extends `PersistentWorkflow.task_backlog` to hold queue work items as
+structured JSON. This avoids a migration while the queue model is still narrow
+and pilot-scoped.
+
+Each work item records an item id, logical task id, project/workflow identity,
+state, priority, creation order, dependencies, completed substeps, and version.
+The canonical states are `READY`, `RUNNING`, `WAITING_HUMAN`,
+`WAITING_EXTERNAL`, `BLOCKED_DEPENDENCY`, `RETRY_LATER`, `READY_TO_RESUME`,
+`COMPLETED`, and `FAILED`.
+
+Queue block checkpoints use `LQCHK_*` ids. The checkpoint payload is persisted
+inside the blocked work item and referenced from workflow checkpoint history.
+It records the blocking reason, category, resume condition, completed work,
+relevant artifacts, approvals, repair counters, next safe action, and stale
+validation requirements.
+
+The queue read model is computed from persisted workflow state and reports
+running, blocked, ready, ready-to-resume, dependency-blocked, completed, failed,
+and next-selection groups. Read-only queue inspection must not mutate the
+workflow.

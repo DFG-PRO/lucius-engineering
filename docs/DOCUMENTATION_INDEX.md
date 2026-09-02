@@ -84,6 +84,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_18_FIRST_SUPERVISED_ENGINEERING_WORKFLOW.md`
 - `phases/PHASE_1_18A_HUMAN_REVIEW_AND_PERSISTENT_SUPERVISED_READINESS.md`
 - `phases/PHASE_1_19_PERSISTENT_WORKFLOW_PAUSE_RESUME_PILOT.md`
+- `phases/PHASE_1_20_NON_BLOCKING_PROJECT_QUEUE_PILOT.md`
 
 ## Reference
 
@@ -138,3 +139,5 @@ Phase 1.18 first supervised engineering workflow: IMPLEMENTED IN ISOLATED DARWIN
 Phase 1.18A human review and persistent supervised readiness: IMPLEMENTED; GATE READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING
 
 Phase 1.19 persistent workflow pause/resume pilot: IMPLEMENTED IN ISOLATED DARWIN WORKTREE; HUMAN REVIEW NOT_CAPTURED; INTEGRATION PENDING
+
+Phase 1.20 non-blocking project queue pilot: IMPLEMENTED IN LUCIUS; HUMAN REVIEW NOT_CAPTURED

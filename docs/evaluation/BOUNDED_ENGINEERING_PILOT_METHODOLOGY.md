@@ -208,3 +208,45 @@ Phase 1.19 adds durable persistent workflow artifacts:
 A persistent workflow may resume only after repository state, implementation
 HEAD, checkpoint state, task graph, repair budget, and authorization checks pass
 from durable state. Conversation memory is not sufficient evidence.
+
+## Non-Blocking Project Queue Pilot
+
+Phase 1.20 adds a queue semantics layer on top of persistent workflows. The
+principle is to block the work item, not the whole system.
+
+Blocked queue states are `WAITING_HUMAN`, `WAITING_EXTERNAL`,
+`BLOCKED_DEPENDENCY`, and `RETRY_LATER`. Terminal states are `COMPLETED` and
+`FAILED`. Eligible states are `READY` and `READY_TO_RESUME`, subject to complete
+dependencies.
+
+The deterministic scheduler first refuses unsafe mid-task preemption when any
+item is already `RUNNING`. Otherwise it selects eligible work by priority rank,
+state class, creation order, and id. Priority outranks resume status, so
+`READY_TO_RESUME` does not automatically jump ahead of higher-priority ready
+work.
+
+A blocked item must persist a queue checkpoint containing the blocking reason,
+blocker category, completed substeps, relevant artifacts, resume condition,
+repair counters, approval requirements, next safe action, and stale validation
+requirements. A resume transition must validate both checkpoint id and item
+version before setting the item to `READY_TO_RESUME`.
+
+The Phase 1.20 evaluation must separately check scheduler correctness,
+persistence quality, non-blocking behavior, resume correctness, duplicate-work
+prevention, dependency correctness, workflow isolation, fresh-context recovery,
+operator observability, autonomy behavior, documentation quality, and regression
+risk.
+
+Post-queue outcomes are:
+
+- `NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE`
+- `READY_FOR_ANOTHER_NON_BLOCKING_PROJECT_QUEUE_PILOT`
+- `READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE`
+
+`READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE` requires all hard gates to pass,
+no unacceptable benchmark regression, unchanged target integrity, passing queue
+evaluation, passing fresh-context reconstruction, passing duplicate protection,
+passing project isolation, passing safe-interruption checks, and explicit
+evidence that multi-project non-blocking selection was tested. It does not
+authorize multi-worker concurrency, automatic merge, push, deployment,
+credential work, destructive Git, or unrestricted autonomy.

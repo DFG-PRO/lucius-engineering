@@ -30,6 +30,7 @@ ENTITY_PREFIXES: dict[str, str] = {
     "persistent_workflow": "LWORK",
     "workflow_checkpoint": "LWCHK",
     "resume_validation": "LRESUME",
+    "queue_checkpoint": "LQCHK",
 }
 
 
