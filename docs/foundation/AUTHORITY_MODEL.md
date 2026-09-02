@@ -81,8 +81,17 @@ one-objective bounded multi-task pilot after a successful run when human review
 or supervised-workflow evidence is still incomplete.
 
 `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` authorizes supervised preparation
-and execution of bounded engineering work with human review gates. It does not
-authorize automatic integration or production operations.
+and execution of one bounded engineering objective with human review gates. It
+may span multiple internal checkpoints for that objective, including repository
+understanding, decomposition, planning, isolated implementation, bounded repair,
+testing, documentation, evidence capture, and review-package preparation. It
+does not authorize automatic integration or production operations.
+
+Supervised workflow checkpoints require human approval before merge to main,
+push when policy requires it, production deployment, destructive operations,
+credential/security changes, unplanned migration or schema expansion, material
+new external dependencies, architecture expansion outside the frozen objective,
+cross-project modifications, or material scope changes.
 
 No staged autonomy recommendation authorizes automatic merge to main, automatic
 push, production deployment, credential changes, destructive Git, force push,

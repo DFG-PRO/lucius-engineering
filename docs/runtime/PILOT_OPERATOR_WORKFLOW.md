@@ -167,6 +167,24 @@ review may support `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW`, but that result
 still does not authorize merge, push, deployment, production operations, or
 unrestricted architecture changes.
 
+For supervised engineering readiness, capture Daniel's human review against the
+bounded multi-task pilot package, recompute the release gate with the captured
+rubric, and persist a superseding pilot evaluation record. A promoted workflow
+may maintain one bounded objective through repository understanding,
+decomposition, planning, isolated implementation, bounded repair, verification,
+documentation, evidence capture, and review packaging.
+
+The operator must stop for human approval before merge to main, push when policy
+requires it, production deployment, destructive operations, credential/security
+changes, unplanned migration or schema expansion, material new dependencies,
+architecture expansion outside the frozen objective, cross-project changes, or
+material scope changes.
+
+Suggested workflow states for a supervised run are `OBJECTIVE_ACCEPTED`,
+`PLANNING`, `PLAN_READY`, `IMPLEMENTING`, `VERIFYING`,
+`CHECKPOINT_REVIEW_REQUIRED`, `BLOCKED`, `APPROVED_TO_CONTINUE`,
+`COMPLETED_PENDING_INTEGRATION`, and `CLOSED`.
+
 ## List Pilot Evidence
 
 ```bash

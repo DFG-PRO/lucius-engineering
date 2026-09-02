@@ -134,3 +134,35 @@ Post-multi-task outcomes are:
 `READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW` requires captured human review and
 does not imply merge, push, deploy, production, credential, destructive Git, or
 unrestricted architecture authority.
+
+## Supervised Engineering Workflow Semantics
+
+After a successful bounded multi-task pilot and captured human review, a
+supervised engineering workflow may carry one human-authorized objective across
+multiple internal checkpoints instead of treating every small task as a separate
+pilot. Lucius may understand the repository, decompose work, create and freeze
+plans, implement in an isolated branch or worktree, make minor local decisions,
+run bounded repair loops, test, document, capture evidence, and prepare human
+review packages.
+
+Mandatory human checkpoints remain required before merge, push when policy
+requires it, production deployment, destructive operations, credential/security
+changes, unplanned migration or schema expansion, material new dependencies,
+architecture expansion outside the frozen objective, cross-project changes, or
+material scope changes.
+
+The conceptual state model is:
+
+- `OBJECTIVE_ACCEPTED`
+- `PLANNING`
+- `PLAN_READY`
+- `IMPLEMENTING`
+- `VERIFYING`
+- `CHECKPOINT_REVIEW_REQUIRED`
+- `BLOCKED`
+- `APPROVED_TO_CONTINUE`
+- `COMPLETED_PENDING_INTEGRATION`
+- `CLOSED`
+
+Phase 1.17A defined these semantics without adding new workflow-state
+persistence.
