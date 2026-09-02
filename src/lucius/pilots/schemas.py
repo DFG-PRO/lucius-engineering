@@ -307,12 +307,25 @@ class GlobalQueueItem(BaseModel):
     item_id: str
     logical_task_id: str
     title: str | None = None
-    state: QueueWorkItemState
+    state: QueueWorkItemState | None = None
+    state_label: str | None = None
     priority: str = "NORMAL"
     created_order: int = 0
     dependencies: list[str] = Field(default_factory=list)
     current_block_checkpoint_id: str | None = None
+    queue_state_present: bool = True
+    schedulable: bool = True
+    exclusion_reason: str | None = None
     item: dict[str, Any] = Field(default_factory=dict)
+
+
+class GlobalWorkflowExclusion(BaseModel):
+    project_id: str | None = None
+    workflow_id: str
+    workflow_state: PersistentWorkflowState
+    reason: str
+    item_count: int = 0
+    items: list[GlobalQueueItem] = Field(default_factory=list)
 
 
 class GlobalQueueSelection(BaseModel):
@@ -323,9 +336,11 @@ class GlobalQueueSelection(BaseModel):
     eligible_items: list[GlobalQueueItem] = Field(default_factory=list)
     blocked_items: list[GlobalQueueItem] = Field(default_factory=list)
     running_items: list[GlobalQueueItem] = Field(default_factory=list)
+    excluded_items: list[GlobalQueueItem] = Field(default_factory=list)
 
 
 class GlobalQueueStatus(BaseModel):
+    observed_workflow_ids: list[str] = Field(default_factory=list)
     workflow_ids: list[str] = Field(default_factory=list)
     active_project_ids: list[str] = Field(default_factory=list)
     running: list[GlobalQueueItem] = Field(default_factory=list)
@@ -335,5 +350,7 @@ class GlobalQueueStatus(BaseModel):
     dependency_blocked: list[GlobalQueueItem] = Field(default_factory=list)
     completed: list[GlobalQueueItem] = Field(default_factory=list)
     failed: list[GlobalQueueItem] = Field(default_factory=list)
+    legacy_unschedulable: list[GlobalQueueItem] = Field(default_factory=list)
+    lifecycle_excluded: list[GlobalWorkflowExclusion] = Field(default_factory=list)
     next_selection: GlobalQueueSelection
     generated_at: datetime = Field(default_factory=utc_now)

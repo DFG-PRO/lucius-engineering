@@ -138,12 +138,21 @@ workflow.
 
 Phase 1.21 adds global queue read models over multiple persistent workflows.
 `GlobalQueueItem` includes the owning project, workflow, repository, workflow
-task, work-item id, logical task id, queue state, priority, creation order,
-dependencies, current block checkpoint, and original item payload.
+task, work-item id, logical task id, queue state, derived state label, priority,
+creation order, dependencies, current block checkpoint, original item payload,
+and derived execution-eligibility fields.
 
 `GlobalQueueSelection` records the selected project/workflow/item plus eligible,
-blocked, and running item groups. `GlobalQueueStatus` records active projects,
-active workflows, state-grouped items, and the next global selection.
+blocked, running, and excluded item groups. `GlobalQueueStatus` records observed
+workflows, active schedulable workflows, active projects, state-grouped items,
+legacy-unschedulable items, lifecycle-excluded workflows, and the next global
+selection.
+
+Phase 1.21B defines the fail-closed read model. Historical backlog entries
+without explicit queue `state` are not normalized in storage and are not inferred
+as `READY`; they are surfaced as legacy unschedulable. Workflows outside the
+global execution lifecycle are surfaced under lifecycle exclusions with a reason
+such as `LIFECYCLE_EXCLUDED:COMPLETED_PENDING_INTEGRATION`.
 
 Global queue state remains derived from existing `PersistentWorkflow` rows. No
 new queue table is introduced in Phase 1.21.

@@ -54,7 +54,41 @@ Global queue inspection reports:
 
 ## Global Scheduling Rule
 
-`select_global_next` is deterministic:
+`select_global_next` is deterministic and fail-closed after the Phase 1.21B
+repair:
+
+1. gather workflows with non-empty queue backlogs;
+2. classify workflow lifecycle eligibility;
+3. exclude lifecycle-ineligible workflows from execution while keeping them
+   inspectable;
+4. require each schedulable item to carry an explicit queue `state`;
+5. classify items without explicit queue state as
+   `LEGACY_UNSCHEDULABLE_MISSING_QUEUE_STATE`;
+6. validate duplicate work-item ids within each workflow;
+7. validate duplicate running logical identities by project scope;
+8. if any eligible workflow has a running item, return
+   `GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION`;
+9. exclude blocked, terminal, and dependency-incomplete queue-enabled items;
+10. sort eligible items by priority rank, state class, creation order,
+    project id, workflow id, and item id.
+
+The globally schedulable workflow lifecycle states are `PLAN_READY`,
+`IMPLEMENTING`, `VERIFYING`, `CHECKPOINT_REVIEW_REQUIRED`,
+`RESUME_VALIDATION`, `BLOCKED`, and `APPROVED_TO_CONTINUE`.
+
+`OBJECTIVE_ACCEPTED`, `PLANNING`, `PAUSED`,
+`COMPLETED_PENDING_INTEGRATION`, and `CLOSED` are inspectable but excluded from
+global execution. `COMPLETED_PENDING_INTEGRATION` means engineering execution is
+finished and awaiting integration/review; residual backlog items in that state
+must not become executable by accident.
+
+Pre-Phase 1.20 backlog items may lack queue execution state. Missing state is
+historical/ambiguous data, not readiness. Such items remain visible in
+inspection output with `state_label: LEGACY_UNSCHEDULABLE`,
+`queue_state_present: false`, `schedulable: false`, and an exclusion reason, but
+they are never eligible for global scheduling.
+
+The original Phase 1.21 rule before the repair was:
 
 1. gather non-closed workflows with non-empty queue backlogs;
 2. validate duplicate work-item ids within each workflow;
@@ -93,8 +127,11 @@ python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-ne
 ```
 
 When workflow ids are omitted, the service inspects all non-closed workflows
-with queue backlog state. Supplying workflow ids is preferred for pilot
-reconstruction because it makes the evaluated scope explicit.
+with queue backlog state. After Phase 1.21B, omitted workflow ids are safe by
+default because lifecycle-ineligible workflows and legacy items without explicit
+queue state remain inspectable but cannot enter the executable candidate set.
+Supplying workflow ids is still preferred for pilot reconstruction because it
+makes the evaluated scope explicit.
 
 ## Pilot Scenario
 
@@ -130,6 +167,26 @@ The deterministic Phase 1.21 evaluation covers:
 - autonomy behavior;
 - regression risk;
 - documentation.
+
+## Phase 1.21B Repair Audit Trail
+
+The original Phase 1.21 scoped pilot passed, but independent closure review
+artifact `LRUBRIC_000015` found a HIGH stale-state defect: unscoped
+`queue-global-next` on the shared pilot database could surface historical
+workflow work. The root cause was that the global workflow query admitted all
+non-closed backlogs and global state interpretation treated missing queue state
+as `READY`.
+
+Phase 1.21B repaired the defect without rewriting historical rows:
+
+- `LPLAN_000009` / `LFREEZE_000009` froze the bounded repair plan.
+- `LBENCH_000029` captured the PRE benchmark from the Phase 1.21 HEAD.
+- Global scheduling now uses explicit lifecycle eligibility and explicit queue
+  state for execution.
+- Unscoped `queue-global-next` on the shared pilot database returns
+  `NO_GLOBAL_ELIGIBLE_WORK` for stale history instead of selecting old backlog.
+- Exclusion reasons are machine-readable in `lifecycle_excluded`,
+  `legacy_unschedulable`, and `excluded_items`.
 
 No human rubric is invented. If no human scoring is captured, the rubric remains
 `NOT_CAPTURED`.

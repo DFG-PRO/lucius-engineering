@@ -257,11 +257,21 @@ Phase 1.21 extends the queue pilot to a global scheduler over multiple
 persistent workflows. It still assumes one logical execution capacity and safe
 checkpoint boundaries rather than worker concurrency.
 
-The global scheduler gathers non-closed workflows with queue backlogs, validates
-per-workflow duplicate item ids, validates duplicate running logical identities
-by project scope, refuses unsafe global preemption when any item is already
-running, excludes blocked/terminal/dependency-incomplete work, and selects by
-priority, state class, creation order, project id, workflow id, then item id.
+The global scheduler gathers workflows with queue backlogs, classifies lifecycle
+eligibility, validates per-workflow duplicate item ids, validates duplicate
+running logical identities by project scope, refuses unsafe global preemption
+when any eligible workflow has a running item, excludes
+blocked/terminal/dependency-incomplete work, and selects by priority, state
+class, creation order, project id, workflow id, then item id.
+
+After Phase 1.21B, global execution eligibility fails closed. Only `PLAN_READY`,
+`IMPLEMENTING`, `VERIFYING`, `CHECKPOINT_REVIEW_REQUIRED`,
+`RESUME_VALIDATION`, `BLOCKED`, and `APPROVED_TO_CONTINUE` workflows can
+participate in active global scheduling. `OBJECTIVE_ACCEPTED`, `PLANNING`,
+`PAUSED`, `COMPLETED_PENDING_INTEGRATION`, and `CLOSED` remain inspectable but
+are lifecycle-excluded. Queue items without an explicit queue `state` are
+classified as legacy unschedulable and are never treated as `READY` by the global
+scheduler.
 
 The cross-project priority rule is explicit: higher priority `READY` work in
 one project beats lower-priority `READY_TO_RESUME` work in another project.
@@ -276,5 +286,6 @@ Post-cross-project outcomes are:
 Promotion to `READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE` requires passing
 cross-project evaluation, global scheduler evaluation, fresh-context
 reconstruction, duplicate protection, project isolation, safe interruption,
-formal benchmarks, and target-integrity checks. The result does not authorize
-multi-worker concurrency.
+stale-history safety, lifecycle-scope safety, safe unscoped global
+reconstruction, formal benchmarks, and target-integrity checks. The result does
+not authorize multi-worker concurrency.

@@ -333,7 +333,7 @@ def test_cross_project_queue_release_gate_recommends_another_pilot_when_required
 
 
 def _workflow(session, *, project_id: str, backlog: list[dict]):
-    return PersistentWorkflowService(session).create(
+    workflow = PersistentWorkflowService(session).create(
         objective=f"{project_id} Phase 1.21 cross-project queue scenario.",
         expected_main_head="lucius-head",
         isolated_branch=f"lucius/phase-1.21-{project_id.lower()}",
@@ -346,6 +346,12 @@ def _workflow(session, *, project_id: str, backlog: list[dict]):
         completed_task_ids=[],
         pending_task_ids=[item["item_id"] for item in backlog],
     )
+    from lucius.persistence.orm import PersistentWorkflowORM
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    row.workflow_state = PersistentWorkflowState.PLAN_READY.value
+    session.flush()
+    return workflow
 
 
 def _item(
@@ -386,6 +392,9 @@ def _cross_project_evaluation_row(
         "duplicate_work_protection": {"result": "PASS"},
         "project_isolation": {"result": "PASS"},
         "safe_interruption": {"result": "PASS"},
+        "stale_history_safety": {"result": "PASS"},
+        "lifecycle_scope_safety": {"result": "PASS"},
+        "unscoped_global_reconstruction": {"result": "PASS"},
         "multi_project_non_blocking_tested": True,
     }
     row.evaluator_version = "1.21-test"

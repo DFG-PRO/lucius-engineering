@@ -247,7 +247,9 @@ python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-st
 This command returns JSON across the supplied workflows: active projects,
 running items, blocked items, ready items, ready-to-resume items,
 dependency-blocked items, completed items, failed items, and the global next
-selection.
+selection. It also reports `observed_workflow_ids`,
+`legacy_unschedulable`, and `lifecycle_excluded` so operators can distinguish
+inspectable historical state from executable queue state.
 
 ```bash
 python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-global-next LWORK_000001 LWORK_000002
@@ -260,7 +262,21 @@ the command reports `GLOBAL_RUNNING_ITEM_ACTIVE_NO_PREEMPTION`.
 
 For Phase 1.21 pilot reconstruction, provide the workflow ids explicitly so the
 evaluated global scope is unambiguous. Omitting workflow ids asks Lucius to
-inspect every non-closed persistent workflow with queue backlog state.
+inspect every persistent workflow with backlog state, but Phase 1.21B makes that
+safe by default: only lifecycle-eligible workflows with explicit queue item
+state can become schedulable.
+
+Global execution lifecycle eligibility is explicit. `PLAN_READY`,
+`IMPLEMENTING`, `VERIFYING`, `CHECKPOINT_REVIEW_REQUIRED`,
+`RESUME_VALIDATION`, `BLOCKED`, and `APPROVED_TO_CONTINUE` may participate in
+global scheduling. `OBJECTIVE_ACCEPTED`, `PLANNING`, `PAUSED`,
+`COMPLETED_PENDING_INTEGRATION`, and `CLOSED` are inspectable but excluded from
+global execution.
+
+Missing item `state` means legacy or ambiguous backlog data. It is reported with
+`state_label: LEGACY_UNSCHEDULABLE`, `queue_state_present: false`,
+`schedulable: false`, and an exclusion reason. It must not be treated as
+`READY` for global execution.
 
 ## List Pilot Evidence
 
