@@ -185,3 +185,9 @@ unchanged target repository integrity, and captured 5/5 human review across all
 canonical rubric dimensions. It does not authorize automatic merge, push,
 deployment, credential changes, destructive Git, or unrestricted engineering
 autonomy.
+
+Persistent supervised readiness requires resumable workflow state. A resumed
+workflow must validate the expected repository, branch or worktree, HEAD,
+baseline compatibility, task graph, checkpoint state, and pending human
+authorization before continuing. Material mismatch moves the workflow to
+`CHECKPOINT_REVIEW_REQUIRED` or `BLOCKED`.

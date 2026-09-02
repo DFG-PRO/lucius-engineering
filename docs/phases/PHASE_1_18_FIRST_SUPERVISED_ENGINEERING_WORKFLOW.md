@@ -95,8 +95,9 @@ Deterministic evaluations are preserved in order:
 - `LEVALPLAN_000014`: `PASS`; aggregate 98.57; no corrections; supersedes
   `LEVALPLAN_000013`.
 
-Human review is explicitly `NOT_CAPTURED` until Daniel reviews the isolated
-Darwin implementation and pilot evidence.
+Human review was explicitly `NOT_CAPTURED` at Phase 1.18 closure. Phase 1.18A
+later captured Daniel's review in `LRUBRIC_000010` without erasing the
+historical `LRUBRIC_000009` record.
 
 Learning candidates:
 

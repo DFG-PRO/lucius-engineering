@@ -237,6 +237,13 @@ still `NOT_CAPTURED`.
 automatic merge, push, deployment, credentials, destructive Git, or unrestricted
 operation.
 
+Persistent supervised engineering also requires state continuity across
+interruptions. Workflow identity, canonical baseline, objective, selected
+solution, scope, backlog, task statuses, dependency graph, implementation
+branch/worktree, commits, decisions, repair counters, tests, documentation
+state, checkpoints, and pending authorization must be persisted or recoverable
+from durable artifacts rather than conversational memory alone.
+
 ## Phase 1.11 Lessons Preserved
 
 Phase 1.11 remains a `NON_CANONICAL_DIRTY_RUN`. Its useful repository

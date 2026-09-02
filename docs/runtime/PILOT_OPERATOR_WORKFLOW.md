@@ -192,6 +192,13 @@ release gate should recommend
 across all canonical dimensions in addition to passing deterministic,
 benchmark, and repository-integrity gates.
 
+For persistent supervised workflows, resume by validating the persisted workflow
+identity, repository, branch or worktree, expected HEAD, canonical baseline,
+task graph, checkpoint state, implementation commits, completed and pending
+tests, and pending human authorization. If any material state differs, stop in
+`CHECKPOINT_REVIEW_REQUIRED` or `BLOCKED` instead of reconstructing state from
+conversation.
+
 ## List Pilot Evidence
 
 ```bash

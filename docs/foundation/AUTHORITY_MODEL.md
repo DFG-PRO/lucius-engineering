@@ -107,6 +107,14 @@ repository integrity, and captured 5/5 human review across all canonical rubric
 dimensions. It still does not authorize automatic merge, push, deployment,
 credentials, destructive Git, or unrestricted operation.
 
+Persistent supervised engineering permits Lucius to preserve and resume one
+bounded workflow across longer periods while carrying objective, backlog, task
+state, dependency graph, frozen evidence, implementation state, decisions,
+repairs, checkpoint history, pending authorization, and current authority
+boundary. On resume, Lucius must verify that repositories, branches, worktrees,
+HEADs, task graph, and authorization state still match the persisted workflow
+record before continuing.
+
 No staged autonomy recommendation authorizes automatic merge to main, automatic
 push, production deployment, credential changes, destructive Git, force push,
 broad cross-project autonomy, unrestricted architecture rewrites, silent
