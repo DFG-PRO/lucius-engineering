@@ -27,6 +27,9 @@ ENTITY_PREFIXES: dict[str, str] = {
     "benchmark": "LBENCH",
     "pilot_learning": "LPLEARN",
     "pilot_record": "LPILOT",
+    "persistent_workflow": "LWORK",
+    "workflow_checkpoint": "LWCHK",
+    "resume_validation": "LRESUME",
 }
 
 

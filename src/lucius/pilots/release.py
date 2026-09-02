@@ -100,11 +100,18 @@ class ReleaseGateService:
                 warnings.append(
                     "human rubric NOT_CAPTURED; hard blocker before persistent supervised engineering promotion"
                 )
+            elif pilot_stage == "PERSISTENT_SUPERVISED_WORKFLOW":
+                warnings.append(
+                    "human rubric NOT_CAPTURED; expected for persistent pause/resume pilot, hard blocker before broader autonomy"
+                )
             else:
                 warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         if blockers:
             recommendation = (
+                AutonomyRecommendation.NOT_READY_FOR_PERSISTENT_SUPERVISED_ENGINEERING
+                if is_plan_vs_implementation and pilot_stage == "PERSISTENT_SUPERVISED_WORKFLOW"
+                else
                 AutonomyRecommendation.NOT_READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW
                 if is_plan_vs_implementation and pilot_stage == "SUPERVISED_ENGINEERING_WORKFLOW"
                 else
@@ -124,6 +131,16 @@ class ReleaseGateService:
                     warnings.append(
                         "persistent supervised engineering promotion requires 5/5 captured human scores across all canonical rubric dimensions"
                     )
+        elif is_plan_vs_implementation and pilot_stage == "PERSISTENT_SUPERVISED_WORKFLOW":
+            pause_resume = implementation_artifact.get("pause_resume_evaluation", {})
+            if (
+                pause_resume.get("result") == "PASS"
+                and pause_resume.get("resume_decision") == "SAFE_TO_RESUME"
+                and implementation_artifact.get("final_workflow_state") == "COMPLETED_PENDING_INTEGRATION"
+            ):
+                recommendation = AutonomyRecommendation.READY_FOR_NON_BLOCKING_PROJECT_QUEUE_PILOT
+            else:
+                recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_PERSISTENT_SUPERVISED_WORKFLOW
         elif is_plan_vs_implementation and pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT":
             if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
                 recommendation = AutonomyRecommendation.READY_FOR_SUPERVISED_ENGINEERING_WORKFLOW

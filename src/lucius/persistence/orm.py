@@ -570,6 +570,78 @@ class PilotEvaluationRecordORM(Base):
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class PersistentWorkflowORM(Base):
+    __tablename__ = "persistent_workflows"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    repository_id: Mapped[str | None] = mapped_column(ForeignKey("repository_registrations.id"), index=True)
+    repository_snapshot_id: Mapped[str | None] = mapped_column(ForeignKey("repository_snapshots.id"), index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), index=True)
+    plan_id: Mapped[str | None] = mapped_column(ForeignKey("engineering_plans.id"), index=True)
+    plan_freeze_id: Mapped[str | None] = mapped_column(ForeignKey("plan_freezes.id"), index=True)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_main_head: Mapped[str] = mapped_column(String(64), nullable=False)
+    isolated_branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    worktree_path: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_state: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    authority_tier: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_backlog: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    dependency_graph: Mapped[dict[str, list[str]]] = mapped_column(JSON, nullable=False, default=dict)
+    active_task_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    completed_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    pending_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    deviations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    repair_counters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    targeted_test_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    full_test_status: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    checkpoint_history: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    pending_human_approvals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    resume_requirements: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class PersistentWorkflowCheckpointORM(Base):
+    __tablename__ = "persistent_workflow_checkpoints"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("persistent_workflows.id"), nullable=False, index=True)
+    checkpoint_state: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    implementation_head: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_main_head: Mapped[str] = mapped_column(String(64), nullable=False)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    worktree_path: Mapped[str] = mapped_column(Text, nullable=False)
+    active_task_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    completed_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    pending_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    dependency_graph: Mapped[dict[str, list[str]]] = mapped_column(JSON, nullable=False, default=dict)
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    deviations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    repair_counters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    latest_test_results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    known_warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    authority_tier: Mapped[str] = mapped_column(String(64), nullable=False)
+    pending_human_approvals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    resume_conditions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    recommended_next_action: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class ResumeValidationORM(Base):
+    __tablename__ = "resume_validations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("persistent_workflows.id"), nullable=False, index=True)
+    checkpoint_id: Mapped[str] = mapped_column(ForeignKey("persistent_workflow_checkpoints.id"), nullable=False, index=True)
+    result: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    next_eligible_task_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    validated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 

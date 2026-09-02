@@ -7,6 +7,7 @@ from lucius.pilots.records import PilotRecordService
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.repository_state import RepositoryStateService
 from lucius.pilots.rubric import HumanRubricService
+from lucius.pilots.workflows import PersistentWorkflowService
 
 __all__ = [
     "BenchmarkRunnerService",
@@ -14,6 +15,7 @@ __all__ = [
     "HumanRubricService",
     "PilotLearningService",
     "PilotRecordService",
+    "PersistentWorkflowService",
     "PlanFreezeService",
     "HistoricalPlanningContextService",
     "ReleaseGateService",

@@ -191,3 +191,20 @@ workflow must validate the expected repository, branch or worktree, HEAD,
 baseline compatibility, task graph, checkpoint state, and pending human
 authorization before continuing. Material mismatch moves the workflow to
 `CHECKPOINT_REVIEW_REQUIRED` or `BLOCKED`.
+
+## Persistent Workflow Pause/Resume Pilot
+
+Phase 1.19 adds durable persistent workflow artifacts:
+
+- `LWORK_*`: current workflow objective, authority tier, task backlog,
+  dependency graph, state, decisions, repairs, tests, checkpoint history, and
+  pending approvals.
+- `LWCHK_*`: immutable pause checkpoint with implementation HEAD, expected main
+  HEAD, worktree, branch, completed/pending task ids, tests, repairs, warnings,
+  and resume conditions.
+- `LRESUME_*`: resume validation result with explicit Git/filesystem/state
+  checks and the next eligible task id.
+
+A persistent workflow may resume only after repository state, implementation
+HEAD, checkpoint state, task graph, repair budget, and authorization checks pass
+from durable state. Conversation memory is not sufficient evidence.

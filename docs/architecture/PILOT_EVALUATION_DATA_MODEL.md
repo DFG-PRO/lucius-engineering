@@ -95,3 +95,19 @@ integrity result, canonical status, and autonomy recommendation.
 
 The gate result is stored as machine-readable JSON so later reports can
 reconstruct the exact blockers and warnings.
+
+`PersistentWorkflow` stores the durable state for one supervised workflow:
+objective, expected main HEAD, isolated branch/worktree, authority tier,
+backlog, dependency graph, active/completed/pending task ids, decisions,
+deviations, repair counters, tests, checkpoint history, and pending human
+approvals.
+
+`PersistentWorkflowCheckpoint` stores an immutable pause point. It captures the
+implementation HEAD, expected main HEAD, worktree, branch, task state,
+dependency graph, decisions, deviations, repair counters, latest tests, known
+warnings, authority tier, pending approvals, resume conditions, and recommended
+next action.
+
+`ResumeValidation` stores the result of a fresh resume audit. Its checks must
+come from durable workflow/checkpoint rows plus repository and filesystem
+verification, not conversational reconstruction.

@@ -15,8 +15,10 @@ from lucius.domain.enums import (
     MetricApplicability,
     PilotLearningStatus,
     PlanningEvidenceMode,
+    PersistentWorkflowState,
     RepositoryIntegrityResult,
     RepositoryStateClassification,
+    ResumeValidationResult,
 )
 from lucius.persistence.orm import utc_now
 
@@ -186,3 +188,69 @@ class PilotEvaluationRecord(BaseModel):
     gate_result: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     created_by: str
+
+
+class PersistentWorkflow(BaseModel):
+    id: str
+    project_id: str | None = None
+    repository_id: str | None = None
+    repository_snapshot_id: str | None = None
+    task_id: str | None = None
+    plan_id: str | None = None
+    plan_freeze_id: str | None = None
+    objective: str
+    expected_main_head: str
+    isolated_branch: str
+    worktree_path: str
+    workflow_state: PersistentWorkflowState
+    authority_tier: str
+    task_backlog: list[dict[str, Any]] = Field(default_factory=list)
+    dependency_graph: dict[str, list[str]] = Field(default_factory=dict)
+    active_task_id: str | None = None
+    completed_task_ids: list[str] = Field(default_factory=list)
+    pending_task_ids: list[str] = Field(default_factory=list)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    deviations: list[dict[str, Any]] = Field(default_factory=list)
+    repair_counters: dict[str, Any] = Field(default_factory=dict)
+    targeted_test_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    full_test_status: dict[str, Any] = Field(default_factory=dict)
+    checkpoint_history: list[str] = Field(default_factory=list)
+    pending_human_approvals: list[str] = Field(default_factory=list)
+    resume_requirements: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersistentWorkflowCheckpoint(BaseModel):
+    id: str
+    workflow_id: str
+    checkpoint_state: PersistentWorkflowState
+    implementation_head: str
+    expected_main_head: str
+    branch: str
+    worktree_path: str
+    active_task_id: str | None = None
+    completed_task_ids: list[str] = Field(default_factory=list)
+    pending_task_ids: list[str] = Field(default_factory=list)
+    dependency_graph: dict[str, list[str]] = Field(default_factory=dict)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    deviations: list[dict[str, Any]] = Field(default_factory=list)
+    repair_counters: dict[str, Any] = Field(default_factory=dict)
+    latest_test_results: list[dict[str, Any]] = Field(default_factory=list)
+    known_warnings: list[str] = Field(default_factory=list)
+    authority_tier: str
+    pending_human_approvals: list[str] = Field(default_factory=list)
+    resume_conditions: list[str] = Field(default_factory=list)
+    recommended_next_action: str
+    created_at: datetime
+
+
+class ResumeValidation(BaseModel):
+    id: str
+    workflow_id: str
+    checkpoint_id: str
+    result: ResumeValidationResult
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    next_eligible_task_id: str | None = None
+    notes: str | None = None
+    validated_at: datetime

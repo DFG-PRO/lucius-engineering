@@ -199,6 +199,12 @@ tests, and pending human authorization. If any material state differs, stop in
 `CHECKPOINT_REVIEW_REQUIRED` or `BLOCKED` instead of reconstructing state from
 conversation.
 
+Persistent workflow artifacts should be treated as the source of truth during a
+pause/resume pilot. Operators should record the `LWORK_*`, `LWCHK_*`, and
+`LRESUME_*` ids, then verify repository HEADs, worktree cleanliness, task graph
+readiness, repair counters, and pending human approvals before allowing the
+workflow to leave `RESUME_VALIDATION`.
+
 ## List Pilot Evidence
 
 ```bash

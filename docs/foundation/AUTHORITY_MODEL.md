@@ -115,6 +115,13 @@ boundary. On resume, Lucius must verify that repositories, branches, worktrees,
 HEADs, task graph, and authorization state still match the persisted workflow
 record before continuing.
 
+`READY_FOR_NON_BLOCKING_PROJECT_QUEUE_PILOT` may be recommended only after a
+persistent workflow proves durable pause/resume, completes its isolated
+implementation pending integration, preserves benchmark and repository
+integrity, and records explicit resume validation. It still does not authorize
+merge, push, deployment, destructive Git, credential access, or autonomous
+multi-project execution.
+
 No staged autonomy recommendation authorizes automatic merge to main, automatic
 push, production deployment, credential changes, destructive Git, force push,
 broad cross-project autonomy, unrestricted architecture rewrites, silent
