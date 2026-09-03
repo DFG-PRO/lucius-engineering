@@ -27,6 +27,7 @@ This file identifies the canonical Lucius documentation baseline.
 
 ## Runtime / Operator Workflows
 
+- `runtime/ARTIFACT_STORE.md`
 - `runtime/PILOT_OPERATOR_WORKFLOW.md`
 
 ## Decisions

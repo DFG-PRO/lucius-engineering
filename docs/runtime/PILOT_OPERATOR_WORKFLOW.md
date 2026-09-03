@@ -2,6 +2,12 @@
 
 Phase 1.12 exposes a minimal CLI for canonical pilot evidence capture.
 
+## Artifact Store
+
+The canonical local pilot artifact store is `data/lucius-pilots.sqlite`. See
+`runtime/ARTIFACT_STORE.md` for Phase 1.21P preservation history, collision
+policy, next-id expectations, and backup/recovery procedure.
+
 ## Inspect Repository State
 
 ```bash
