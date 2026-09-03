@@ -167,7 +167,7 @@ class LocalGitRepositoryAdapter(RepositoryAdapter):
         documentation_map = docs_from_paths(files)
         test_map = tests_from_paths(files)
         configuration_map = configs_from_paths(files)
-        file_records = [self._file_record(path, mode) for path in files]
+        file_records = [self._file_record(path, mode, git_state) for path in files]
         manifest_hash = manifest_identity([record.model_dump(mode="json") for record in file_records])
         manifest = RepositoryManifest(files=file_records, manifest_hash=manifest_hash)
         technologies = [] if mode == SnapshotMode.FAST else detect_technologies(files, self.read_file)
@@ -195,7 +195,7 @@ class LocalGitRepositoryAdapter(RepositoryAdapter):
             manifest=manifest,
         )
 
-    def _file_record(self, relative_path: str, mode: SnapshotMode) -> FileRecord:
+    def _file_record(self, relative_path: str, mode: SnapshotMode, git_state: GitState | None = None) -> FileRecord:
         if self.workspace_context.repository_ref:
             return self._historical_file_record(relative_path, mode)
         path = self._resolve_repo_file(relative_path)
@@ -217,7 +217,7 @@ class LocalGitRepositoryAdapter(RepositoryAdapter):
             file_type=file_type,
             language=detect_language(rel),
             content_hash=content_hash,
-            git_status=self._git_status_for(rel),
+            git_status=self._git_status_for(rel, git_state),
             is_documentation=classify_document(rel) is not None,
             is_test=classify_test(rel) is not None,
             is_config=classify_config(rel) is not None,
@@ -336,8 +336,8 @@ class LocalGitRepositoryAdapter(RepositoryAdapter):
                 dirty["renamed"].append(path)
         return {key: sorted(set(values)) for key, values in dirty.items()}
 
-    def _git_status_for(self, relative_path: str) -> str:
-        state = self.get_git_state()
+    def _git_status_for(self, relative_path: str, state: GitState | None = None) -> str:
+        state = state or self.get_git_state()
         if relative_path in state.untracked:
             return "untracked"
         if relative_path in state.conflicted:

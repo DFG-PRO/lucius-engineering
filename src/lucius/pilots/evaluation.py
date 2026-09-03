@@ -13,6 +13,7 @@ from lucius.domain.enums import (
 )
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
+from lucius.pilots.provenance import find_verified_without_evidence, verified_claim_disposition_passes
 from lucius.pilots.schemas import EngineeringPlanEvaluation, EvaluationDimension, PlanCorrection
 
 
@@ -108,7 +109,7 @@ def _planning_only_dimensions(plan: dict, artifact: dict) -> list[EvaluationDime
         _classification_dimension(artifact, plan),
         _provenance_quality_dimension(plan, artifact),
         _hallucinated_paths_dimension(artifact.get("known_paths", []), _plan_files(plan)),
-        _unsupported_claims_dimension(plan),
+        _unsupported_claims_dimension(plan, artifact),
         _novelty_leakage_dimension(artifact),
         _uncertainty_handling_dimension(plan),
         _not_applicable_dimension("file_path_prediction", "Requires post-implementation file evidence."),
@@ -132,7 +133,7 @@ def _plan_vs_implementation_dimensions(plan: dict, artifact: dict) -> list[Evalu
         _classification_dimension(artifact, plan),
         _unnecessary_work_dimension(artifact.get("files", []), _plan_files(plan)),
         _hallucinated_paths_dimension(artifact.get("known_paths", []), _plan_files(plan)),
-        _unsupported_claims_dimension(plan),
+        _unsupported_claims_dimension(plan, artifact),
         _missed_work_dimension(artifact.get("material_work", []), _plan_text(plan)),
     ]
 
@@ -335,12 +336,17 @@ def _hallucinated_paths_dimension(known_paths: Iterable[str], planned_files: Ite
     )
 
 
-def _unsupported_claims_dimension(plan: dict) -> EvaluationDimension:
-    unsupported = [
-        item
-        for item in plan.get("assumptions", [])
-        if item.get("verified") and not item.get("evidence_ids")
-    ]
+def _unsupported_claims_dimension(plan: dict, artifact: dict | None = None) -> EvaluationDimension:
+    unsupported = find_verified_without_evidence(plan.get("assumptions", []))
+    disposition = (artifact or {}).get("verified_claim_disposition") or plan.get("verified_claim_disposition")
+    if verified_claim_disposition_passes(disposition, unsupported):
+        return EvaluationDimension(
+            name="unsupported_claims",
+            status="PASS",
+            score=100.0,
+            actual=[str(item.get("statement", "")) for item in unsupported],
+            notes="Unsupported verified claims were dispositioned with linked evidence.",
+        )
     score = 100.0 if not unsupported else 0.0
     return EvaluationDimension(
         name="unsupported_claims",

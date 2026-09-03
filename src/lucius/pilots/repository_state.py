@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, RepositoryStateClassification
+from lucius.domain.enums import Actor, RepositoryStateClassification, SnapshotMode
 from lucius.persistence.orm import RepositoryStateObservationORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.repositories.local_git import LocalGitRepositoryAdapter
@@ -41,7 +41,7 @@ class RepositoryStateService:
         classification = _classification(staged, tracked, untracked)
         manifest_hash = None
         try:
-            snapshot = LocalGitRepositoryAdapter(root, workspace_context).build_snapshot()
+            snapshot = LocalGitRepositoryAdapter(root, workspace_context).build_snapshot(SnapshotMode.FAST)
             manifest_hash = snapshot.manifest_summary.manifest_hash
         except Exception:
             manifest_hash = None
@@ -57,7 +57,11 @@ class RepositoryStateService:
             staged_modifications=staged,
             untracked_files=untracked,
             manifest_hash=manifest_hash,
-            details={"strict_canonical": strict_canonical},
+            details={
+                "strict_canonical": strict_canonical,
+                "snapshot_mode": SnapshotMode.FAST.value,
+                "manifest_scope": "bounded tracked/untracked git file manifest without content hashes",
+            },
             observed_at=utc_now(),
         )
         if strict_canonical and not observation.canonical:

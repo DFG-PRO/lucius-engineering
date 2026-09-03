@@ -295,10 +295,16 @@ class NonBlockingQueueService:
         actor: Actor = Actor.LUCIUS,
     ) -> dict[str, Any]:
         workflow = self._workflow(workflow_id)
+        lifecycle_reason = workflow_execution_exclusion_reason(workflow)
+        if lifecycle_reason is not None:
+            raise QueueStateError(f"Workflow is not executable: {lifecycle_reason}")
         items = self._items(workflow)
         item = self._item(items, item_id)
-        if _state(item) not in {QueueWorkItemState.RUNNING, QueueWorkItemState.READY_TO_RESUME}:
-            raise QueueStateError(f"Cannot complete item from state {_state(item).value}")
+        target_state = _execution_state(item)
+        if target_state not in {QueueWorkItemState.RUNNING, QueueWorkItemState.READY_TO_RESUME}:
+            raise QueueStateError(f"Cannot complete item from state {target_state.value}")
+        previous_state = target_state.value
+        previous_version = int(item.get("version", 0))
         existing = list(item.get("completed_substeps", []))
         for substep in completed_substeps or []:
             if substep not in existing:
@@ -307,17 +313,12 @@ class NonBlockingQueueService:
         item["completed_at"] = _now_iso()
         self._set_state(item, QueueWorkItemState.COMPLETED)
         workflow.active_task_id = None if workflow.active_task_id == item_id else workflow.active_task_id
-        workflow.completed_task_ids = sorted({_item_id(done) for done in items if _state(done) == QueueWorkItemState.COMPLETED})
-        workflow.pending_task_ids = sorted(
-            {
-                _item_id(pending)
-                for pending in items
-                if _state(pending) not in TERMINAL_STATES
-            }
-        )
+        workflow.completed_task_ids = sorted(_completed_item_ids_for_completion(items))
+        workflow.pending_task_ids = sorted(_pending_item_ids_for_completion(items))
         workflow.task_backlog = items
         workflow.updated_at = utc_now()
         self.session.flush()
+        new_version = int(item.get("version", 0))
         self.audit.record(
             event_type="QUEUE_WORK_ITEM_COMPLETED",
             actor=actor.value,
@@ -326,7 +327,18 @@ class NonBlockingQueueService:
             task_id=workflow.task_id,
             action="complete_queue_work_item",
             result=item_id,
-            metadata={"workflow_id": workflow.id, "completed_substeps": existing},
+            metadata={
+                "workflow_id": workflow.id,
+                "requested_workflow_id": workflow_id,
+                "requested_item_id": item_id,
+                "completed_item_id": _item_id(item),
+                "completed_substeps": existing,
+                "completed_previous_state": previous_state,
+                "completed_new_state": QueueWorkItemState.COMPLETED.value,
+                "completed_previous_version": previous_version,
+                "completed_new_version": new_version,
+                "mutation_identity_matches_request": workflow.id == workflow_id and _item_id(item) == item_id,
+            },
         )
         return deepcopy(item)
 
@@ -668,6 +680,30 @@ def _validate_unique_item_ids(items: list[dict[str, Any]]) -> None:
 
 def _state(item: dict[str, Any]) -> QueueWorkItemState:
     return QueueWorkItemState(str(item.get("state", QueueWorkItemState.READY.value)))
+
+
+def _state_if_valid(item: dict[str, Any]) -> QueueWorkItemState | None:
+    try:
+        return QueueWorkItemState(str(item.get("state", QueueWorkItemState.READY.value)))
+    except ValueError:
+        return None
+
+
+def _completed_item_ids_for_completion(items: list[dict[str, Any]]) -> set[str]:
+    return {
+        _item_id(item)
+        for item in items
+        if _state_if_valid(item) == QueueWorkItemState.COMPLETED
+    }
+
+
+def _pending_item_ids_for_completion(items: list[dict[str, Any]]) -> set[str]:
+    pending: set[str] = set()
+    for item in items:
+        state = _state_if_valid(item)
+        if state is None or state not in TERMINAL_STATES:
+            pending.add(_item_id(item))
+    return pending
 
 
 def _explicit_state(item: dict[str, Any]) -> QueueWorkItemState | None:

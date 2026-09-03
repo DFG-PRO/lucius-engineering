@@ -19,7 +19,11 @@ from lucius.persistence.orm import (
     RepositoryStateObservationORM,
 )
 from lucius.pilots.benchmark import BenchmarkRunnerService
+from lucius.pilots.provenance import has_linked_probe_evidence
 from lucius.pilots.schemas import ReleaseGateResult
+
+
+PHASE_1_22_OPERATIONAL_STAGE = "CONTROLLED_MULTI_PROJECT_OPERATIONAL_QUEUE_PILOT"
 
 
 class ReleaseGateService:
@@ -118,11 +122,17 @@ class ReleaseGateService:
             else:
                 warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
-        if is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
+        if is_plan_vs_implementation and pilot_stage == PHASE_1_22_OPERATIONAL_STAGE:
+            blockers.extend(_phase122_operational_evidence_blockers(implementation_artifact))
+        elif is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
             blockers.extend(_cross_project_evidence_blockers(implementation_artifact))
 
         if blockers:
             recommendation = (
+                AutonomyRecommendation.NOT_READY_FOR_MULTI_PROJECT_OPERATIONAL_USE
+                if is_plan_vs_implementation
+                and pilot_stage == PHASE_1_22_OPERATIONAL_STAGE
+                else
                 AutonomyRecommendation.NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE
                 if is_plan_vs_implementation
                 and pilot_stage in {"NON_BLOCKING_PROJECT_QUEUE_PILOT", "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT"}
@@ -139,6 +149,17 @@ class ReleaseGateService:
                 AutonomyRecommendation.NOT_READY_FOR_BOUNDED_ENGINEERING
                 if is_plan_vs_implementation and pilot_stage == "BOUNDED_ENGINEERING_PILOT"
                 else AutonomyRecommendation.NOT_READY_FOR_WRITE_AUTONOMY
+            )
+        elif is_plan_vs_implementation and pilot_stage == PHASE_1_22_OPERATIONAL_STAGE:
+            requested = implementation_artifact.get("operational_readiness_recommendation")
+            recommendation = (
+                AutonomyRecommendation(requested)
+                if requested in {
+                    AutonomyRecommendation.READY_FOR_EXPANDED_MULTI_PROJECT_OPERATIONAL_PILOT.value,
+                    AutonomyRecommendation.READY_FOR_ANOTHER_CONTROLLED_MULTI_PROJECT_OPERATIONAL_PILOT.value,
+                    AutonomyRecommendation.NOT_READY_FOR_MULTI_PROJECT_OPERATIONAL_USE.value,
+                }
+                else AutonomyRecommendation.READY_FOR_ANOTHER_CONTROLLED_MULTI_PROJECT_OPERATIONAL_PILOT
             )
         elif is_plan_vs_implementation and pilot_stage == "SUPERVISED_ENGINEERING_WORKFLOW":
             if human_rubric_captured and self._rubric_scores_meet_multi_task_threshold(rubric):
@@ -322,12 +343,40 @@ def _cross_project_evidence_blockers(artifact: dict) -> list[str]:
 
 
 def _claim_has_traceable_evidence(claim: dict) -> bool:
-    evidence_refs = claim.get("evidence_refs") or claim.get("evidence_artifact_ids")
-    evidence_id = claim.get("evidence_artifact_id")
-    test_probe = claim.get("test_probe_id") or claim.get("test_probe_ids") or claim.get("persisted_result_id")
-    invariant = claim.get("expected_invariant")
-    observed = claim.get("observed_result") or claim.get("result")
-    return bool(evidence_refs or evidence_id) and bool(test_probe) and bool(invariant) and observed == "PASS"
+    return has_linked_probe_evidence(claim)
+
+
+_PHASE122_REQUIRED_EVIDENCE_CLAIMS = {
+    "REAL_MULTI_PROJECT_WORK",
+    "BLOCKED_PROJECT_RELEASES_CAPACITY",
+    "FRESH_CONTEXT_RECONSTRUCTION",
+    "FRESH_CONTEXT_ACTUAL_DISPATCH",
+    "GLOBAL_SELECTION_EQUALS_MUTATION",
+    "READY_TO_RESUME_PRESERVES_PROGRESS",
+    "PRIORITY_OVER_RESUME",
+    "NO_PREEMPTION",
+    "PROJECT_REPOSITORY_ISOLATION",
+    "TARGET_MAIN_UNCHANGED",
+    "TARGET_DOCUMENTATION_DISCIPLINE",
+    "CANONICAL_ARTIFACT_STORE",
+    "COMPLETION_WITH_MALFORMED_SIBLING_SAFETY",
+    "VERIFIED_CLAIMS_HAVE_EVIDENCE",
+}
+
+
+def _phase122_operational_evidence_blockers(artifact: dict) -> list[str]:
+    blockers = []
+    claims = artifact.get("phase_1_22_operational_evidence", {})
+    if not isinstance(claims, dict):
+        claims = {}
+    for name in sorted(_PHASE122_REQUIRED_EVIDENCE_CLAIMS):
+        claim = claims.get(name)
+        if not isinstance(claim, dict) or claim.get("result") != "PASS":
+            blockers.append(f"Phase 1.22 operational evidence claim missing or failed: {name}")
+            continue
+        if not has_linked_probe_evidence(claim):
+            blockers.append(f"Phase 1.22 operational evidence claim lacks linked provenance: {name}")
+    return blockers
 
 
 def _evaluation_warning_blockers(corrections: list[dict], artifact: dict) -> list[str]:
