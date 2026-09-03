@@ -72,7 +72,7 @@ class AssumptionEvaluator:
         unsupported = [
             assumption.get("statement", "")
             for assumption in assumptions
-            if assumption.get("verified") and not assumption.get("evidence_ids")
+            if assumption.get("verified") and not _has_authorized_assumption_evidence(case, assumption)
         ]
         explicit = [assumption.get("statement", "") for assumption in assumptions if not assumption.get("verified")]
         penalty = len(unsupported) / max(1, len(assumptions)) * 100
@@ -256,6 +256,15 @@ def _actual_file_paths(actual: dict[str, Any]) -> list[str]:
         else:
             paths.append(str(item))
     return paths
+
+
+def _has_authorized_assumption_evidence(case: EvaluationCase, assumption: dict[str, Any]) -> bool:
+    evidence_ids = [item for item in assumption.get("evidence_ids", []) if isinstance(item, str) and item]
+    if not evidence_ids:
+        return False
+    if not case.expected_evidence:
+        return True
+    return set(evidence_ids).issubset(set(case.expected_evidence))
 
 
 def _hallucinated_verified_paths(actual: dict[str, Any]) -> list[str]:

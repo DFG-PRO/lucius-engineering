@@ -364,7 +364,7 @@ def test_phase121d_release_gate_accepts_evidenced_major_warning_disposition(sess
         corrections=[{"severity": "MAJOR", "dimension": "architecture_alignment", "message": "major mismatch"}],
     )
     evaluation.implementation_artifact["evaluation_warning_disposition"] = _evidenced_claim(
-        "LEVID_WARNING",
+        evaluation.id,
         "test_phase121d_release_gate_accepts_evidenced_major_warning_disposition",
         "MAJOR evaluator corrections are classified and linked to verification evidence.",
     ) | {"disposed_correction_dimensions": ["architecture_alignment"]}
@@ -479,7 +479,7 @@ def _cross_project_evaluation_row(
         for name, claim in list(row.implementation_artifact.items()):
             if isinstance(claim, dict) and claim.get("result") == "PASS":
                 row.implementation_artifact[name] = _evidenced_claim(
-                    f"LEVID_{name}",
+                    row.id,
                     f"test_{name}",
                     f"{name} invariant passes in Phase 1.21D regression evidence.",
                 )

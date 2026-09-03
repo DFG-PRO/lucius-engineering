@@ -395,18 +395,18 @@ def _cross_project_evaluation_row(
         "duplicate_work_protection": {"result": "PASS"},
         "project_isolation": {"result": "PASS"},
         "safe_interruption": {"result": "PASS"},
-        "stale_history_safety": _evidenced_claim("stale_history_safety"),
-        "lifecycle_scope_safety": _evidenced_claim("lifecycle_scope_safety"),
-        "unscoped_global_reconstruction": _evidenced_claim("unscoped_global_reconstruction"),
-        "exact_global_dispatch": _evidenced_claim("exact_global_dispatch"),
-        "global_selection_equals_mutation": _evidenced_claim("global_selection_equals_mutation"),
-        "malformed_persistence_safety": _evidenced_claim("malformed_persistence_safety"),
-        "stale_selection_safety": _evidenced_claim("stale_selection_safety"),
-        "scoped_lifecycle_execution_safety": _evidenced_claim("scoped_lifecycle_execution_safety"),
-        "scoped_malformed_persistence_safety": _evidenced_claim("scoped_malformed_persistence_safety"),
-        "global_and_scoped_policy_parity": _evidenced_claim("global_and_scoped_policy_parity"),
-        "no_preemption": _evidenced_claim("no_preemption"),
-        "dependency_scope_isolation": _evidenced_claim("dependency_scope_isolation"),
+        "stale_history_safety": _evidenced_claim("stale_history_safety", row.id),
+        "lifecycle_scope_safety": _evidenced_claim("lifecycle_scope_safety", row.id),
+        "unscoped_global_reconstruction": _evidenced_claim("unscoped_global_reconstruction", row.id),
+        "exact_global_dispatch": _evidenced_claim("exact_global_dispatch", row.id),
+        "global_selection_equals_mutation": _evidenced_claim("global_selection_equals_mutation", row.id),
+        "malformed_persistence_safety": _evidenced_claim("malformed_persistence_safety", row.id),
+        "stale_selection_safety": _evidenced_claim("stale_selection_safety", row.id),
+        "scoped_lifecycle_execution_safety": _evidenced_claim("scoped_lifecycle_execution_safety", row.id),
+        "scoped_malformed_persistence_safety": _evidenced_claim("scoped_malformed_persistence_safety", row.id),
+        "global_and_scoped_policy_parity": _evidenced_claim("global_and_scoped_policy_parity", row.id),
+        "no_preemption": _evidenced_claim("no_preemption", row.id),
+        "dependency_scope_isolation": _evidenced_claim("dependency_scope_isolation", row.id),
         "multi_project_non_blocking_tested": True,
     }
     row.evaluator_version = "1.21-test"
@@ -415,11 +415,11 @@ def _cross_project_evaluation_row(
     return row
 
 
-def _evidenced_claim(name: str) -> dict:
+def _evidenced_claim(name: str, evidence_id: str) -> dict:
     return {
         "result": "PASS",
         "observed_result": "PASS",
-        "evidence_artifact_id": f"LEVID_{name}",
+        "evidence_artifact_id": evidence_id,
         "test_probe_id": f"test_{name}",
         "expected_invariant": f"{name} invariant is verified by Phase 1.21 regression evidence.",
     }

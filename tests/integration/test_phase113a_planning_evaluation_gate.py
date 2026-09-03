@@ -10,7 +10,7 @@ from lucius.domain.enums import (
     RepositoryIntegrityResult,
     RepositoryStateClassification,
 )
-from lucius.persistence.orm import EngineeringPlanEvaluationORM, HumanRubricORM, utc_now
+from lucius.persistence.orm import EngineeringPlanEvaluationORM, EvidenceReferenceORM, HumanRubricORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
@@ -152,9 +152,10 @@ def test_planning_only_unsupported_claims_are_critical(session):
 
 
 def test_planning_only_evidence_backed_verified_assumptions_are_supported(session):
-    _project, _task, _contract, plan = _project_task_plan(session)
+    project, task, _contract, plan = _project_task_plan(session)
     _make_planning_ready(plan)
-    plan.assumptions = [{"statement": "Supported repository fact.", "verified": True, "evidence_ids": ["LEVID_000001"]}]
+    evidence = _semantic_evidence(session, project_id=project.id, task_id=task.id, claim="Supported repository fact.")
+    plan.assumptions = [{"statement": "Supported repository fact.", "verified": True, "evidence_ids": [evidence.id]}]
     freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
 
     result = EngineeringPlanEvaluationService(session).evaluate(
@@ -353,6 +354,30 @@ def _planning_artifact(*, provenance_quality: str = "SUPPORTED") -> dict:
         "leakage_detected": False,
         "leakage_audit": {"result": "PASS", "novelty_proven": True, "leakage_detected": False},
     }
+
+
+def _semantic_evidence(session, *, project_id: str, task_id: str, claim: str) -> EvidenceReferenceORM:
+    row = EvidenceReferenceORM(
+        id=next_id(session, "evidence"),
+        project_id=project_id,
+        repository_id="LREPO_TEST",
+        snapshot_id="LSNAP_TEST",
+        task_id=task_id,
+        task_run_id=None,
+        source_type="TEST",
+        path="tests/integration/test_phase113a_planning_evaluation_gate.py",
+        line_start=None,
+        line_end=None,
+        content_hash="a" * 64,
+        snippet=claim,
+        claim=claim,
+        relevance_score=1.0,
+        match_reasons=["semantic test evidence"],
+        captured_at=utc_now(),
+    )
+    session.add(row)
+    session.flush()
+    return row
 
 
 def _planning_evaluation_row(

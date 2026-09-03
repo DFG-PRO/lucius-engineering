@@ -19,7 +19,7 @@ from lucius.persistence.orm import (
     RepositoryStateObservationORM,
 )
 from lucius.pilots.benchmark import BenchmarkRunnerService
-from lucius.pilots.provenance import has_linked_probe_evidence
+from lucius.pilots.provenance import has_semantic_linked_probe_evidence, validate_claim_evidence
 from lucius.pilots.schemas import ReleaseGateResult
 
 
@@ -65,7 +65,7 @@ class ReleaseGateService:
                 blockers.append("unresolved critical hallucination/provenance failure")
             if evaluation.result == EngineeringPlanEvaluationResult.PASS_WITH_WARNINGS.value:
                 warnings.append("deterministic evaluation PASS_WITH_WARNINGS; correction disposition required for readiness")
-                blockers.extend(_evaluation_warning_blockers(evaluation.corrections, implementation_artifact))
+                blockers.extend(_evaluation_warning_blockers(evaluation.corrections, implementation_artifact, self.session))
             leakage = implementation_artifact.get("leakage_audit", {})
             leakage_failed = (
                 leakage.get("result") == "FAIL"
@@ -123,9 +123,9 @@ class ReleaseGateService:
                 warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
         if is_plan_vs_implementation and pilot_stage == PHASE_1_22_OPERATIONAL_STAGE:
-            blockers.extend(_phase122_operational_evidence_blockers(implementation_artifact))
+            blockers.extend(_phase122_operational_evidence_blockers(implementation_artifact, self.session))
         elif is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
-            blockers.extend(_cross_project_evidence_blockers(implementation_artifact))
+            blockers.extend(_cross_project_evidence_blockers(implementation_artifact, self.session))
 
         if blockers:
             recommendation = (
@@ -328,22 +328,30 @@ _CROSS_PROJECT_EVIDENCE_REQUIRED_CLAIMS = {
 }
 
 
-def _cross_project_evidence_blockers(artifact: dict) -> list[str]:
+def _cross_project_evidence_blockers(artifact: dict, session: Session) -> list[str]:
     blockers = []
     for name in sorted(_CROSS_PROJECT_RESULT_CLAIMS):
         claim = artifact.get(name)
         if not isinstance(claim, dict) or claim.get("result") != "PASS":
             blockers.append(f"cross-project readiness claim missing or failed: {name}")
             continue
-        if name in _CROSS_PROJECT_EVIDENCE_REQUIRED_CLAIMS and not _claim_has_traceable_evidence(claim):
+        if name in _CROSS_PROJECT_EVIDENCE_REQUIRED_CLAIMS and not _claim_has_traceable_evidence(claim, session, name):
             blockers.append(f"cross-project readiness claim lacks linked evidence provenance: {name}")
     if artifact.get("multi_project_non_blocking_tested") is not True:
         blockers.append("cross-project readiness claim missing or failed: multi_project_non_blocking_tested")
     return blockers
 
 
-def _claim_has_traceable_evidence(claim: dict) -> bool:
-    return has_linked_probe_evidence(claim)
+def _claim_has_traceable_evidence(claim: dict, session: Session | None = None, claim_name: str | None = None) -> bool:
+    if session is None:
+        return False
+    return has_semantic_linked_probe_evidence(
+        claim,
+        session=session,
+        allowed_types={"evidence_reference", "engineering_plan_evaluation", "pilot_record"},
+        require_current=True,
+        claim_name=claim_name,
+    )
 
 
 _PHASE122_REQUIRED_EVIDENCE_CLAIMS = {
@@ -364,7 +372,21 @@ _PHASE122_REQUIRED_EVIDENCE_CLAIMS = {
 }
 
 
-def _phase122_operational_evidence_blockers(artifact: dict) -> list[str]:
+_PHASE122_ALLOWED_EVIDENCE_TYPES = {
+    "evidence_reference",
+    "engineering_plan_evaluation",
+    "pilot_record",
+    "benchmark_result",
+    "repository_state",
+    "repository_snapshot",
+    "workflow_checkpoint",
+    "queue_checkpoint",
+    "resume_validation",
+    "human_rubric",
+}
+
+
+def _phase122_operational_evidence_blockers(artifact: dict, session: Session) -> list[str]:
     blockers = []
     claims = artifact.get("phase_1_22_operational_evidence", {})
     if not isinstance(claims, dict):
@@ -374,12 +396,23 @@ def _phase122_operational_evidence_blockers(artifact: dict) -> list[str]:
         if not isinstance(claim, dict) or claim.get("result") != "PASS":
             blockers.append(f"Phase 1.22 operational evidence claim missing or failed: {name}")
             continue
-        if not has_linked_probe_evidence(claim):
-            blockers.append(f"Phase 1.22 operational evidence claim lacks linked provenance: {name}")
+        validation = validate_claim_evidence(
+            claim,
+            session=session,
+            allowed_types=_PHASE122_ALLOWED_EVIDENCE_TYPES,
+            require_current=True,
+            expected_result="PASS",
+            expected_invariant=claim.get("expected_invariant"),
+            test_probe_id=claim.get("test_probe_id") or claim.get("persisted_result_id"),
+            claim_name=name,
+        )
+        if not validation.valid:
+            diagnostics = ", ".join(validation.diagnostics) or validation.reason
+            blockers.append(f"Phase 1.22 operational evidence claim invalid provenance: {name}: {diagnostics}")
     return blockers
 
 
-def _evaluation_warning_blockers(corrections: list[dict], artifact: dict) -> list[str]:
+def _evaluation_warning_blockers(corrections: list[dict], artifact: dict, session: Session) -> list[str]:
     severe = [
         correction
         for correction in corrections
@@ -390,8 +423,19 @@ def _evaluation_warning_blockers(corrections: list[dict], artifact: dict) -> lis
     disposition = artifact.get("evaluation_warning_disposition")
     if not isinstance(disposition, dict) or disposition.get("result") != "PASS":
         return ["unresolved MAJOR/CRITICAL deterministic evaluation corrections"]
-    if not _claim_has_traceable_evidence(disposition):
-        return ["MAJOR/CRITICAL deterministic evaluation correction disposition lacks linked evidence provenance"]
+    validation = validate_claim_evidence(
+        disposition,
+        session=session,
+        allowed_types={"evidence_reference", "engineering_plan_evaluation", "pilot_record", "human_rubric"},
+        require_current=True,
+        expected_result="PASS",
+        expected_invariant=disposition.get("expected_invariant"),
+        test_probe_id=disposition.get("test_probe_id") or disposition.get("persisted_result_id"),
+        claim_name=disposition.get("claim_name"),
+    )
+    if not validation.valid:
+        diagnostics = ", ".join(validation.diagnostics) or validation.reason
+        return [f"MAJOR/CRITICAL deterministic evaluation correction disposition invalid provenance: {diagnostics}"]
     disposed = set(disposition.get("disposed_correction_dimensions", []))
     missing = [
         correction.get("dimension")

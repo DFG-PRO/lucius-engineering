@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 
@@ -15,7 +16,8 @@ from lucius.domain.enums import (
     SnapshotMode,
 )
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
-from lucius.persistence.orm import AuditEventORM, EngineeringPlanEvaluationORM, PersistentWorkflowORM
+from lucius.persistence.orm import AuditEventORM, EngineeringPlanEvaluationORM, EvidenceReferenceORM, PersistentWorkflowORM, utc_now
+from lucius.persistence.repositories import next_id
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
 from lucius.pilots.provenance import find_verified_without_evidence
@@ -76,6 +78,13 @@ def test_plan_evaluation_accepts_linked_disposition_for_frozen_verified_claim(se
         implementation_artifact=_implementation_artifact(files=["src/pilots/evaluation.py"]),
         evaluation_mode=EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION,
     )
+    disposition_evidence = _semantic_disposition_evidence(
+        session,
+        project_id=freeze.project_id,
+        task_id=freeze.task_id,
+        invariant="verified claim is not treated as passed without evidence",
+        probe="tests/integration/test_phase122b_operational_repair.py::test_plan_evaluation_accepts_linked_disposition_for_frozen_verified_claim",
+    )
     passed = EngineeringPlanEvaluationService(session).evaluate(
         plan_freeze_id=freeze.id,
         supersedes_evaluation_id=failed.id,
@@ -85,7 +94,7 @@ def test_plan_evaluation_accepts_linked_disposition_for_frozen_verified_claim(se
                 "result": "PASS",
                 "disposed_claims": ["Probe proves operational readiness."],
                 "corrected_classification": "ASSUMPTION",
-                "evidence_refs": ["LEVID_PHASE122B"],
+                "evidence_refs": [disposition_evidence],
                 "test_probe_id": "tests/integration/test_phase122b_operational_repair.py::test_plan_evaluation_accepts_linked_disposition_for_frozen_verified_claim",
                 "expected_invariant": "verified claim is not treated as passed without evidence",
                 "observed_result": "PASS",
@@ -124,7 +133,7 @@ def test_phase122_gate_requires_linked_operational_evidence(session):
     )
     evaluation.implementation_artifact = {
         "pilot_stage": PHASE_1_22_OPERATIONAL_STAGE,
-        "phase_1_22_operational_evidence": _phase122_pass_claims(),
+        "phase_1_22_operational_evidence": _phase122_pass_claims(evaluation.id),
         "operational_readiness_recommendation": AutonomyRecommendation.READY_FOR_ANOTHER_CONTROLLED_MULTI_PROJECT_OPERATIONAL_PILOT.value,
     }
     session.flush()
@@ -138,7 +147,7 @@ def test_phase122_gate_requires_linked_operational_evidence(session):
 
     assert rejected.passed is False
     assert rejected.recommendation == AutonomyRecommendation.NOT_READY_FOR_MULTI_PROJECT_OPERATIONAL_USE
-    assert any("lacks linked provenance" in blocker for blocker in rejected.blockers)
+    assert any("invalid provenance" in blocker for blocker in rejected.blockers)
     assert accepted.passed is True
     assert accepted.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_CONTROLLED_MULTI_PROJECT_OPERATIONAL_PILOT
 
@@ -356,14 +365,49 @@ def _phase122_claim_names() -> list[str]:
     ]
 
 
-def _phase122_pass_claims() -> dict[str, dict[str, str | list[str]]]:
+def _phase122_pass_claims(evidence_id: str) -> dict[str, dict[str, str | list[str]]]:
     return {
         name: {
             "result": "PASS",
-            "evidence_refs": [f"LEVID_{name}"],
+            "evidence_refs": [evidence_id],
             "test_probe_id": f"phase122b::{name.lower()}",
             "expected_invariant": f"{name} is supported by a replayable probe",
             "observed_result": "PASS",
         }
         for name in _phase122_claim_names()
     }
+
+
+def _semantic_disposition_evidence(
+    session,
+    *,
+    project_id: str,
+    task_id: str,
+    invariant: str,
+    probe: str,
+) -> str:
+    snippet = (
+        f"claim_name=verified_claim_disposition expected_invariant={invariant} "
+        f"test_probe_id={probe} observed_result=PASS"
+    )
+    row = EvidenceReferenceORM(
+        id=next_id(session, "evidence"),
+        project_id=project_id,
+        repository_id="LREPO_TEST",
+        snapshot_id="LSNAP_TEST",
+        task_id=task_id,
+        task_run_id=None,
+        source_type="TEST_PROBE",
+        path="tests/integration/test_phase122b_operational_repair.py",
+        line_start=None,
+        line_end=None,
+        content_hash=hashlib.sha256(snippet.encode()).hexdigest(),
+        snippet=snippet,
+        claim="verified_claim_disposition",
+        relevance_score=1.0,
+        match_reasons=["phase-1.22b-semantic-disposition"],
+        captured_at=utc_now(),
+    )
+    session.add(row)
+    session.flush()
+    return row.id

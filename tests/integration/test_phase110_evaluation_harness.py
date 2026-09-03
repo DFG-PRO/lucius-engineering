@@ -85,6 +85,20 @@ def test_evaluators_distinguish_good_and_bad_outputs():
     assert _score(metrics, EvaluationMetricName.ACCEPTANCE_COVERAGE) < 100
 
 
+def test_verified_assumptions_must_reference_authorized_case_evidence():
+    case = lucius_core_bench_v0_1().cases[0]
+    actual = golden_actual(case)
+    actual["assumptions"] = [
+        {"statement": "Supported claim.", "verified": True, "evidence_ids": [case.expected_evidence[0]]},
+        {"statement": "Fabricated claim.", "verified": True, "evidence_ids": ["E-NOT-AUTHORIZED"]},
+    ]
+    metrics, gates = evaluate_case(case, actual)
+    unsupported = next(item for item in metrics if item.name == EvaluationMetricName.UNSUPPORTED_ASSUMPTION_RATE)
+    assert unsupported.passed is False
+    assert unsupported.details["unsupported"] == ["Fabricated claim."]
+    assert gates == []
+
+
 def test_risk_authority_memory_privacy_and_provenance_gates():
     cases = lucius_core_bench_v0_1().cases
     authority_case = cases[2]
