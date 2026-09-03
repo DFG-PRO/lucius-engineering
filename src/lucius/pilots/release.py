@@ -59,6 +59,9 @@ class ReleaseGateService:
                 blockers.append(f"deterministic {evaluation_mode} evaluation not passing: {evaluation.result}")
             elif any(item.get("severity") == "CRITICAL" for item in evaluation.corrections):
                 blockers.append("unresolved critical hallucination/provenance failure")
+            if evaluation.result == EngineeringPlanEvaluationResult.PASS_WITH_WARNINGS.value:
+                warnings.append("deterministic evaluation PASS_WITH_WARNINGS; correction disposition required for readiness")
+                blockers.extend(_evaluation_warning_blockers(evaluation.corrections, implementation_artifact))
             leakage = implementation_artifact.get("leakage_audit", {})
             leakage_failed = (
                 leakage.get("result") == "FAIL"
@@ -115,6 +118,9 @@ class ReleaseGateService:
             else:
                 warnings.append("human rubric NOT_CAPTURED; warning for first limited-write pilot, hard blocker before promotion beyond bounded write autonomy")
 
+        if is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
+            blockers.extend(_cross_project_evidence_blockers(implementation_artifact))
+
         if blockers:
             recommendation = (
                 AutonomyRecommendation.NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE
@@ -167,23 +173,7 @@ class ReleaseGateService:
             else:
                 recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_NON_BLOCKING_PROJECT_QUEUE_PILOT
         elif is_plan_vs_implementation and pilot_stage == "CROSS_PROJECT_NON_BLOCKING_QUEUE_PILOT":
-            required_checks = [
-                implementation_artifact.get("cross_project_evaluation", {}).get("result") == "PASS",
-                implementation_artifact.get("global_scheduler_evaluation", {}).get("result") == "PASS",
-                implementation_artifact.get("fresh_context_reconstruction", {}).get("result") == "PASS",
-                implementation_artifact.get("duplicate_work_protection", {}).get("result") == "PASS",
-                implementation_artifact.get("project_isolation", {}).get("result") == "PASS",
-                implementation_artifact.get("safe_interruption", {}).get("result") == "PASS",
-                implementation_artifact.get("stale_history_safety", {}).get("result") == "PASS",
-                implementation_artifact.get("lifecycle_scope_safety", {}).get("result") == "PASS",
-                implementation_artifact.get("unscoped_global_reconstruction", {}).get("result") == "PASS",
-                implementation_artifact.get("exact_global_dispatch", {}).get("result") == "PASS",
-                implementation_artifact.get("global_selection_equals_mutation", {}).get("result") == "PASS",
-                implementation_artifact.get("malformed_persistence_safety", {}).get("result") == "PASS",
-                implementation_artifact.get("stale_selection_safety", {}).get("result") == "PASS",
-                implementation_artifact.get("multi_project_non_blocking_tested") is True,
-            ]
-            if all(required_checks):
+            if implementation_artifact.get("multi_project_non_blocking_tested") is True:
                 recommendation = AutonomyRecommendation.READY_FOR_MULTI_PROJECT_NON_BLOCKING_QUEUE
             else:
                 recommendation = AutonomyRecommendation.READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT
@@ -278,3 +268,87 @@ class ReleaseGateService:
             repository_integrity_result=RepositoryIntegrityResult(record.repository_integrity_result),
             human_rubric_id=record.human_rubric_id,
         )
+
+
+_CROSS_PROJECT_RESULT_CLAIMS = {
+    "cross_project_evaluation",
+    "global_scheduler_evaluation",
+    "fresh_context_reconstruction",
+    "duplicate_work_protection",
+    "project_isolation",
+    "safe_interruption",
+    "stale_history_safety",
+    "lifecycle_scope_safety",
+    "unscoped_global_reconstruction",
+    "exact_global_dispatch",
+    "global_selection_equals_mutation",
+    "malformed_persistence_safety",
+    "stale_selection_safety",
+    "scoped_lifecycle_execution_safety",
+    "scoped_malformed_persistence_safety",
+    "global_and_scoped_policy_parity",
+    "no_preemption",
+    "dependency_scope_isolation",
+}
+
+_CROSS_PROJECT_EVIDENCE_REQUIRED_CLAIMS = {
+    "stale_history_safety",
+    "lifecycle_scope_safety",
+    "unscoped_global_reconstruction",
+    "exact_global_dispatch",
+    "global_selection_equals_mutation",
+    "malformed_persistence_safety",
+    "stale_selection_safety",
+    "scoped_lifecycle_execution_safety",
+    "scoped_malformed_persistence_safety",
+    "global_and_scoped_policy_parity",
+    "no_preemption",
+    "dependency_scope_isolation",
+}
+
+
+def _cross_project_evidence_blockers(artifact: dict) -> list[str]:
+    blockers = []
+    for name in sorted(_CROSS_PROJECT_RESULT_CLAIMS):
+        claim = artifact.get(name)
+        if not isinstance(claim, dict) or claim.get("result") != "PASS":
+            blockers.append(f"cross-project readiness claim missing or failed: {name}")
+            continue
+        if name in _CROSS_PROJECT_EVIDENCE_REQUIRED_CLAIMS and not _claim_has_traceable_evidence(claim):
+            blockers.append(f"cross-project readiness claim lacks linked evidence provenance: {name}")
+    if artifact.get("multi_project_non_blocking_tested") is not True:
+        blockers.append("cross-project readiness claim missing or failed: multi_project_non_blocking_tested")
+    return blockers
+
+
+def _claim_has_traceable_evidence(claim: dict) -> bool:
+    evidence_refs = claim.get("evidence_refs") or claim.get("evidence_artifact_ids")
+    evidence_id = claim.get("evidence_artifact_id")
+    test_probe = claim.get("test_probe_id") or claim.get("test_probe_ids") or claim.get("persisted_result_id")
+    invariant = claim.get("expected_invariant")
+    observed = claim.get("observed_result") or claim.get("result")
+    return bool(evidence_refs or evidence_id) and bool(test_probe) and bool(invariant) and observed == "PASS"
+
+
+def _evaluation_warning_blockers(corrections: list[dict], artifact: dict) -> list[str]:
+    severe = [
+        correction
+        for correction in corrections
+        if correction.get("severity") in {"MAJOR", "CRITICAL"}
+    ]
+    if not severe:
+        return []
+    disposition = artifact.get("evaluation_warning_disposition")
+    if not isinstance(disposition, dict) or disposition.get("result") != "PASS":
+        return ["unresolved MAJOR/CRITICAL deterministic evaluation corrections"]
+    if not _claim_has_traceable_evidence(disposition):
+        return ["MAJOR/CRITICAL deterministic evaluation correction disposition lacks linked evidence provenance"]
+    disposed = set(disposition.get("disposed_correction_dimensions", []))
+    missing = [
+        correction.get("dimension")
+        for correction in severe
+        if correction.get("dimension") not in disposed
+    ]
+    if missing:
+        return [f"MAJOR/CRITICAL deterministic evaluation corrections not disposed: {', '.join(sorted(set(missing)))}"]
+    return []

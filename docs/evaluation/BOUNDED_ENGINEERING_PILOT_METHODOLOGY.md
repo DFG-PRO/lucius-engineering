@@ -302,3 +302,18 @@ reconstruction, exact global dispatch, global selection equals mutation,
 malformed persistence safety, stale-selection safety, formal benchmarks, and
 target-integrity checks. The result does not authorize multi-worker
 concurrency.
+
+After Phase 1.21D, critical cross-project readiness claims require linked
+evidence provenance. The gate requires an evidence artifact id, test/probe or
+persisted-result id, expected invariant, and passing observed result for scoped
+lifecycle execution safety, scoped malformed persistence safety, global/scoped
+policy parity, exact global dispatch, selection-equals-mutation,
+stale-selection safety, no-preemption, dependency scope isolation, stale-history
+safety, lifecycle-scope safety, malformed persistence safety, and unscoped
+global reconstruction. A free-standing `result: PASS` is not sufficient.
+
+Formal deterministic warnings are release inputs. `PASS` remains eligible when
+hard gates pass. `PASS_WITH_WARNINGS` is eligible only after corrections are
+classified. MAJOR or CRITICAL corrections require explicit disposition linked to
+evidence before readiness can pass. `FAIL` and `INSUFFICIENT_EVIDENCE` block
+readiness.

@@ -133,8 +133,10 @@ validation requirements.
 
 The queue read model is computed from persisted workflow state and reports
 running, blocked, ready, ready-to-resume, dependency-blocked, completed, failed,
-and next-selection groups. Read-only queue inspection must not mutate the
-workflow.
+excluded, and next-selection groups. Read-only queue inspection must not mutate
+the workflow. After Phase 1.21D, scoped inspection exposes legacy or malformed
+persisted rows in `excluded` so they remain visible without becoming execution
+candidates.
 
 Phase 1.21 adds global queue read models over multiple persistent workflows.
 `GlobalQueueItem` includes the owning project, workflow, repository, workflow
@@ -153,7 +155,7 @@ Phase 1.21B defines the fail-closed read model. Historical backlog entries
 without explicit queue `state` are not normalized in storage and are not inferred
 as `READY`; they are surfaced as legacy unschedulable. Workflows outside the
 global execution lifecycle are surfaced under lifecycle exclusions with a reason
-such as `LIFECYCLE_EXCLUDED:COMPLETED_PENDING_INTEGRATION`.
+such as `WORKFLOW_LIFECYCLE_INELIGIBLE:COMPLETED_PENDING_INTEGRATION`.
 
 Global queue state remains derived from existing `PersistentWorkflow` rows. No
 new queue table is introduced in Phase 1.21.
@@ -163,3 +165,12 @@ priority validity, and mutation identity evidence. Malformed state or priority
 is represented as unschedulable inspection data rather than normalized storage.
 Exact global dispatch validates the selected identity and version immediately
 before mutation and records whether the mutated identity matched selection.
+
+Phase 1.21D defines the shared execution safety policy. Scoped and global
+execution use the same workflow lifecycle eligibility set and strict item
+state/priority interpretation. Explicit workflow scope narrows identity but does
+not authorize execution. Release-gate implementation artifacts for
+cross-project readiness must link critical claims to evidence provenance:
+evidence artifact id, test/probe or persisted-result id, expected invariant, and
+passing observed result. MAJOR or CRITICAL `PASS_WITH_WARNINGS` corrections
+must be disposed with similarly linked evidence before readiness can pass.

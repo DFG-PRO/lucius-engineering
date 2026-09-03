@@ -35,7 +35,7 @@ STATE_CLASS_RANK = {
     QueueWorkItemState.READY_TO_RESUME: 0,
     QueueWorkItemState.READY: 1,
 }
-GLOBAL_SCHEDULABLE_WORKFLOW_STATES = {
+EXECUTION_ELIGIBLE_WORKFLOW_STATES = {
     PersistentWorkflowState.PLAN_READY,
     PersistentWorkflowState.IMPLEMENTING,
     PersistentWorkflowState.VERIFYING,
@@ -44,6 +44,7 @@ GLOBAL_SCHEDULABLE_WORKFLOW_STATES = {
     PersistentWorkflowState.BLOCKED,
     PersistentWorkflowState.APPROVED_TO_CONTINUE,
 }
+GLOBAL_SCHEDULABLE_WORKFLOW_STATES = EXECUTION_ELIGIBLE_WORKFLOW_STATES
 
 
 class QueueStateError(ValueError):
@@ -59,60 +60,93 @@ class NonBlockingQueueService:
 
     def inspect(self, workflow_id: str) -> QueueStatus:
         workflow = self._workflow(workflow_id)
-        items = self._items(workflow)
+        parsed = self._execution_items(workflow)
+        executable_items = [item for item in parsed if item.schedulable]
         selection = self.select_next(workflow_id)
         return QueueStatus(
             workflow_id=workflow.id,
-            running=[deepcopy(item) for item in items if _state(item) == QueueWorkItemState.RUNNING],
-            blocked=[deepcopy(item) for item in items if _state(item) in BLOCKED_STATES],
-            ready=[deepcopy(item) for item in items if _state(item) == QueueWorkItemState.READY and self._dependencies_complete(item, items)],
-            ready_to_resume=[
-                deepcopy(item)
-                for item in items
-                if _state(item) == QueueWorkItemState.READY_TO_RESUME and self._dependencies_complete(item, items)
+            running=[
+                deepcopy(item.item)
+                for item in executable_items
+                if item.state == QueueWorkItemState.RUNNING
             ],
-            dependency_blocked=[deepcopy(item) for item in items if not self._dependencies_complete(item, items)],
-            completed=[deepcopy(item) for item in items if _state(item) == QueueWorkItemState.COMPLETED],
-            failed=[deepcopy(item) for item in items if _state(item) == QueueWorkItemState.FAILED],
+            blocked=[deepcopy(item.item) for item in executable_items if item.state in BLOCKED_STATES],
+            ready=[
+                deepcopy(item.item)
+                for item in executable_items
+                if item.state == QueueWorkItemState.READY and self._global_dependencies_complete(item, executable_items)
+            ],
+            ready_to_resume=[
+                deepcopy(item.item)
+                for item in executable_items
+                if item.state == QueueWorkItemState.READY_TO_RESUME
+                and self._global_dependencies_complete(item, executable_items)
+            ],
+            dependency_blocked=[
+                deepcopy(item.item)
+                for item in executable_items
+                if not self._global_dependencies_complete(item, executable_items)
+            ],
+            completed=[deepcopy(item.item) for item in executable_items if item.state == QueueWorkItemState.COMPLETED],
+            failed=[deepcopy(item.item) for item in executable_items if item.state == QueueWorkItemState.FAILED],
+            excluded=[_excluded_payload(item) for item in parsed if not item.schedulable],
             next_selection=selection,
         )
 
     def select_next(self, workflow_id: str) -> QueueSelection:
         workflow = self._workflow(workflow_id)
-        items = self._items(workflow)
-        self._validate_unique_items(items)
-        running = [item for item in items if _state(item) == QueueWorkItemState.RUNNING]
+        parsed = self._execution_items(workflow)
+        stateful_items = [item for item in parsed if item.queue_state_present]
+        executable_items = [item for item in parsed if item.schedulable]
+        self._validate_scoped_running_identities(stateful_items)
+        running = [item for item in stateful_items if item.state == QueueWorkItemState.RUNNING]
         if running:
             return QueueSelection(
                 reason="RUNNING_ITEM_ACTIVE_NO_PREEMPTION",
-                running_item_ids=[_item_id(item) for item in running],
+                running_item_ids=[item.item_id for item in running],
             )
-        eligible = [item for item in items if self._is_eligible(item, items)]
-        blocked = [item for item in items if _state(item) in BLOCKED_STATES or not self._dependencies_complete(item, items)]
+        eligible = [item for item in executable_items if self._global_is_eligible(item, executable_items)]
+        blocked = [
+            item
+            for item in executable_items
+            if item.state in BLOCKED_STATES or not self._global_dependencies_complete(item, executable_items)
+        ]
         if not eligible:
             return QueueSelection(
                 reason="NO_ELIGIBLE_WORK",
-                blocked_item_ids=[_item_id(item) for item in blocked],
+                blocked_item_ids=[item.item_id for item in blocked],
             )
-        selected = sorted(eligible, key=_selection_key)[0]
+        selected = sorted(eligible, key=_scoped_selection_key)[0]
         return QueueSelection(
-            selected_item_id=_item_id(selected),
-            reason=_selection_reason(selected),
-            eligible_item_ids=[_item_id(item) for item in sorted(eligible, key=_selection_key)],
-            blocked_item_ids=[_item_id(item) for item in blocked],
+            selected_item_id=selected.item_id,
+            reason=_scoped_selection_reason(selected),
+            eligible_item_ids=[item.item_id for item in sorted(eligible, key=_scoped_selection_key)],
+            blocked_item_ids=[item.item_id for item in blocked],
         )
 
     def start_next(self, workflow_id: str, *, actor: Actor = Actor.LUCIUS) -> QueueSelection:
         workflow = self._workflow(workflow_id)
+        lifecycle_reason = workflow_execution_exclusion_reason(workflow)
+        if lifecycle_reason is not None:
+            raise QueueStateError(f"Workflow is not executable: {lifecycle_reason}")
         selection = self.select_next(workflow.id)
         if selection.selected_item_id is None:
+            excluded = [item for item in self._execution_items(workflow) if not item.schedulable]
+            if excluded:
+                raise QueueStateError(f"Queue work item is not executable: {excluded[0].exclusion_reason}")
             return selection
         items = self._items(workflow)
         item = self._item(items, selection.selected_item_id)
-        execution_state = _execution_state(item)
-        if execution_state not in ELIGIBLE_STATES:
-            raise QueueStateError(f"Selected queue work item is not executable: {execution_state.value}")
-        _execution_priority(item)
+        selected = next(
+            (candidate for candidate in self._execution_items(workflow) if candidate.item_id == selection.selected_item_id),
+            None,
+        )
+        if selected is None:
+            raise QueueStateError("Selected queue work item no longer exists.")
+        if not selected.schedulable:
+            raise QueueStateError(f"Selected queue work item is not schedulable: {selected.exclusion_reason}")
+        if selected.state not in ELIGIBLE_STATES:
+            raise QueueStateError(f"Selected queue work item is not executable: {selected.state_label}")
         self._set_state(item, QueueWorkItemState.RUNNING)
         item["started_at"] = _now_iso()
         item["run_generation"] = int(item.get("run_generation", 0)) + 1
@@ -433,6 +467,15 @@ class NonBlockingQueueService:
         if len(running_logical) < len([item for item in items if _state(item) == QueueWorkItemState.RUNNING]):
             raise QueueStateError("Duplicate RUNNING logical task detected.")
 
+    def _execution_items(self, workflow: PersistentWorkflowORM) -> list[GlobalQueueItem]:
+        return self._global_items([workflow])
+
+    def _validate_scoped_running_identities(self, items: list[GlobalQueueItem]) -> None:
+        running = [item for item in items if item.state == QueueWorkItemState.RUNNING]
+        logical_ids = [item.logical_task_id for item in running]
+        if len(logical_ids) != len(set(logical_ids)):
+            raise QueueStateError("Duplicate RUNNING logical task detected.")
+
     def _set_state(self, item: dict[str, Any], state: QueueWorkItemState) -> None:
         item["state"] = state.value
         item["version"] = int(item.get("version", 0)) + 1
@@ -451,7 +494,7 @@ class NonBlockingQueueService:
         schedulable: list[PersistentWorkflowORM] = []
         excluded: list[GlobalWorkflowExclusion] = []
         for workflow in workflows:
-            reason = _global_workflow_exclusion_reason(workflow)
+            reason = workflow_execution_exclusion_reason(workflow)
             if reason is None:
                 schedulable.append(workflow)
                 continue
@@ -537,7 +580,7 @@ class NonBlockingQueueService:
         workflow = self._workflow(selection.selected_workflow_id or "")
         if workflow_ids and workflow.id not in set(workflow_ids):
             raise QueueStateError("Global selection workflow is outside requested scope.")
-        if _global_workflow_exclusion_reason(workflow) is not None:
+        if workflow_execution_exclusion_reason(workflow) is not None:
             raise QueueStateError("Stale global selection: workflow is no longer schedulable.")
         current_selection = self.select_global_next(workflow_ids)
         if (
@@ -707,11 +750,19 @@ def _parse_global_priority(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _global_workflow_exclusion_reason(workflow: PersistentWorkflowORM) -> str | None:
+def workflow_is_execution_eligible(workflow: PersistentWorkflowORM) -> bool:
+    return workflow_execution_exclusion_reason(workflow) is None
+
+
+def workflow_execution_exclusion_reason(workflow: PersistentWorkflowORM) -> str | None:
     state = PersistentWorkflowState(workflow.workflow_state)
-    if state in GLOBAL_SCHEDULABLE_WORKFLOW_STATES:
+    if state in EXECUTION_ELIGIBLE_WORKFLOW_STATES:
         return None
-    return f"LIFECYCLE_EXCLUDED:{state.value}"
+    return f"WORKFLOW_LIFECYCLE_INELIGIBLE:{state.value}"
+
+
+def _global_workflow_exclusion_reason(workflow: PersistentWorkflowORM) -> str | None:
+    return workflow_execution_exclusion_reason(workflow)
 
 
 def _selection_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
@@ -728,6 +779,19 @@ def _selection_reason(item: dict[str, Any]) -> str:
         f"priority={str(item.get('priority', 'NORMAL')).upper()} "
         f"state={_state(item).value} order={int(item.get('created_order', 0))}"
     )
+
+
+def _scoped_selection_key(item: GlobalQueueItem) -> tuple[int, int, int, str]:
+    return (
+        PRIORITY_RANK.get(item.priority.upper(), PRIORITY_RANK["NORMAL"]),
+        STATE_CLASS_RANK.get(item.state, 9),
+        item.created_order,
+        item.item_id,
+    )
+
+
+def _scoped_selection_reason(item: GlobalQueueItem) -> str:
+    return f"priority={item.priority.upper()} state={item.state.value} order={item.created_order}"
 
 
 def _global_selection_key(item: GlobalQueueItem) -> tuple[int, int, int, str, str, str]:
@@ -750,6 +814,17 @@ def _global_selection_reason(item: GlobalQueueItem) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _excluded_payload(item: GlobalQueueItem) -> dict[str, Any]:
+    payload = deepcopy(item.item)
+    payload["state_label"] = item.state_label
+    payload["raw_state"] = item.raw_state
+    payload["raw_priority"] = item.raw_priority
+    payload["exclusion_reason"] = item.exclusion_reason
+    payload["queue_state_present"] = item.queue_state_present
+    payload["priority_valid"] = item.priority_valid
+    return payload
 
 
 def _merge_substeps(existing: list[str], additional: list[str]) -> list[str]:

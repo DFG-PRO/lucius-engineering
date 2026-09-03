@@ -295,6 +295,7 @@ class QueueStatus(BaseModel):
     dependency_blocked: list[dict[str, Any]] = Field(default_factory=list)
     completed: list[dict[str, Any]] = Field(default_factory=list)
     failed: list[dict[str, Any]] = Field(default_factory=list)
+    excluded: list[dict[str, Any]] = Field(default_factory=list)
     next_selection: QueueSelection
     generated_at: datetime = Field(default_factory=utc_now)
 

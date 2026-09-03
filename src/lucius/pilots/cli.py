@@ -9,7 +9,7 @@ from lucius.persistence.database import create_all, create_sqlite_engine, make_s
 from lucius.pilots.benchmark import BenchmarkRunnerService
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
-from lucius.pilots.queue import NonBlockingQueueService
+from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.repository_state import RepositoryStateError, RepositoryStateService
 from lucius.pilots.rubric import HumanRubricService
@@ -69,6 +69,9 @@ def main() -> None:
 
     queue_next = sub.add_parser("queue-next")
     queue_next.add_argument("workflow_id")
+
+    queue_start = sub.add_parser("queue-start")
+    queue_start.add_argument("workflow_id")
 
     queue_global_status = sub.add_parser("queue-global-status")
     queue_global_status.add_argument("workflow_ids", nargs="*")
@@ -192,6 +195,15 @@ def main() -> None:
         elif args.command == "queue-next":
             result = NonBlockingQueueService(session).select_next(args.workflow_id)
             print(result.model_dump_json(indent=2))
+        elif args.command == "queue-start":
+            try:
+                result = NonBlockingQueueService(session).start_next(args.workflow_id, actor=Actor.LUCIUS)
+            except QueueStateError as error:
+                session.rollback()
+                print(json.dumps({"result": "REJECTED", "reason": str(error)}, indent=2))
+                raise SystemExit(1) from error
+            session.commit()
+            print(result.model_dump_json(indent=2))
         elif args.command == "queue-global-status":
             result = NonBlockingQueueService(session).inspect_global(args.workflow_ids or None)
             print(result.model_dump_json(indent=2))
@@ -199,7 +211,12 @@ def main() -> None:
             result = NonBlockingQueueService(session).select_global_next(args.workflow_ids or None)
             print(result.model_dump_json(indent=2))
         elif args.command == "queue-global-start":
-            result = NonBlockingQueueService(session).start_global_next(args.workflow_ids or None, actor=Actor.LUCIUS)
+            try:
+                result = NonBlockingQueueService(session).start_global_next(args.workflow_ids or None, actor=Actor.LUCIUS)
+            except QueueStateError as error:
+                session.rollback()
+                print(json.dumps({"result": "REJECTED", "reason": str(error)}, indent=2))
+                raise SystemExit(1) from error
             session.commit()
             print(result.model_dump_json(indent=2))
 

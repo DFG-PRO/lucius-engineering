@@ -225,6 +225,18 @@ tasks, refuses unsafe mid-task preemption when a work item is already running,
 excludes blocked/terminal/dependency-incomplete work, and selects by priority,
 resume class, creation order, then id.
 
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite queue-start LWORK_000001
+```
+
+`queue-start` is the scoped execution command. After Phase 1.21D, scoped
+execution uses the same canonical safety policy as global execution. Supplying a
+workflow id narrows identity; it is not authorization to bypass workflow
+lifecycle, item state, malformed persistence, dependencies, terminal state, or
+no-preemption checks. Lifecycle-ineligible workflows are rejected with
+`WORKFLOW_LIFECYCLE_INELIGIBLE:<state>`. Missing, null, or unknown item state
+and unknown priority are inspectable but not executable.
+
 When a work item blocks, persist a queue checkpoint with its reason, category,
 completed substeps, resume condition, approvals, repair counters, next safe
 action, and stale validation rules. When the blocker resolves, require the
@@ -278,9 +290,9 @@ state can become schedulable.
 Global execution lifecycle eligibility is explicit. `PLAN_READY`,
 `IMPLEMENTING`, `VERIFYING`, `CHECKPOINT_REVIEW_REQUIRED`,
 `RESUME_VALIDATION`, `BLOCKED`, and `APPROVED_TO_CONTINUE` may participate in
-global scheduling. `OBJECTIVE_ACCEPTED`, `PLANNING`, `PAUSED`,
+global and scoped execution. `OBJECTIVE_ACCEPTED`, `PLANNING`, `PAUSED`,
 `COMPLETED_PENDING_INTEGRATION`, and `CLOSED` are inspectable but excluded from
-global execution.
+execution.
 
 Missing item `state` means legacy or ambiguous backlog data. It is reported with
 `state_label: LEGACY_UNSCHEDULABLE`, `queue_state_present: false`,

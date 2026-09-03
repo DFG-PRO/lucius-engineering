@@ -127,8 +127,8 @@ def test_completed_pending_and_closed_workflows_are_lifecycle_excluded(session):
     assert status.next_selection.selected_item_id == "ACTIVE_LOW"
     assert {item.workflow_id for item in status.lifecycle_excluded} == {completed_pending.id, closed.id}
     assert {item.reason for item in status.lifecycle_excluded} == {
-        "LIFECYCLE_EXCLUDED:COMPLETED_PENDING_INTEGRATION",
-        "LIFECYCLE_EXCLUDED:CLOSED",
+        "WORKFLOW_LIFECYCLE_INELIGIBLE:COMPLETED_PENDING_INTEGRATION",
+        "WORKFLOW_LIFECYCLE_INELIGIBLE:CLOSED",
     }
 
 
@@ -479,7 +479,7 @@ def test_phase121c_scoped_start_cannot_execute_legacy_or_malformed_priority(sess
     try:
         queue.start_next(legacy.id)
     except QueueStateError as error:
-        assert "missing queue state" in str(error)
+        assert str(error) == "Queue work item is not executable: LEGACY_UNSCHEDULABLE:MISSING_STATE"
     else:
         raise AssertionError("Scoped start should reject missing queue state")
 
@@ -491,7 +491,7 @@ def test_phase121c_scoped_start_cannot_execute_legacy_or_malformed_priority(sess
     try:
         queue.start_next(malformed_priority.id)
     except QueueStateError as error:
-        assert "unknown priority" in str(error)
+        assert str(error) == "Queue work item is not executable: MALFORMED_UNSCHEDULABLE:UNKNOWN_PRIORITY:WILD"
     else:
         raise AssertionError("Scoped start should reject malformed priority")
 
@@ -509,8 +509,8 @@ def test_cross_project_release_gate_requires_phase121b_stale_lifecycle_evidence(
         repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
     )
 
-    assert result.passed is True
-    assert result.recommendation == AutonomyRecommendation.READY_FOR_ANOTHER_CROSS_PROJECT_QUEUE_PILOT
+    assert result.passed is False
+    assert result.recommendation == AutonomyRecommendation.NOT_READY_FOR_NON_BLOCKING_PROJECT_QUEUE
 
 
 def test_phase121c_release_gate_requires_exact_dispatch_evidence(session):
@@ -614,16 +614,31 @@ def _cross_project_evaluation_row(
     if include_repair_checks:
         row.implementation_artifact.update(
             {
-                "stale_history_safety": {"result": "PASS"},
-                "lifecycle_scope_safety": {"result": "PASS"},
-                "unscoped_global_reconstruction": {"result": "PASS"},
-                "exact_global_dispatch": {"result": "PASS"},
-                "global_selection_equals_mutation": {"result": "PASS"},
-                "malformed_persistence_safety": {"result": "PASS"},
-                "stale_selection_safety": {"result": "PASS"},
+                "stale_history_safety": _evidenced_claim("stale_history_safety"),
+                "lifecycle_scope_safety": _evidenced_claim("lifecycle_scope_safety"),
+                "unscoped_global_reconstruction": _evidenced_claim("unscoped_global_reconstruction"),
+                "exact_global_dispatch": _evidenced_claim("exact_global_dispatch"),
+                "global_selection_equals_mutation": _evidenced_claim("global_selection_equals_mutation"),
+                "malformed_persistence_safety": _evidenced_claim("malformed_persistence_safety"),
+                "stale_selection_safety": _evidenced_claim("stale_selection_safety"),
+                "scoped_lifecycle_execution_safety": _evidenced_claim("scoped_lifecycle_execution_safety"),
+                "scoped_malformed_persistence_safety": _evidenced_claim("scoped_malformed_persistence_safety"),
+                "global_and_scoped_policy_parity": _evidenced_claim("global_and_scoped_policy_parity"),
+                "no_preemption": _evidenced_claim("no_preemption"),
+                "dependency_scope_isolation": _evidenced_claim("dependency_scope_isolation"),
             }
         )
     row.evaluator_version = "1.21b-test"
     row.evaluated_at = utc_now()
     session.flush()
     return row
+
+
+def _evidenced_claim(name: str) -> dict:
+    return {
+        "result": "PASS",
+        "observed_result": "PASS",
+        "evidence_artifact_id": f"LEVID_{name}",
+        "test_probe_id": f"test_{name}",
+        "expected_invariant": f"{name} invariant is verified by Phase 1.21 regression evidence.",
+    }

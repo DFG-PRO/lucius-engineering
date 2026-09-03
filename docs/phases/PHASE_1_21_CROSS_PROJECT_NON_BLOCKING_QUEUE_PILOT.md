@@ -211,6 +211,44 @@ to hijack dispatch. Phase 1.21C repairs that exact-dispatch boundary:
 No human rubric is invented. If no human scoring is captured, the rubric remains
 `NOT_CAPTURED`.
 
+## Phase 1.21D Scoped Execution Repair
+
+Independent Phase 1.21C closure audit artifact `LRUBRIC_000020` confirmed that
+the global path was repaired, but found a HIGH scoped execution defect: supplying
+a workflow id to `start_next()` could execute queue work in lifecycle-ineligible
+workflows such as `CLOSED`, `COMPLETED_PENDING_INTEGRATION`, `PAUSED`, or
+`OBJECTIVE_ACCEPTED`. The same audit found MEDIUM malformed-state handling and
+release-gate provenance weaknesses.
+
+Phase 1.21D makes execution safety independent of entry point:
+
+- One canonical workflow execution policy applies to scoped and global starts.
+- Executable workflow states are `PLAN_READY`, `IMPLEMENTING`, `VERIFYING`,
+  `CHECKPOINT_REVIEW_REQUIRED`, `RESUME_VALIDATION`, `BLOCKED`, and
+  `APPROVED_TO_CONTINUE`.
+- `OBJECTIVE_ACCEPTED`, `PLANNING`, `PAUSED`,
+  `COMPLETED_PENDING_INTEGRATION`, and `CLOSED` are inspectable but rejected
+  for execution with `WORKFLOW_LIFECYCLE_INELIGIBLE:<state>`.
+- Scoped selection now uses strict parsed queue item state and priority for
+  execution. Missing state remains `LEGACY_UNSCHEDULABLE:MISSING_STATE`; null
+  or unknown state and unknown priority remain malformed unschedulable data.
+- Explicit workflow scope is not authorization to bypass execution safety. Scope
+  narrows identity only.
+- Scoped `queue-start` and global `queue-global-start` surface structured
+  operator rejections instead of raw traceback-oriented persisted-state errors.
+
+Release readiness after Phase 1.21D requires traceable evidence for critical
+cross-project claims. A claim such as scoped lifecycle safety, scoped malformed
+persistence safety, global/scoped policy parity, exact global dispatch,
+selection-equals-mutation, stale-selection safety, no-preemption, or dependency
+scope isolation must include an evidence artifact id, test/probe identifier,
+expected invariant, and passing observed result. A bare `result: PASS` is not
+sufficient.
+
+Formal deterministic `PASS_WITH_WARNINGS` results are visible to the release
+gate. MAJOR or CRITICAL corrections must have explicit linked disposition
+evidence before readiness can be reported.
+
 ## Limits
 
 Phase 1.21 is multi-project scheduling with one logical execution capacity. It

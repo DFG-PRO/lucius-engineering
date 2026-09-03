@@ -8,11 +8,12 @@ from lucius.domain.enums import (
     AutonomyRecommendation,
     EngineeringPlanEvaluationMode,
     EngineeringPlanEvaluationResult,
+    PersistentWorkflowState,
     QueueWorkItemState,
     RepositoryIntegrityResult,
     RepositoryStateClassification,
 )
-from lucius.persistence.orm import EngineeringPlanEvaluationORM, utc_now
+from lucius.persistence.orm import EngineeringPlanEvaluationORM, PersistentWorkflowORM, utc_now
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.workflows import PersistentWorkflowService
@@ -388,7 +389,7 @@ def test_non_blocking_queue_release_gate_blocks_stage_specific_failures(session)
 
 
 def _workflow(session, *, backlog=None):
-    return PersistentWorkflowService(session).create(
+    workflow = PersistentWorkflowService(session).create(
         objective="Phase 1.20 non-blocking queue scenario.",
         expected_main_head="lucius-head",
         isolated_branch="lucius/phase-1.20-queue",
@@ -405,6 +406,10 @@ def _workflow(session, *, backlog=None):
         completed_task_ids=[],
         pending_task_ids=["A1", "B1", "C1"],
     )
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    row.workflow_state = PersistentWorkflowState.PLAN_READY.value
+    session.flush()
+    return workflow
 
 
 def _item(
