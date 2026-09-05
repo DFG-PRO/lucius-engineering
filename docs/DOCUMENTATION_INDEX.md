@@ -90,6 +90,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_22_CONTROLLED_MULTI_PROJECT_OPERATIONAL_QUEUE_PILOT.md`
 - `phases/PHASE_1_22B_OPERATIONAL_PILOT_REPAIR.md`
 - `phases/PHASE_1_22C_EVIDENCE_REFERENCE_INTEGRITY_REPAIR.md`
+- `phases/PHASE_1_22D_PROJECT_C_SEMANTIC_DISPOSITION_CLOSURE.md`
 
 ## Reference
 
@@ -152,3 +153,5 @@ Phase 1.21 cross-project non-blocking queue pilot: IMPLEMENTED IN LUCIUS; HUMAN 
 Phase 1.22B operational pilot evidence and completion safety repair: IMPLEMENTED; ORIGINAL PHASE 1.22 FINDINGS PRESERVED
 
 Phase 1.22C evidence reference integrity repair: IMPLEMENTED; SEMANTIC PROVENANCE VALIDATION REQUIRED FOR CLOSURE-CRITICAL GATES
+
+Phase 1.22D Project C semantic disposition closure: IMPLEMENTED; PROJECT C RESIDUAL SHAPE-EVIDENCE WARNING ADDRESSED BY SUPERSEDING SEMANTIC CLOSURE ARTIFACTS
