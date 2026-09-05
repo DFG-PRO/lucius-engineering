@@ -307,11 +307,12 @@ def verified_claim_disposition_passes(
         if not has_linked_probe_evidence(disposition):
             return False
     else:
+        effective_context = required_context or disposition.get("required_context")
         validation = validate_claim_evidence(
             disposition,
             session=session,
             allowed_types=allowed_types,
-            required_context=required_context,
+            required_context=effective_context,
             require_current=require_current,
             expected_result="PASS",
             expected_invariant=disposition.get("expected_invariant"),

@@ -10,6 +10,7 @@ from tests.integration.test_phase112_pilot_infrastructure import _benchmark, _pl
 
 def test_project_c_shape_era_disposition_fails_and_semantic_disposition_passes_gate(session):
     project, task, _contract, _plan = _project_task_plan(session)
+    other_project, other_task, _other_contract, _other_plan = _project_task_plan(session)
     old = {
         "result": "PASS",
         "disposed_correction_dimensions": ["authority_risk_classification", "documentation_strategy"],
@@ -45,10 +46,20 @@ def test_project_c_shape_era_disposition_fails_and_semantic_disposition_passes_g
         invariant="Project C authority and documentation warnings are semantically dispositioned.",
         probe="phase122d::project_c_warning_disposition",
     )
+    wrong_context = _semantic_project_c_evidence(
+        session,
+        project_id=other_project.id,
+        task_id=other_task.id,
+        claim_name="project_c_warning_disposition",
+        invariant="Project C authority and documentation warnings are semantically dispositioned.",
+        probe="phase122d::project_c_warning_disposition",
+    )
     evaluation = _project_c_warning_evaluation(
         session,
         warning_evidence_id=warning.id,
         authority_evidence_id=authority.id,
+        project_id=project.id,
+        task_id=task.id,
     )
     state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
     benchmark = _benchmark(session, score=100.0, failed=0)
@@ -74,12 +85,27 @@ def test_project_c_shape_era_disposition_fails_and_semantic_disposition_passes_g
         benchmark_after_id=benchmark.id,
         repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
     )
+    artifact = dict(evaluation.implementation_artifact)
+    disposition = dict(artifact["evaluation_warning_disposition"])
+    disposition["evidence_refs"] = [wrong_context.id]
+    artifact["evaluation_warning_disposition"] = disposition
+    evaluation.implementation_artifact = artifact
+    session.flush()
+    wrong_context_rejected = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=benchmark.id,
+        benchmark_after_id=benchmark.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+    )
 
     assert old_validation.valid is False
     assert old_validation.reason == "EVIDENCE_NOT_FOUND"
     assert accepted.passed is True
     assert rejected.passed is False
     assert any("invalid provenance" in blocker for blocker in rejected.blockers)
+    assert wrong_context_rejected.passed is False
+    assert any("EVIDENCE_CONTEXT_MISMATCH" in blocker for blocker in wrong_context_rejected.blockers)
 
 
 def _project_c_warning_evaluation(
@@ -87,6 +113,8 @@ def _project_c_warning_evaluation(
     *,
     warning_evidence_id: str,
     authority_evidence_id: str,
+    project_id: str,
+    task_id: str,
 ) -> EngineeringPlanEvaluationORM:
     row = _plan_evaluation(session, EngineeringPlanEvaluationResult.PASS_WITH_WARNINGS)
     row.corrections = [
@@ -105,6 +133,10 @@ def _project_c_warning_evaluation(
         "evaluation_warning_disposition": {
             "result": "PASS",
             "disposed_correction_dimensions": ["authority_risk_classification", "documentation_strategy"],
+            "required_context": {
+                "project_id": project_id,
+                "task_id": task_id,
+            },
             "status_by_dimension": {
                 "authority_risk_classification": "RESOLVED",
                 "documentation_strategy": "RESOLVED",

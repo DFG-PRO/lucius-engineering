@@ -427,6 +427,7 @@ def _evaluation_warning_blockers(corrections: list[dict], artifact: dict, sessio
         disposition,
         session=session,
         allowed_types={"evidence_reference", "engineering_plan_evaluation", "pilot_record", "human_rubric"},
+        required_context=disposition.get("required_context"),
         require_current=True,
         expected_result="PASS",
         expected_invariant=disposition.get("expected_invariant"),
