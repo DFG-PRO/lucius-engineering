@@ -311,6 +311,39 @@ and reports reasons such as `MALFORMED_UNSCHEDULABLE:UNKNOWN_STATE:<value>`,
 `MALFORMED_UNSCHEDULABLE:NULL_STATE`, or
 `MALFORMED_UNSCHEDULABLE:UNKNOWN_PRIORITY:<value>`.
 
+## Phase 1.23A Closure Policies
+
+Plan freeze now enforces planning-claim semantics for direct ORM-created plans
+as well as normal planner output. A plan cannot freeze with a claim marked
+`VERIFIED`, `CONFIRMED`, or equivalent unless current semantic evidence supports
+that exact claim. Unsupported verified claims must be downgraded to
+`ASSUMPTION` or `TO_BE_VERIFIED`, or linked to valid evidence before freeze.
+
+Use EngineeringPlan dependencies only for executable dependency relationships.
+Do not put validation environment notes, local test prerequisites, or prose such
+as "local test environment only" in the dependency graph. Implementation
+artifacts may explicitly state that no package/runtime dependency change was
+expected; deterministic dependency evaluation should respect that semantic
+field.
+
+Dirty or non-canonical target baselines remain facts. Operators must not clean,
+stash, reset, or reinterpret target repositories to create canonicality. A
+dirty baseline can be used only when the pilot scope permits it and the final
+integrity comparison preserves the original dirty/non-canonical state.
+
+When a full test suite depends on unavailable fixtures, record suite health and
+change regression separately. `SUITE_HEALTH=DEGRADED_FIXTURES_MISSING` describes
+the test environment. `CHANGE_REGRESSION_STATUS=NO_NEW_REGRESSION` is allowed
+only when a baseline-vs-target comparison shows no new failures.
+
+For future extended operational pilots, freeze an overall orchestration plan
+before any target mutation starts. The overall plan should cover workstream
+selection, switching/resume behavior, dependency isolation, target isolation,
+fresh-context reconstruction, exact mutation selection, no-preemption behavior,
+and final evaluation. A post-hoc orchestration review is useful closure
+evidence, but it remains post-hoc and must not be reported as the original
+pre-frozen plan.
+
 ## List Pilot Evidence
 
 ```bash

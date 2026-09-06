@@ -91,6 +91,7 @@ This file identifies the canonical Lucius documentation baseline.
 - `phases/PHASE_1_22B_OPERATIONAL_PILOT_REPAIR.md`
 - `phases/PHASE_1_22C_EVIDENCE_REFERENCE_INTEGRITY_REPAIR.md`
 - `phases/PHASE_1_22D_PROJECT_C_SEMANTIC_DISPOSITION_CLOSURE.md`
+- `phases/PHASE_1_23A_PLANNING_SEMANTICS_BASELINE_POLICY_REPAIR.md`
 
 ## Reference
 
@@ -155,3 +156,5 @@ Phase 1.22B operational pilot evidence and completion safety repair: IMPLEMENTED
 Phase 1.22C evidence reference integrity repair: IMPLEMENTED; SEMANTIC PROVENANCE VALIDATION REQUIRED FOR CLOSURE-CRITICAL GATES
 
 Phase 1.22D Project C semantic disposition closure: IMPLEMENTED; PROJECT C RESIDUAL SHAPE-EVIDENCE WARNING ADDRESSED BY SUPERSEDING SEMANTIC CLOSURE ARTIFACTS
+
+Phase 1.23A planning semantics and baseline policy repair: IMPLEMENTED; PHASE 1.23 HISTORICAL FAILURES PRESERVED AND SUPERSEDED

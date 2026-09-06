@@ -13,6 +13,7 @@ from lucius.domain.enums import (
 )
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
+from lucius.pilots.dependency_policy import package_dependency_change_expected
 from lucius.pilots.provenance import (
     find_verified_without_semantic_evidence,
     verified_claim_disposition_passes,
@@ -210,7 +211,7 @@ def _schema_migration_implementation_dimension(plan: dict, artifact: dict) -> Ev
 
 
 def _dependency_implementation_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
-    expected_change = bool(_normalize_set(plan.get("dependencies", [])))
+    expected_change = package_dependency_change_expected(plan, artifact)
     evidence = _change_evidence(artifact, "dependencies")
     if evidence is not None:
         return _change_evidence_dimension(

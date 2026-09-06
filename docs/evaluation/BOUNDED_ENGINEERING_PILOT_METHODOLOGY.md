@@ -317,3 +317,36 @@ hard gates pass. `PASS_WITH_WARNINGS` is eligible only after corrections are
 classified. MAJOR or CRITICAL corrections require explicit disposition linked to
 evidence before readiness can pass. `FAIL` and `INSUFFICIENT_EVIDENCE` block
 readiness.
+
+## Phase 1.23A Planning Semantics Repair
+
+Phase 1.23A preserves the Phase 1.23 multi-project pilot artifacts and failed
+evaluations. The repair changes the process that allowed unsupported verified
+planning claims, ambiguous dependency semantics, and missing overall
+orchestration evaluation to reach closure.
+
+Planning claims marked `VERIFIED`, `CONFIRMED`, or equivalent must be backed by
+current semantic evidence before plan freeze. Expectations about future local
+test execution are plan requirements or assumptions with
+`TO_BE_VERIFIED`/`ASSUMPTION` status, not verified facts. Historical evaluations
+that encoded unsupported verified claims remain immutable and are superseded
+rather than rewritten.
+
+Top-level EngineeringPlan dependencies represent executable task/package
+dependencies. Validation prerequisites such as "local test environment only"
+must be recorded as test prerequisites, risks, assumptions, or implementation
+evidence. They must not be interpreted as package/runtime dependency changes
+unless the implementation artifact explicitly records dependency-change
+semantics.
+
+Fixture-dependent suites must distinguish repository health from change
+regression. A suite with missing canonical fixtures can be
+`DEGRADED_FIXTURES_MISSING` while the change comparison is
+`NO_NEW_REGRESSION` if the same failures exist at baseline and target. New
+failures relative to baseline remain regressions.
+
+Future extended operational pilots that mutate one or more target repositories
+must freeze an overall orchestration plan before the first mutation and evaluate
+that overall plan after implementation. Post-hoc closure evaluation may document
+what happened, but it cannot substitute for a missing pre-frozen orchestration
+plan.

@@ -7,7 +7,12 @@ from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, PlanningEvidenceMode
 from lucius.persistence.orm import EngineeringPlanORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
+from lucius.pilots.claim_policy import verified_plan_claim_issues
 from lucius.pilots.schemas import PlanFreeze
+
+
+class PlanFreezeSemanticError(ValueError):
+    pass
 
 
 class PlanFreezeService:
@@ -30,6 +35,20 @@ class PlanFreezeService:
         plan = self.session.get(EngineeringPlanORM, plan_id)
         if plan is None:
             raise ValueError(f"Unknown EngineeringPlan: {plan_id}")
+        payload = _plan_payload(plan)
+        claim_issues = verified_plan_claim_issues(payload, session=self.session)
+        if claim_issues:
+            details = [issue.as_dict() for issue in claim_issues]
+            self.audit.record(
+                event_type="ENGINEERING_PLAN_FREEZE_BLOCKED",
+                actor=actor.value,
+                project_id=plan.project_id,
+                task_id=plan.task_id,
+                action="freeze_engineering_plan",
+                result="UNSUPPORTED_VERIFIED_PLAN_CLAIM",
+                metadata={"plan_id": plan.id, "issues": details},
+            )
+            raise PlanFreezeSemanticError(f"UNSUPPORTED_VERIFIED_PLAN_CLAIM: {details}")
         commit_sha = None
         if len(plan.repository_snapshot_ids) == 1:
             from lucius.persistence.orm import RepositorySnapshotORM
@@ -47,7 +66,7 @@ class PlanFreezeService:
             commit_sha=commit_sha,
             planning_mode=planning_mode.value,
             evaluation_version=evaluation_version,
-            plan_payload=_plan_payload(plan),
+            plan_payload=payload,
             frozen_at=utc_now(),
             frozen_by=actor.value,
         )

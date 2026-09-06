@@ -16,10 +16,17 @@ from lucius.domain.enums import (
     SnapshotMode,
 )
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
-from lucius.persistence.orm import AuditEventORM, EngineeringPlanEvaluationORM, EvidenceReferenceORM, PersistentWorkflowORM, utc_now
+from lucius.persistence.orm import (
+    AuditEventORM,
+    EngineeringPlanEvaluationORM,
+    EvidenceReferenceORM,
+    PersistentWorkflowORM,
+    PlanFreezeORM,
+    utc_now,
+)
 from lucius.persistence.repositories import next_id
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
-from lucius.pilots.freeze import PlanFreezeService
+from lucius.pilots.freeze import PlanFreezeService, _plan_payload
 from lucius.pilots.provenance import find_verified_without_evidence
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.pilots.release import PHASE_1_22_OPERATIONAL_STAGE, ReleaseGateService
@@ -71,7 +78,21 @@ def test_plan_evaluation_accepts_linked_disposition_for_frozen_verified_claim(se
     ]
     plan.assumptions = [{"statement": "Probe proves operational readiness.", "verified": True}]
     session.flush()
-    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+    freeze = PlanFreezeORM(
+        id=next_id(session, "plan_freeze"),
+        plan_id=plan.id,
+        project_id=plan.project_id,
+        task_id=plan.task_id,
+        repository_state_id=None,
+        planning_mode="CURRENT_STATE_PLANNING",
+        evidence_ids=[],
+        plan_payload=_plan_payload(plan) | {"evidence_ids": []},
+        evaluation_version="1.22.0-historical-test",
+        frozen_by="SYSTEM",
+        frozen_at=utc_now(),
+    )
+    session.add(freeze)
+    session.flush()
 
     failed = EngineeringPlanEvaluationService(session).evaluate(
         plan_freeze_id=freeze.id,

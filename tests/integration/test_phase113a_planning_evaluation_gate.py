@@ -13,7 +13,7 @@ from lucius.domain.enums import (
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, EvidenceReferenceORM, HumanRubricORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
-from lucius.pilots.freeze import PlanFreezeService
+from lucius.pilots.freeze import PlanFreezeSemanticError, PlanFreezeService
 from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.rubric import HumanRubricService
 
@@ -139,16 +139,12 @@ def test_planning_only_unsupported_claims_are_critical(session):
     _project, _task, _contract, plan = _project_task_plan(session)
     _make_planning_ready(plan)
     plan.assumptions = [{"statement": "Unsupported implementation fact.", "verified": True, "evidence_ids": []}]
-    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
-
-    result = EngineeringPlanEvaluationService(session).evaluate(
-        plan_freeze_id=freeze.id,
-        implementation_artifact=_planning_artifact(),
-        evaluation_mode=EngineeringPlanEvaluationMode.PLANNING_ONLY,
-    )
-
-    assert result.result == EngineeringPlanEvaluationResult.FAIL
-    assert any(item.dimension == "unsupported_claims" and item.severity == "CRITICAL" for item in result.corrections)
+    try:
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+    except PlanFreezeSemanticError as exc:
+        assert "UNSUPPORTED_VERIFIED_PLAN_CLAIM" in str(exc)
+    else:
+        raise AssertionError("unsupported verified claims must block plan freeze")
 
 
 def test_planning_only_evidence_backed_verified_assumptions_are_supported(session):
