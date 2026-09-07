@@ -12,6 +12,7 @@ from lucius.persistence.orm import (
     ResumeValidationORM,
     utc_now,
 )
+from lucius.persistence.json_fields import set_json_field
 from lucius.persistence.repositories import next_id
 from lucius.pilots.schemas import PersistentWorkflow, PersistentWorkflowCheckpoint, ResumeValidation
 
@@ -126,21 +127,21 @@ class PersistentWorkflowService:
         row.workflow_state = state.value
         row.active_task_id = active_task_id
         if completed_task_ids is not None:
-            row.completed_task_ids = completed_task_ids
+            set_json_field(row, "completed_task_ids", completed_task_ids)
         if pending_task_ids is not None:
-            row.pending_task_ids = pending_task_ids
+            set_json_field(row, "pending_task_ids", pending_task_ids)
         if decisions is not None:
-            row.decisions = decisions
+            set_json_field(row, "decisions", decisions)
         if deviations is not None:
-            row.deviations = deviations
+            set_json_field(row, "deviations", deviations)
         if repair_counters is not None:
-            row.repair_counters = repair_counters
+            set_json_field(row, "repair_counters", repair_counters)
         if targeted_test_evidence is not None:
-            row.targeted_test_evidence = targeted_test_evidence
+            set_json_field(row, "targeted_test_evidence", targeted_test_evidence)
         if full_test_status is not None:
-            row.full_test_status = full_test_status
+            set_json_field(row, "full_test_status", full_test_status)
         if pending_human_approvals is not None:
-            row.pending_human_approvals = pending_human_approvals
+            set_json_field(row, "pending_human_approvals", pending_human_approvals)
         row.updated_at = utc_now()
         self.session.flush()
         self.audit.record(
@@ -206,14 +207,14 @@ class PersistentWorkflowService:
         self.session.add(checkpoint)
         workflow.workflow_state = checkpoint_state.value
         workflow.active_task_id = active_task_id
-        workflow.completed_task_ids = completed_task_ids
-        workflow.pending_task_ids = pending_task_ids
-        workflow.decisions = decisions
-        workflow.deviations = deviations
-        workflow.repair_counters = repair_counters
-        workflow.targeted_test_evidence = latest_test_results
-        workflow.pending_human_approvals = pending_human_approvals
-        workflow.checkpoint_history = [*workflow.checkpoint_history, checkpoint.id]
+        set_json_field(workflow, "completed_task_ids", completed_task_ids)
+        set_json_field(workflow, "pending_task_ids", pending_task_ids)
+        set_json_field(workflow, "decisions", decisions)
+        set_json_field(workflow, "deviations", deviations)
+        set_json_field(workflow, "repair_counters", repair_counters)
+        set_json_field(workflow, "targeted_test_evidence", latest_test_results)
+        set_json_field(workflow, "pending_human_approvals", pending_human_approvals)
+        set_json_field(workflow, "checkpoint_history", [*workflow.checkpoint_history, checkpoint.id])
         workflow.updated_at = utc_now()
         self.session.flush()
         self.audit.record(

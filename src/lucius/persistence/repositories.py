@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.sqltypes import String, Text
 
 from lucius.domain.enums import (
     AuthorityLevel,
@@ -15,8 +16,9 @@ from lucius.domain.enums import (
     RepositoryAdapterType,
     SnapshotMode,
 )
-from lucius.domain.ids import format_public_id
+from lucius.domain.ids import ENTITY_PREFIXES, format_public_id
 from lucius.persistence.orm import (
+    Base,
     IdCounterORM,
     ProjectORM,
     RepositoryRegistrationORM,
@@ -28,15 +30,39 @@ from lucius.repositories.schemas import SnapshotResult, WorkspaceContext
 
 
 def next_id(session: Session, entity: str) -> str:
+    if entity not in ENTITY_PREFIXES:
+        raise ValueError(f"Unknown Lucius entity type: {entity}")
     row = session.get(IdCounterORM, entity)
+    persisted_next = _persisted_next_number(session, entity)
     if row is None:
-        row = IdCounterORM(entity=entity, next_number=1)
+        row = IdCounterORM(entity=entity, next_number=persisted_next)
         session.add(row)
         session.flush()
-    number = row.next_number
+    number = max(row.next_number, persisted_next)
     row.next_number = number + 1
     session.flush()
     return format_public_id(entity, number)
+
+
+def _persisted_next_number(session: Session, entity: str) -> int:
+    prefix = ENTITY_PREFIXES[entity]
+    highest = 0
+    for table in Base.metadata.sorted_tables:
+        column = table.c.get("id")
+        if column is None or not isinstance(column.type, (String, Text)):
+            continue
+        ids = session.execute(select(column).where(column.like(f"{prefix}_%"))).scalars()
+        for public_id in ids:
+            highest = max(highest, _public_id_number(str(public_id), prefix))
+    return highest + 1
+
+
+def _public_id_number(public_id: str, prefix: str) -> int:
+    expected_prefix = f"{prefix}_"
+    if not public_id.startswith(expected_prefix):
+        return 0
+    suffix = public_id[len(expected_prefix) :]
+    return int(suffix) if suffix.isdigit() else 0
 
 
 class ProjectService:

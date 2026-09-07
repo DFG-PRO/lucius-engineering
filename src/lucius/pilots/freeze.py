@@ -8,6 +8,12 @@ from lucius.domain.enums import Actor, PlanningEvidenceMode
 from lucius.persistence.orm import EngineeringPlanORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.claim_policy import verified_plan_claim_issues
+from lucius.pilots.hardening import (
+    validate_orchestration_contract_completeness,
+    validate_persisted_adversarial_probes,
+    validate_plan_file_states,
+    validate_uncertainty_fields,
+)
 from lucius.pilots.schemas import PlanFreeze
 
 
@@ -49,6 +55,25 @@ class PlanFreezeService:
                 metadata={"plan_id": plan.id, "issues": details},
             )
             raise PlanFreezeSemanticError(f"UNSUPPORTED_VERIFIED_PLAN_CLAIM: {details}")
+        hardening_issues = [
+            *validate_plan_file_states(self.session, payload),
+            *validate_uncertainty_fields(payload, require_uncertainty=_requires_orchestration_contract(payload)),
+            *validate_orchestration_contract_completeness(payload),
+            *validate_persisted_adversarial_probes(payload),
+        ]
+        if hardening_issues:
+            details = [issue.as_dict() for issue in hardening_issues]
+            result = hardening_issues[0].code
+            self.audit.record(
+                event_type="ENGINEERING_PLAN_FREEZE_BLOCKED",
+                actor=actor.value,
+                project_id=plan.project_id,
+                task_id=plan.task_id,
+                action="freeze_engineering_plan",
+                result=result,
+                metadata={"plan_id": plan.id, "issues": details},
+            )
+            raise PlanFreezeSemanticError(f"{result}: {details}")
         commit_sha = None
         if len(plan.repository_snapshot_ids) == 1:
             from lucius.persistence.orm import RepositorySnapshotORM
@@ -113,6 +138,18 @@ def _plan_payload(plan: EngineeringPlanORM) -> dict:
         "blockers": plan.blockers,
         "planner_version": plan.planner_version,
     }
+
+
+def _requires_orchestration_contract(payload: dict) -> bool:
+    if payload.get("orchestration_contract_required") is True:
+        return True
+    for warning in payload.get("validation_warnings", []) or []:
+        if not isinstance(warning, dict):
+            continue
+        code = str(warning.get("code") or "").upper()
+        if code in {"ORCHESTRATION_CONTRACT_REQUIRED", "EXTENDED_OPERATIONAL_ORCHESTRATION_CONTRACT"}:
+            return True
+    return False
 
 
 def _freeze_from_row(row: PlanFreezeORM) -> PlanFreeze:

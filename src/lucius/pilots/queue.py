@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, PersistentWorkflowState, QueueWorkItemState
 from lucius.persistence.orm import PersistentWorkflowORM, utc_now
+from lucius.persistence.json_fields import set_json_field
 from lucius.persistence.repositories import next_id
 from lucius.pilots.schemas import (
     GlobalQueueItem,
@@ -151,7 +152,7 @@ class NonBlockingQueueService:
         item["started_at"] = _now_iso()
         item["run_generation"] = int(item.get("run_generation", 0)) + 1
         workflow.active_task_id = _item_id(item)
-        workflow.task_backlog = items
+        set_json_field(workflow, "task_backlog", items)
         workflow.updated_at = utc_now()
         self.session.flush()
         self.audit.record(
@@ -233,8 +234,8 @@ class NonBlockingQueueService:
         )
         self._set_state(item, blocking_state)
         workflow.active_task_id = None
-        workflow.task_backlog = items
-        workflow.checkpoint_history = [*workflow.checkpoint_history, checkpoint.id]
+        set_json_field(workflow, "task_backlog", items)
+        set_json_field(workflow, "checkpoint_history", [*workflow.checkpoint_history, checkpoint.id])
         workflow.updated_at = utc_now()
         self.session.flush()
         self.audit.record(
@@ -271,7 +272,7 @@ class NonBlockingQueueService:
         item["resolution_event"] = resolution_event
         item["resolved_at"] = _now_iso()
         self._set_state(item, QueueWorkItemState.READY_TO_RESUME)
-        workflow.task_backlog = items
+        set_json_field(workflow, "task_backlog", items)
         workflow.updated_at = utc_now()
         self.session.flush()
         self.audit.record(
@@ -313,9 +314,9 @@ class NonBlockingQueueService:
         item["completed_at"] = _now_iso()
         self._set_state(item, QueueWorkItemState.COMPLETED)
         workflow.active_task_id = None if workflow.active_task_id == item_id else workflow.active_task_id
-        workflow.completed_task_ids = sorted(_completed_item_ids_for_completion(items))
-        workflow.pending_task_ids = sorted(_pending_item_ids_for_completion(items))
-        workflow.task_backlog = items
+        set_json_field(workflow, "completed_task_ids", sorted(_completed_item_ids_for_completion(items)))
+        set_json_field(workflow, "pending_task_ids", sorted(_pending_item_ids_for_completion(items)))
+        set_json_field(workflow, "task_backlog", items)
         workflow.updated_at = utc_now()
         self.session.flush()
         new_version = int(item.get("version", 0))
@@ -627,7 +628,7 @@ class NonBlockingQueueService:
         item["started_at"] = _now_iso()
         item["run_generation"] = int(item.get("run_generation", 0)) + 1
         workflow.active_task_id = _item_id(item)
-        workflow.task_backlog = items
+        set_json_field(workflow, "task_backlog", items)
         workflow.updated_at = utc_now()
         self.session.flush()
         new_version = int(item.get("version", 0))
