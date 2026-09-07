@@ -15,7 +15,7 @@ def create_sqlite_engine(database_path: str | Path = ":memory:") -> Engine:
         path = Path(database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite+pysqlite:///{path}"
-    return create_engine(url, future=True)
+    return create_engine(url, connect_args={"timeout": 10.0}, future=True)
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -24,4 +24,3 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 def create_all(engine: Engine) -> None:
     Base.metadata.create_all(engine)
-

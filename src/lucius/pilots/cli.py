@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+from contextlib import nullcontext
 
 from lucius.domain.enums import Actor, EngineeringPlanEvaluationMode, RepositoryIntegrityResult
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
+from lucius.persistence.store_lock import ArtifactStoreLockTimeout, canonical_store_write_lock
 from lucius.pilots.benchmark import BenchmarkRunnerService
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
@@ -83,6 +86,21 @@ def main() -> None:
     queue_global_start.add_argument("workflow_ids", nargs="*")
 
     args = parser.parse_args()
+    lock_timeout = float(os.environ.get("LUCIUS_ARTIFACT_STORE_LOCK_TIMEOUT_SECONDS", "10.0"))
+    lock = (
+        canonical_store_write_lock(args.database, timeout_seconds=lock_timeout)
+        if _requires_store_write_serialization(args.command)
+        else nullcontext()
+    )
+    try:
+        with lock:
+            _run_command(args)
+    except ArtifactStoreLockTimeout as error:
+        print(json.dumps({"result": "BLOCKED", "reason": str(error)}, indent=2))
+        raise SystemExit(1) from error
+
+
+def _run_command(args: argparse.Namespace) -> None:
     engine = create_sqlite_engine(args.database)
     create_all(engine)
     factory = make_session_factory(engine)
@@ -219,6 +237,20 @@ def main() -> None:
                 raise SystemExit(1) from error
             session.commit()
             print(result.model_dump_json(indent=2))
+
+
+def _requires_store_write_serialization(command: str) -> bool:
+    return command in {
+        "inspect-repository-state",
+        "run-core-benchmark",
+        "freeze-plan",
+        "evaluate-plan",
+        "record-human-rubric-not-captured",
+        "capture-human-rubric",
+        "compute-release-gate",
+        "queue-start",
+        "queue-global-start",
+    }
 
 
 def _parse_scores(raw_scores: list[str]) -> dict[str, int]:

@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.sqltypes import String, Text
 
@@ -32,14 +33,27 @@ from lucius.repositories.schemas import SnapshotResult, WorkspaceContext
 def next_id(session: Session, entity: str) -> str:
     if entity not in ENTITY_PREFIXES:
         raise ValueError(f"Unknown Lucius entity type: {entity}")
-    row = session.get(IdCounterORM, entity)
     persisted_next = _persisted_next_number(session, entity)
-    if row is None:
-        row = IdCounterORM(entity=entity, next_number=persisted_next)
-        session.add(row)
-        session.flush()
-    number = max(row.next_number, persisted_next)
-    row.next_number = number + 1
+    session.execute(
+        sqlite_insert(IdCounterORM)
+        .values(entity=entity, next_number=persisted_next)
+        .prefix_with("OR IGNORE")
+    )
+    new_next_number = session.execute(
+        text(
+            """
+            UPDATE id_counters
+            SET next_number = CASE
+                WHEN next_number < :persisted_next THEN :persisted_next + 1
+                ELSE next_number + 1
+            END
+            WHERE entity = :entity
+            RETURNING next_number
+            """
+        ),
+        {"entity": entity, "persisted_next": persisted_next},
+    ).scalar_one()
+    number = int(new_next_number) - 1
     session.flush()
     return format_public_id(entity, number)
 
