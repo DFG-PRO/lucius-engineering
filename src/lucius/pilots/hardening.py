@@ -272,6 +272,9 @@ def _plan_payload(plan_or_payload: EngineeringPlanORM | dict[str, Any]) -> dict[
         "validation_warnings": plan_or_payload.validation_warnings,
         "risks": plan_or_payload.risks,
         "confidence": plan_or_payload.confidence,
+        "orchestration_contract_required": plan_or_payload.orchestration_contract_required,
+        "orchestration_contract": plan_or_payload.orchestration_contract,
+        "adversarial_probes": plan_or_payload.adversarial_probes,
     }
 
 

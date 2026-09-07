@@ -6,8 +6,10 @@ import pytest
 
 from lucius.domain.enums import (
     Actor,
+    AuthorityLevel,
     BenchmarkRunStatus,
     EngineeringPlanEvaluationMode,
+    Environment,
     PersistentWorkflowState,
     QueueWorkItemState,
     RepositoryAccessMode,
@@ -20,11 +22,14 @@ from lucius.persistence.orm import (
     BenchmarkResultORM,
     EvidenceReferenceORM,
     PersistentWorkflowORM,
+    PlanFreezeORM,
     RepositoryRegistrationORM,
     RepositorySnapshotORM,
     utc_now,
 )
 from lucius.persistence.repositories import next_id
+from lucius.planning.persistence import EngineeringPlanRepository
+from lucius.planning.schemas import ModelEngineeringPlanOutput, PlanningContext
 from lucius.pilots.dependency_policy import package_dependency_change_expected, validate_typed_dependencies
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeSemanticError, PlanFreezeService
@@ -392,13 +397,192 @@ def test_orchestration_contract_and_adversarial_probe_policy():
     ]
 
 
+def test_complete_canonical_extended_orchestration_plan_freezes_successfully(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = _complete_orchestration_contract()
+    plan.adversarial_probes = _complete_adversarial_probes(plan.id)
+    plan.unknowns = [{"statement": "Extended orchestration remains bounded to one logical dispatcher."}]
+    session.flush()
+
+    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert freeze.plan_payload["orchestration_contract_required"] is True
+    assert freeze.plan_payload["orchestration_contract"] == _complete_orchestration_contract()
+    assert {probe["probe_id"] for probe in freeze.plan_payload["adversarial_probes"]} == REQUIRED_ADVERSARIAL_PROBE_IDS
+
+
+def test_previously_failing_planning_repository_to_freeze_path_preserves_extended_payload(tmp_path: Path):
+    database = tmp_path / "canonical-extended-orchestration.sqlite"
+    engine = create_sqlite_engine(database)
+    create_all(engine)
+    Session = make_session_factory(engine)
+
+    with Session() as session:
+        project, task, contract, _seed_plan = _project_task_plan(session)
+        context = PlanningContext(
+            task_id=task.id,
+            project_id=project.id,
+            task_title=task.title,
+            task_objective=task.objective,
+            task_status=task.status,
+            task_authority_level=AuthorityLevel.L1,
+            task_complexity=task.complexity,
+            task_contract_id=contract.id,
+            task_contract_version=contract.version,
+            contract_objective=contract.objective,
+            acceptance_criteria=contract.acceptance_criteria,
+            constraints=contract.constraints,
+            allowed_actions=contract.allowed_actions,
+            environment=Environment.DEVELOPMENT,
+            contract_authority_level=AuthorityLevel.L1,
+            documentation_required=contract.documentation_required,
+            documentation_targets=contract.documentation_targets,
+        )
+        model_plan = ModelEngineeringPlanOutput(
+            summary="Extended canonical orchestration plan",
+            objective="Freeze a multi-project orchestration contract through the canonical plan path.",
+            orchestration_contract_required=True,
+            orchestration_contract=_complete_orchestration_contract(),
+            adversarial_probes=_complete_adversarial_probes("MODEL_PLAN"),
+            unknowns=[{"statement": "Synthetic fixture verifies durability rather than target implementation."}],
+            affected_components=["planning", "freeze"],
+            steps=[
+                {
+                    "step_id": "STEP-1",
+                    "sequence": 1,
+                    "title": "Freeze",
+                    "description": "Freeze canonical extended orchestration payload.",
+                    "expected_result": "Plan freezes.",
+                    "validation": "PlanFreezeService succeeds.",
+                }
+            ],
+        )
+        created = EngineeringPlanRepository(session).create(
+            context=context,
+            model_plan=model_plan,
+            model_execution_ids=[],
+            blockers=[],
+            validation_warnings=[],
+            planner_version="1.24H1-test",
+            created_by=Actor.SYSTEM.value,
+        )
+        plan_id = created.id
+        session.commit()
+
+    with Session() as session:
+        freeze = PlanFreezeService(session).freeze(plan_id=plan_id)
+        session.commit()
+
+    with Session() as session:
+        persisted = session.get(PlanFreezeORM, freeze.id)
+        assert persisted.plan_payload["orchestration_contract_required"] is True
+        assert persisted.plan_payload["orchestration_contract"] == _complete_orchestration_contract()
+        assert {probe["probe_id"] for probe in persisted.plan_payload["adversarial_probes"]} == REQUIRED_ADVERSARIAL_PROBE_IDS
+
+
 def test_freeze_blocks_explicit_extended_orchestration_without_contract(session):
     _project, _task, _contract, plan = _project_task_plan(session)
-    plan.validation_warnings = [{"code": "ORCHESTRATION_CONTRACT_REQUIRED", "message": "extended workflow"}]
+    plan.orchestration_contract_required = True
+    plan.adversarial_probes = _complete_adversarial_probes(plan.id)
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
     session.flush()
 
     with pytest.raises(PlanFreezeSemanticError, match="ORCHESTRATION_CONTRACT_INCOMPLETE"):
         PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_freeze_blocks_incomplete_extended_orchestration_contract(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = {"projects": ["Darwin"]}
+    plan.adversarial_probes = _complete_adversarial_probes(plan.id)
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError, match="ORCHESTRATION_CONTRACT_INCOMPLETE"):
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_freeze_blocks_missing_required_adversarial_probes(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = _complete_orchestration_contract()
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError, match="ADVERSARIAL_PROBE_REQUIRED"):
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_freeze_blocks_incomplete_required_adversarial_probe_set(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = _complete_orchestration_contract()
+    probes = _complete_adversarial_probes(plan.id)
+    plan.adversarial_probes = [probe for probe in probes if probe["probe_id"] != "initial_eligibility_mismatch"]
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError, match="ADVERSARIAL_PROBE_REQUIRED"):
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_freeze_blocks_malformed_required_adversarial_probe(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = _complete_orchestration_contract()
+    probes = _complete_adversarial_probes(plan.id)
+    probes[0] = {key: value for key, value in probes[0].items() if key != "observed_result"}
+    plan.adversarial_probes = probes
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError, match="ADVERSARIAL_PROBE_INCOMPLETE"):
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_non_extended_plan_freeze_remains_backward_compatible(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+
+    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert freeze.plan_payload["orchestration_contract_required"] is False
+    assert freeze.plan_payload["orchestration_contract"] == {}
+    assert freeze.plan_payload["adversarial_probes"] == []
+
+
+def test_unsupported_verified_claim_still_blocks_before_extended_orchestration_freeze(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    plan.orchestration_contract = _complete_orchestration_contract()
+    plan.adversarial_probes = _complete_adversarial_probes(plan.id)
+    plan.assumptions = [{"statement": "Unsupported verified claim.", "verified": True, "evidence_ids": []}]
+    plan.unknowns = [{"statement": "Extended orchestration requires explicit uncertainty."}]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError, match="UNSUPPORTED_VERIFIED_PLAN_CLAIM"):
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def _complete_orchestration_contract() -> dict:
+    return {key: [key] for key in REQUIRED_ORCHESTRATION_CONTRACT_FIELDS}
+
+
+def _complete_adversarial_probes(plan_id: str) -> list[dict]:
+    return [
+        {
+            "probe_id": probe_id,
+            "invariant": "must block unsafe extended orchestration state",
+            "manipulated_condition": "synthetic missing or stale evidence",
+            "expected_result": "BLOCKED",
+            "observed_result": "BLOCKED",
+            "result": "PASS",
+            "context": {"phase": "1.24H1"},
+            "relevant_artifact_refs": [plan_id],
+        }
+        for probe_id in REQUIRED_ADVERSARIAL_PROBE_IDS
+    ]
 
 
 def _item(

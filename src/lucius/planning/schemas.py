@@ -173,6 +173,9 @@ class ModelEngineeringPlanOutput(BaseModel):
     test_strategy: list[TestRecommendation] = Field(default_factory=list)
     documentation_requirements: list[DocumentationRequirement] = Field(default_factory=list)
     rollback_considerations: list[str] = Field(default_factory=list)
+    orchestration_contract_required: bool = False
+    orchestration_contract: dict[str, Any] = Field(default_factory=dict)
+    adversarial_probes: list[dict[str, Any]] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
     risks: list[PlanRisk] = Field(default_factory=list)
     estimated_scope: str | None = None

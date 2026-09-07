@@ -30,6 +30,26 @@ RepositoryStateObservation
   -> ReleaseGateResult
 ```
 
+## Extended Orchestration Plan Payload
+
+Phase 1.24H1 makes extended multi-project orchestration data first-class on
+`EngineeringPlan` before freeze. Extended plans persist:
+
+- `orchestration_contract_required`
+- `orchestration_contract`
+- `adversarial_probes`
+
+`PlanFreeze` copies those fields into the immutable frozen payload through the
+normal `EngineeringPlanORM -> PlanFreezeService` path. When
+`orchestration_contract_required` is true, or when validation warnings require
+extended orchestration, freeze validation applies the canonical contract
+completeness, adversarial probe, uncertainty, file-state, and verified-claim
+gates before creating the freeze artifact.
+
+Ordinary non-extended plans keep backward-compatible defaults:
+`orchestration_contract_required=false`, an empty contract, and no adversarial
+probes.
+
 ## Stable IDs
 
 The public ID generator now includes Phase 1.12 prefixes:

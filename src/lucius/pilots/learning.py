@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, PilotLearningStatus
+from lucius.persistence.json_fields import set_json_field
 from lucius.persistence.orm import PilotLearningCandidateORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.schemas import PilotLearningCandidate
@@ -47,11 +48,14 @@ class PilotLearningService:
         candidate_id: str,
         *,
         status: PilotLearningStatus,
+        evidence_refs: list[str] | None = None,
         actor: Actor = Actor.SYSTEM,
     ) -> PilotLearningCandidate:
         row = self.session.get(PilotLearningCandidateORM, candidate_id)
         if row is None:
             raise ValueError(f"Unknown pilot learning candidate: {candidate_id}")
+        if evidence_refs:
+            set_json_field(row, "evidence_refs", _merge_refs(row.evidence_refs, evidence_refs))
         row.status = status.value
         row.updated_at = utc_now()
         self.session.flush()
@@ -63,6 +67,14 @@ class PilotLearningService:
             metadata={"pilot_learning_candidate_id": row.id},
         )
         return _learning_from_row(row)
+
+
+def _merge_refs(existing: list[str] | None, additions: list[str]) -> list[str]:
+    merged: list[str] = []
+    for ref in [*(existing or []), *additions]:
+        if ref not in merged:
+            merged.append(ref)
+    return merged
 
 
 def _learning_from_row(row: PilotLearningCandidateORM) -> PilotLearningCandidate:

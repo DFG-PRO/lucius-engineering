@@ -259,11 +259,11 @@ def test_learning_candidate_persistence_and_status_transition(session):
     service = PilotLearningService(session)
 
     candidate = service.identify(statement="Canonical clean-repository rerun required.", evidence_refs=["LPILOT_TEST"])
-    accepted = service.transition(candidate.id, status=PilotLearningStatus.ACCEPTED)
+    accepted = service.transition(candidate.id, status=PilotLearningStatus.ACCEPTED, evidence_refs=["LFREEZE_TEST"])
 
     assert candidate.id.startswith("LPLEARN_")
     assert accepted.status == PilotLearningStatus.ACCEPTED
-    assert accepted.evidence_refs == ["LPILOT_TEST"]
+    assert accepted.evidence_refs == ["LPILOT_TEST", "LFREEZE_TEST"]
 
 
 def test_release_gate_rejects_non_canonical_missing_benchmark_and_regression(session):

@@ -164,3 +164,5 @@ Phase 1.23A planning semantics and baseline policy repair: IMPLEMENTED; PHASE 1.
 Phase 1.24 pre-frozen extended multi-project operational pilot: READY_TO_CLOSE; IMPLEMENTED IN ISOLATED WORKTREES; TARGET MAINS UNMERGED; RECOMMENDATION READY_FOR_ANOTHER_EXTENDED_CONTROLLED_MULTI_PROJECT_PILOT
 
 Phase 1.24H learning hardening for unattended safety: IMPLEMENTED IN LUCIUS; HIGH-RISK LEARNING REPAIRS ADDED; POST BENCHMARK AND FINAL READINESS RECORDED IN CLOSURE REPORT
+
+Phase 1.24H1 canonical extended orchestration payload repair: IMPLEMENTED IN LUCIUS; `orchestration_contract` AND `adversarial_probes` ARE FIRST-CLASS ENGINEERING PLAN/FREEZE PAYLOAD DATA
