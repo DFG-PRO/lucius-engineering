@@ -16,7 +16,9 @@ from lucius.domain.enums import (
     QueueWorkItemState,
     RepositoryAccessMode,
     RepositoryAdapterType,
+    RepositoryIntegrityResult,
     SnapshotMode,
+    RepositoryStateClassification,
 )
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
 from lucius.persistence.json_fields import set_json_field, update_json_field
@@ -31,7 +33,7 @@ from lucius.persistence.orm import (
 )
 from lucius.persistence.repositories import next_id
 from lucius.planning.persistence import EngineeringPlanRepository
-from lucius.planning.schemas import ModelEngineeringPlanOutput, PlanningContext
+from lucius.planning.schemas import DocumentationRequirement, ModelEngineeringPlanOutput, PlanningContext
 from lucius.pilots.dependency_policy import package_dependency_change_expected, validate_typed_dependencies
 from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeSemanticError, PlanFreezeService
@@ -44,10 +46,12 @@ from lucius.pilots.hardening import (
     validate_plan_file_states,
     validate_uncertainty_fields,
 )
+from lucius.pilots.operational_evidence import OperationalEvidenceService, build_operational_stage_artifact
 from lucius.pilots.queue import NonBlockingQueueService
+from lucius.pilots.release import ReleaseGateService
 from lucius.pilots.workflows import PersistentWorkflowService
 
-from tests.integration.test_phase112_pilot_infrastructure import _project_task_plan
+from tests.integration.test_phase112_pilot_infrastructure import _benchmark, _project_task_plan, _repository_state
 
 
 def test_direct_artifact_insert_drift_repairs_id_counter(session):
@@ -587,6 +591,38 @@ def test_documentation_evaluation_enforces_exact_required_path(session):
     assert _dimension(failed, "documentation_strategy").status == "FAIL"
 
 
+def test_documentation_path_alias_freezes_to_canonical_exact_contract(session):
+    freeze = _documentation_freeze(
+        session,
+        [{"path": "README.md", "reason": "Exact target docs.", "trigger": "docs", "exact_path_required": True}],
+        affected_files=["README.md"],
+    )
+
+    requirement = freeze.plan_payload["documentation_requirements"][0]
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(["README.md"]),
+    )
+
+    assert requirement["target"] == "README.md"
+    assert requirement["proposed_path"] == "README.md"
+    assert "path" not in requirement
+    assert _dimension(result, "documentation_strategy").status == "PASS"
+    assert all(correction.dimension != "documentation_strategy" for correction in result.corrections)
+
+
+def test_model_documentation_path_alias_uses_same_canonical_contract():
+    requirement = DocumentationRequirement.model_validate(
+        {"path": "docs/runtime/operator.md", "reason": "Operator docs.", "trigger": "runtime", "exact_path_required": True}
+    )
+
+    payload = requirement.model_dump(mode="json")
+
+    assert payload["target"] == "docs/runtime/operator.md"
+    assert payload["proposed_path"] == "docs/runtime/operator.md"
+    assert "path" not in payload
+
+
 def test_flexible_canonical_documentation_target_allows_architecture_correct_path(session):
     freeze = _documentation_freeze(
         session,
@@ -707,6 +743,44 @@ def test_valid_no_file_orchestration_plan_uses_control_plane_evaluation(session)
     assert _dimension(result, "file_path_prediction", required=False) is None
 
 
+def test_operational_evidence_producer_emits_release_gate_compatible_claims(session):
+    freeze = _orchestration_freeze(session)
+    repository, snapshot = _repo_snapshot(session, freeze.project_id)
+    claims = OperationalEvidenceService(session).create_required_claims(
+        project_id=freeze.project_id,
+        repository_id=repository.id,
+        snapshot_id=snapshot.id,
+        task_id=freeze.task_id,
+        probe_namespace="phase125",
+        context_refs=[freeze.id],
+    )
+    artifact = build_operational_stage_artifact(
+        orchestration_evidence=_orchestration_artifact()["orchestration_evidence"],
+        phase_1_22_operational_evidence=claims,
+        operational_readiness_recommendation="READY_FOR_ANOTHER_CONTROLLED_MULTI_PROJECT_OPERATIONAL_PILOT",
+    )
+
+    evaluation = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+    state = _repository_state(session, RepositoryStateClassification.CANONICAL_CLEAN)
+    before = _benchmark(session, score=100.0, failed=0)
+    after = _benchmark(session, score=100.0, failed=0)
+
+    gate = ReleaseGateService(session).evaluate(
+        repository_state_id=state.id,
+        deterministic_evaluation_id=evaluation.id,
+        benchmark_before_id=before.id,
+        benchmark_after_id=after.id,
+        repository_integrity_result=RepositoryIntegrityResult.UNCHANGED,
+    )
+
+    assert evaluation.result == EngineeringPlanEvaluationResult.PASS
+    assert gate.passed is True
+    assert gate.blockers == []
+
+
 def test_orchestration_evaluation_missing_scheduler_evidence_is_insufficient(session):
     freeze = _orchestration_freeze(session)
     artifact = _orchestration_artifact()
@@ -816,6 +890,46 @@ def test_mixed_orchestration_plan_requires_control_and_file_evidence(session):
     assert result.evaluation_mode == EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE
     assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
     assert _dimension(result, "file_path_prediction").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def _repo_snapshot(session, project_id: str) -> tuple[RepositoryRegistrationORM, RepositorySnapshotORM]:
+    repository = RepositoryRegistrationORM(
+        id=next_id(session, "repository"),
+        project_id=project_id,
+        name="phase125-target",
+        adapter_type=RepositoryAdapterType.LOCAL_GIT.value,
+        location="/tmp/phase125-target",
+        canonical_remote=None,
+        default_branch="main",
+        access_mode=RepositoryAccessMode.READ_ONLY.value,
+        status="ACTIVE",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    snapshot = RepositorySnapshotORM(
+        id=next_id(session, "snapshot"),
+        repository_id=repository.id,
+        mode=SnapshotMode.STANDARD.value,
+        captured_at=utc_now(),
+        branch="main",
+        commit_sha="a" * 40,
+        is_dirty=False,
+        dirty_summary={},
+        manifest_hash="b" * 64,
+        file_count=1,
+        document_count=1,
+        test_count=1,
+        technology_profile={},
+        manifest={},
+        documentation_map=[],
+        test_map=[],
+        configuration_map=[],
+        warnings=[],
+    )
+    session.add(repository)
+    session.add(snapshot)
+    session.flush()
+    return repository, snapshot
 
 
 def _documentation_freeze(session, requirements: list[dict], *, affected_files: list[str]):

@@ -19,11 +19,13 @@ from lucius.persistence.orm import (
     RepositoryStateObservationORM,
 )
 from lucius.pilots.benchmark import BenchmarkRunnerService
+from lucius.pilots.operational_evidence import (
+    PHASE_1_22_ALLOWED_EVIDENCE_TYPES,
+    PHASE_1_22_OPERATIONAL_STAGE,
+    PHASE_1_22_REQUIRED_EVIDENCE_CLAIMS,
+)
 from lucius.pilots.provenance import has_semantic_linked_probe_evidence, validate_claim_evidence
 from lucius.pilots.schemas import ReleaseGateResult
-
-
-PHASE_1_22_OPERATIONAL_STAGE = "CONTROLLED_MULTI_PROJECT_OPERATIONAL_QUEUE_PILOT"
 
 
 class ReleaseGateService:
@@ -355,44 +357,12 @@ def _claim_has_traceable_evidence(claim: dict, session: Session | None = None, c
     )
 
 
-_PHASE122_REQUIRED_EVIDENCE_CLAIMS = {
-    "REAL_MULTI_PROJECT_WORK",
-    "BLOCKED_PROJECT_RELEASES_CAPACITY",
-    "FRESH_CONTEXT_RECONSTRUCTION",
-    "FRESH_CONTEXT_ACTUAL_DISPATCH",
-    "GLOBAL_SELECTION_EQUALS_MUTATION",
-    "READY_TO_RESUME_PRESERVES_PROGRESS",
-    "PRIORITY_OVER_RESUME",
-    "NO_PREEMPTION",
-    "PROJECT_REPOSITORY_ISOLATION",
-    "TARGET_MAIN_UNCHANGED",
-    "TARGET_DOCUMENTATION_DISCIPLINE",
-    "CANONICAL_ARTIFACT_STORE",
-    "COMPLETION_WITH_MALFORMED_SIBLING_SAFETY",
-    "VERIFIED_CLAIMS_HAVE_EVIDENCE",
-}
-
-
-_PHASE122_ALLOWED_EVIDENCE_TYPES = {
-    "evidence_reference",
-    "engineering_plan_evaluation",
-    "pilot_record",
-    "benchmark_result",
-    "repository_state",
-    "repository_snapshot",
-    "workflow_checkpoint",
-    "queue_checkpoint",
-    "resume_validation",
-    "human_rubric",
-}
-
-
 def _phase122_operational_evidence_blockers(artifact: dict, session: Session) -> list[str]:
     blockers = []
     claims = artifact.get("phase_1_22_operational_evidence", {})
     if not isinstance(claims, dict):
         claims = {}
-    for name in sorted(_PHASE122_REQUIRED_EVIDENCE_CLAIMS):
+    for name in sorted(PHASE_1_22_REQUIRED_EVIDENCE_CLAIMS):
         claim = claims.get(name)
         if not isinstance(claim, dict) or claim.get("result") != "PASS":
             blockers.append(f"Phase 1.22 operational evidence claim missing or failed: {name}")
@@ -400,7 +370,7 @@ def _phase122_operational_evidence_blockers(artifact: dict, session: Session) ->
         validation = validate_claim_evidence(
             claim,
             session=session,
-            allowed_types=_PHASE122_ALLOWED_EVIDENCE_TYPES,
+            allowed_types=PHASE_1_22_ALLOWED_EVIDENCE_TYPES,
             require_current=True,
             expected_result="PASS",
             expected_invariant=claim.get("expected_invariant"),

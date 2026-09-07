@@ -7,6 +7,7 @@ from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, PlanningEvidenceMode
 from lucius.persistence.orm import EngineeringPlanORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
+from lucius.pilots.documentation_contract import canonicalize_documentation_requirements
 from lucius.pilots.claim_policy import verified_plan_claim_issues
 from lucius.pilots.hardening import (
     validate_orchestration_contract_completeness,
@@ -131,7 +132,7 @@ def _plan_payload(plan: EngineeringPlanORM) -> dict:
         "steps": plan.steps,
         "acceptance_coverage": plan.acceptance_coverage,
         "test_strategy": plan.test_strategy,
-        "documentation_requirements": plan.documentation_requirements,
+        "documentation_requirements": canonicalize_documentation_requirements(plan.documentation_requirements),
         "rollback_considerations": plan.rollback_considerations,
         "orchestration_contract_required": plan.orchestration_contract_required,
         "orchestration_contract": plan.orchestration_contract,

@@ -14,6 +14,7 @@ from lucius.domain.enums import (
 from lucius.persistence.orm import EngineeringPlanEvaluationORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.dependency_policy import package_dependency_change_expected
+from lucius.pilots.documentation_contract import canonicalize_documentation_requirements
 from lucius.pilots.provenance import (
     find_verified_without_semantic_evidence,
     verified_claim_disposition_passes,
@@ -274,7 +275,7 @@ def _file_path_prediction_dimension(plan: dict, artifact: dict) -> EvaluationDim
 
 
 def _documentation_strategy_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
-    requirements = [item for item in plan.get("documentation_requirements", []) if isinstance(item, dict)]
+    requirements = canonicalize_documentation_requirements(plan.get("documentation_requirements", []))
     actual_docs = _actual_documentation_paths(artifact)
     if not requirements:
         if actual_docs:
@@ -322,7 +323,7 @@ def _documentation_match(plan: dict, artifact: dict) -> dict[str, object]:
     expected: set[str] = set()
     exact_paths: set[str] = set()
     flexible_pass = False
-    for requirement in [item for item in plan.get("documentation_requirements", []) if isinstance(item, dict)]:
+    for requirement in canonicalize_documentation_requirements(plan.get("documentation_requirements", [])):
         target = str(requirement.get("target", "")).strip()
         proposed_path = str(requirement.get("proposed_path") or "").strip()
         target_type = str(requirement.get("target_type") or requirement.get("kind") or "").upper()
@@ -904,7 +905,10 @@ def _plan_expects_schema_migration(plan: dict) -> bool:
             str(plan.get("objective", "")),
             " ".join(_plan_terms(plan)),
             " ".join(str(item.get("description", "")) for item in plan.get("test_strategy", [])),
-            " ".join(str(item.get("target", "")) for item in plan.get("documentation_requirements", [])),
+            " ".join(
+                str(item.get("target", ""))
+                for item in canonicalize_documentation_requirements(plan.get("documentation_requirements", []))
+            ),
         ]
     ).lower()
     if (
@@ -982,7 +986,10 @@ def _plan_text(plan: dict) -> str:
             " ".join(_plan_terms(plan)),
             " ".join(_plan_files(plan)),
             " ".join(str(item.get("description", "")) for item in plan.get("test_strategy", [])),
-            " ".join(str(item.get("target", "")) for item in plan.get("documentation_requirements", [])),
+            " ".join(
+                str(item.get("target", ""))
+                for item in canonicalize_documentation_requirements(plan.get("documentation_requirements", []))
+            ),
             " ".join(str(item) for item in plan.get("dependencies", [])),
         ]
     )

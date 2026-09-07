@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from lucius.domain.enums import (
     AcceptanceCoverageStatus,
@@ -18,6 +18,7 @@ from lucius.domain.enums import (
     TestStrategyKind,
 )
 from lucius.persistence.orm import utc_now
+from lucius.pilots.documentation_contract import canonicalize_documentation_requirement
 
 
 class PlanningBlocker(BaseModel):
@@ -156,6 +157,13 @@ class DocumentationRequirement(BaseModel):
     acceptable_categories: list[str] = Field(default_factory=list)
     proposed_path: str | None = None
     canonical_target: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_input(cls, value):
+        if isinstance(value, dict):
+            return canonicalize_documentation_requirement(value)
+        return value
 
 
 class PlanRisk(BaseModel):

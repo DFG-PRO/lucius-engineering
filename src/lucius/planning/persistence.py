@@ -7,6 +7,7 @@ from lucius.domain.enums import EngineeringPlanStatus
 from lucius.persistence.orm import EngineeringPlanORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.planning.schemas import EngineeringPlan, ModelEngineeringPlanOutput, PlanningBlocker, PlanningContext
+from lucius.pilots.documentation_contract import canonicalize_documentation_requirements
 
 
 class EngineeringPlanRepository:
@@ -53,7 +54,9 @@ class EngineeringPlanRepository:
             steps=[item.model_dump(mode="json") for item in model_plan.steps],
             acceptance_coverage=[item.model_dump(mode="json") for item in model_plan.acceptance_coverage],
             test_strategy=[item.model_dump(mode="json") for item in model_plan.test_strategy],
-            documentation_requirements=[item.model_dump(mode="json") for item in model_plan.documentation_requirements],
+            documentation_requirements=canonicalize_documentation_requirements(
+                [item.model_dump(mode="json") for item in model_plan.documentation_requirements]
+            ),
             rollback_considerations=model_plan.rollback_considerations,
             orchestration_contract_required=model_plan.orchestration_contract_required,
             orchestration_contract=model_plan.orchestration_contract,
@@ -128,7 +131,7 @@ def plan_from_row(row: EngineeringPlanORM) -> EngineeringPlan:
         steps=row.steps,
         acceptance_coverage=row.acceptance_coverage,
         test_strategy=row.test_strategy,
-        documentation_requirements=row.documentation_requirements,
+        documentation_requirements=canonicalize_documentation_requirements(row.documentation_requirements),
         rollback_considerations=row.rollback_considerations,
         orchestration_contract_required=row.orchestration_contract_required,
         orchestration_contract=row.orchestration_contract,
