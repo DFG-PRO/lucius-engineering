@@ -166,3 +166,5 @@ Phase 1.24 pre-frozen extended multi-project operational pilot: READY_TO_CLOSE; 
 Phase 1.24H learning hardening for unattended safety: IMPLEMENTED IN LUCIUS; HIGH-RISK LEARNING REPAIRS ADDED; POST BENCHMARK AND FINAL READINESS RECORDED IN CLOSURE REPORT
 
 Phase 1.24H1 canonical extended orchestration payload repair: IMPLEMENTED IN LUCIUS; `orchestration_contract` AND `adversarial_probes` ARE FIRST-CLASS ENGINEERING PLAN/FREEZE PAYLOAD DATA
+
+Phase 1.24H2 learning hardening repair: IMPLEMENTED IN LUCIUS; DOCUMENTATION TARGET SPECIFICITY AND ORCHESTRATION-AWARE DETERMINISTIC EVALUATION REPAIRED

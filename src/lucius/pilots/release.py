@@ -94,9 +94,10 @@ class ReleaseGateService:
         rubric = self.session.get(HumanRubricORM, human_rubric_id) if human_rubric_id else None
         human_rubric_captured = rubric is not None and rubric.status == HumanRubricCaptureStatus.CAPTURED.value
 
-        is_plan_vs_implementation = (
-            evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value
-        )
+        is_plan_vs_implementation = evaluation_mode in {
+            EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION.value,
+            EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE.value,
+        }
         pilot_stage = implementation_artifact.get("pilot_stage")
         if not human_rubric_captured:
             if pilot_stage == "BOUNDED_MULTI_TASK_ENGINEERING_PILOT":

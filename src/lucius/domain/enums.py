@@ -433,6 +433,7 @@ class EngineeringPlanEvaluationResult(StrEnum):
 class EngineeringPlanEvaluationMode(StrEnum):
     PLANNING_ONLY = "PLANNING_ONLY"
     PLAN_VS_IMPLEMENTATION = "PLAN_VS_IMPLEMENTATION"
+    ORCHESTRATION_CONTROL_PLANE = "ORCHESTRATION_CONTROL_PLANE"
 
 
 class MetricApplicability(StrEnum):

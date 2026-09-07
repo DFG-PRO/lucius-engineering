@@ -21,6 +21,27 @@ from lucius.pilots.provenance import (
 from lucius.pilots.schemas import EngineeringPlanEvaluation, EvaluationDimension, PlanCorrection
 
 
+REQUIRED_ORCHESTRATION_EVIDENCE_FIELDS = {
+    "participating_workflows",
+    "participating_projects",
+    "pre_mutation_release",
+    "scheduler_decisions",
+    "blockers_capacity_release",
+    "checkpoints_resumes",
+    "priority",
+    "no_preemption",
+    "exact_selection_mutation",
+    "dependency_isolation",
+    "fresh_process_reconstruction",
+    "target_isolation",
+    "provenance_refs",
+    "tests",
+    "documentation",
+    "authority",
+    "closure_claims",
+}
+
+
 class EngineeringPlanEvaluationService:
     def __init__(self, session: Session):
         self.session = session
@@ -43,9 +64,12 @@ class EngineeringPlanEvaluationService:
             raise ValueError(f"Unknown EngineeringPlanEvaluation: {supersedes_evaluation_id}")
         artifact = implementation_artifact or {}
         plan = freeze.plan_payload
+        effective_mode = _effective_evaluation_mode(plan, evaluation_mode)
         dimensions = (
             _planning_only_dimensions(plan, artifact, self.session)
-            if evaluation_mode == EngineeringPlanEvaluationMode.PLANNING_ONLY
+            if effective_mode == EngineeringPlanEvaluationMode.PLANNING_ONLY
+            else _orchestration_control_plane_dimensions(plan, artifact, self.session)
+            if effective_mode == EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE
             else _plan_vs_implementation_dimensions(plan, artifact, self.session)
         )
         corrections = _corrections(dimensions)
@@ -56,7 +80,7 @@ class EngineeringPlanEvaluationService:
             id=next_id(self.session, "plan_evaluation"),
             plan_freeze_id=freeze.id,
             supersedes_evaluation_id=supersedes_evaluation_id,
-            evaluation_mode=evaluation_mode.value,
+            evaluation_mode=effective_mode.value,
             result=result.value,
             aggregate_score=aggregate,
             dimensions=[item.model_dump(mode="json") for item in dimensions],
@@ -78,7 +102,7 @@ class EngineeringPlanEvaluationService:
             metadata={
                 "plan_evaluation_id": row.id,
                 "plan_freeze_id": freeze.id,
-                "evaluation_mode": evaluation_mode.value,
+                "evaluation_mode": effective_mode.value,
                 "supersedes_evaluation_id": supersedes_evaluation_id,
                 "aggregate_score": aggregate,
             },
@@ -87,7 +111,7 @@ class EngineeringPlanEvaluationService:
             id=row.id,
             plan_freeze_id=row.plan_freeze_id,
             supersedes_evaluation_id=row.supersedes_evaluation_id,
-            evaluation_mode=evaluation_mode,
+            evaluation_mode=effective_mode,
             result=result,
             aggregate_score=row.aggregate_score,
             dimensions=dimensions,
@@ -97,6 +121,26 @@ class EngineeringPlanEvaluationService:
             evaluated_at=row.evaluated_at,
             evaluated_by=row.evaluated_by,
         )
+
+
+def _effective_evaluation_mode(
+    plan: dict,
+    requested_mode: EngineeringPlanEvaluationMode,
+) -> EngineeringPlanEvaluationMode:
+    if requested_mode == EngineeringPlanEvaluationMode.PLANNING_ONLY:
+        return requested_mode
+    if _requires_orchestration_evaluation(plan):
+        return EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE
+    return requested_mode
+
+
+def _requires_orchestration_evaluation(plan: dict) -> bool:
+    if plan.get("orchestration_contract_required") is True:
+        return True
+    if plan.get("orchestration_contract") or plan.get("adversarial_probes"):
+        return True
+    components = " ".join(str(item).lower() for item in plan.get("affected_components", []))
+    return "orchestration" in components or "control-plane" in components or "global queue" in components
 
 
 def _planning_only_dimensions(plan: dict, artifact: dict, session: Session) -> list[EvaluationDimension]:
@@ -129,17 +173,48 @@ def _plan_vs_implementation_dimensions(plan: dict, artifact: dict, session: Sess
     return [
         _set_dimension("architecture_alignment", artifact.get("architecture", []), _plan_terms(plan)),
         _set_dimension("component_coverage", artifact.get("components", []), plan.get("affected_components", [])),
-        _set_dimension("file_path_prediction", artifact.get("files", []), _plan_files(plan)),
+        _file_path_prediction_dimension(plan, artifact),
         _schema_migration_implementation_dimension(plan, artifact),
         _presence_dimension("testing_strategy", artifact.get("tests", []), _plan_text(plan), ["test", "pytest", "regression"]),
-        _presence_dimension("documentation_strategy", artifact.get("documentation", []), _plan_text(plan), ["docs", "documentation"]),
+        _documentation_strategy_dimension(plan, artifact),
         _dependency_implementation_dimension(plan, artifact),
         _classification_dimension(artifact, plan),
-        _unnecessary_work_dimension(artifact.get("files", []), _plan_files(plan)),
+        _unnecessary_work_dimension(plan, artifact),
         _hallucinated_paths_dimension(artifact.get("known_paths", []), _plan_files(plan)),
         _unsupported_claims_dimension(plan, artifact, session),
         _missed_work_dimension(artifact.get("material_work", []), _plan_text(plan)),
     ]
+
+
+def _orchestration_control_plane_dimensions(plan: dict, artifact: dict, session: Session) -> list[EvaluationDimension]:
+    evidence = artifact.get("orchestration_evidence") or {}
+    dimensions = [
+        _orchestration_contract_dimension(plan),
+        _orchestration_required_evidence_dimension(evidence),
+        _orchestration_participants_dimension(plan, evidence),
+        _orchestration_boolean_dimension(
+            "pre_mutation_release",
+            evidence.get("pre_mutation_release"),
+            required_result="PASS",
+            message="Pre-mutation freeze/release evidence was not captured.",
+        ),
+        _orchestration_scheduler_dimension(evidence),
+        _orchestration_resume_dimension(evidence),
+        _orchestration_boolean_dimension("priority_correctness", evidence.get("priority")),
+        _orchestration_boolean_dimension("no_preemption", evidence.get("no_preemption")),
+        _orchestration_boolean_dimension("exact_selection_mutation", evidence.get("exact_selection_mutation")),
+        _orchestration_boolean_dimension("dependency_isolation", evidence.get("dependency_isolation")),
+        _orchestration_boolean_dimension("fresh_process_reconstruction", evidence.get("fresh_process_reconstruction")),
+        _orchestration_boolean_dimension("target_isolation", evidence.get("target_isolation")),
+        _orchestration_provenance_dimension(evidence),
+        _orchestration_boolean_dimension("authority_compliance", evidence.get("authority")),
+        _orchestration_boolean_dimension("tests_documentation", _tests_documentation_evidence(evidence)),
+        _orchestration_boolean_dimension("closure_claims", evidence.get("closure_claims")),
+        _unsupported_claims_dimension(plan, artifact, session),
+    ]
+    if _plan_files(plan):
+        dimensions.extend(_plan_vs_implementation_dimensions(plan, artifact, session))
+    return dimensions
 
 
 def _not_captured_dimension(name: str, message: str) -> EvaluationDimension:
@@ -170,6 +245,145 @@ def _set_dimension(name: str, expected: Iterable[str], actual: Iterable[str]) ->
         missing=missing,
         unnecessary=unnecessary,
     )
+
+
+def _file_path_prediction_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
+    actual_files = _normalize_set(artifact.get("files", []))
+    planned_files = _normalize_set(_plan_files(plan))
+    if not actual_files:
+        return _not_captured_dimension("file_path_prediction", "Implemented file evidence was not captured.")
+    missing = actual_files - planned_files
+    unnecessary = planned_files - actual_files
+    doc_match = _documentation_match(plan, artifact)
+    if doc_match["flexible_pass"]:
+        exact_docs = doc_match["exact_paths"]
+        missing = {path for path in missing if not (_is_doc_path(path) and path not in exact_docs)}
+        unnecessary = {path for path in unnecessary if not (_is_doc_path(path) and path not in exact_docs)}
+    recall = ((len(actual_files) - len(missing)) / len(actual_files)) * 100
+    precision = 100 if not planned_files else ((len(planned_files) - len(unnecessary)) / len(planned_files)) * 100
+    score = round((recall * 0.7) + (precision * 0.3), 2)
+    return EvaluationDimension(
+        name="file_path_prediction",
+        status="PASS" if score >= 80 else "WARN" if score >= 60 else "FAIL",
+        score=score,
+        expected=sorted(actual_files),
+        actual=sorted(planned_files),
+        missing=sorted(missing),
+        unnecessary=sorted(unnecessary),
+    )
+
+
+def _documentation_strategy_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
+    requirements = [item for item in plan.get("documentation_requirements", []) if isinstance(item, dict)]
+    actual_docs = _actual_documentation_paths(artifact)
+    if not requirements:
+        if actual_docs:
+            return EvaluationDimension(name="documentation_strategy", status="PASS", score=100.0, actual=sorted(actual_docs))
+        return _not_captured_dimension("documentation_strategy", "Documentation requirement evidence was not captured.")
+    if not _has_semantic_documentation_requirements(requirements):
+        return _presence_dimension(
+            "documentation_strategy",
+            actual_docs,
+            _plan_text(plan),
+            ["docs", "documentation"],
+        )
+    match = _documentation_match(plan, artifact)
+    score = 100.0 if not match["missing"] else 0.0
+    return EvaluationDimension(
+        name="documentation_strategy",
+        status="PASS" if score == 100 else "FAIL",
+        score=score,
+        expected=sorted(match["expected"]),
+        actual=sorted(actual_docs),
+        missing=sorted(match["missing"]),
+        notes=None if score == 100 else "Documentation evidence did not satisfy planned exact/flexible targets.",
+    )
+
+
+def _has_semantic_documentation_requirements(requirements: list[dict]) -> bool:
+    semantic_keys = {
+        "target_type",
+        "kind",
+        "exact_path_required",
+        "acceptable_paths",
+        "acceptable_categories",
+        "proposed_path",
+        "canonical_target",
+    }
+    return any(any(key in requirement for key in semantic_keys) for requirement in requirements)
+
+
+def _documentation_match(plan: dict, artifact: dict) -> dict[str, object]:
+    actual_docs = _actual_documentation_paths(artifact)
+    evidence = artifact.get("documentation_evidence") or {}
+    canonical_targets = _normalize_set(evidence.get("canonical_targets", []))
+    categories = _normalize_set(evidence.get("categories", []))
+    missing: set[str] = set()
+    expected: set[str] = set()
+    exact_paths: set[str] = set()
+    flexible_pass = False
+    for requirement in [item for item in plan.get("documentation_requirements", []) if isinstance(item, dict)]:
+        target = str(requirement.get("target", "")).strip()
+        proposed_path = str(requirement.get("proposed_path") or "").strip()
+        target_type = str(requirement.get("target_type") or requirement.get("kind") or "").upper()
+        exact_required = bool(requirement.get("exact_path_required")) or target_type in {"EXACT_PATH", "REQUIRED_PATH"}
+        acceptable_paths = _normalize_set(requirement.get("acceptable_paths", []))
+        acceptable_categories = _normalize_set(requirement.get("acceptable_categories", []))
+        canonical_target = str(requirement.get("canonical_target") or "").strip()
+        if proposed_path:
+            expected.add(proposed_path)
+        elif target:
+            expected.add(target)
+        if exact_required:
+            required_path = proposed_path or target
+            exact_paths.add(required_path)
+            if required_path not in actual_docs:
+                missing.add(required_path)
+            continue
+        if target_type in {"PROPOSED_PATH", "NEW_DOCUMENT"}:
+            required_path = proposed_path or target
+            if required_path not in actual_docs:
+                missing.add(required_path)
+            continue
+        path_candidates = acceptable_paths | ({proposed_path} if proposed_path else set())
+        target_candidates = {canonical_target, target} - {""}
+        category_match = bool(acceptable_categories & categories) or any(
+            _doc_path_category(path) in acceptable_categories for path in actual_docs
+        )
+        path_match = bool(path_candidates & actual_docs)
+        target_match = bool(target_candidates & canonical_targets)
+        if path_match or category_match or target_match:
+            flexible_pass = True
+            continue
+        missing.add(target or proposed_path or canonical_target or "documentation target")
+    return {
+        "expected": expected,
+        "missing": missing,
+        "exact_paths": exact_paths,
+        "flexible_pass": flexible_pass,
+    }
+
+
+def _actual_documentation_paths(artifact: dict) -> set[str]:
+    paths = _normalize_set(artifact.get("documentation", []))
+    paths.update(path for path in _normalize_set(artifact.get("files", [])) if _is_doc_path(path))
+    evidence = artifact.get("documentation_evidence") or {}
+    paths.update(_normalize_set(evidence.get("paths", [])))
+    return paths
+
+
+def _is_doc_path(path: str) -> bool:
+    normalized = str(path).lower()
+    return normalized.startswith("docs/") or normalized.endswith(".md") or normalized.endswith(".rst")
+
+
+def _doc_path_category(path: str) -> str:
+    parts = str(path).split("/")
+    if len(parts) >= 2 and parts[0] == "docs":
+        return parts[1]
+    if path.lower().endswith((".md", ".rst")):
+        return "documentation"
+    return ""
 
 
 def _presence_dimension(name: str, expected: Iterable[str], plan_text: str, keywords: list[str]) -> EvaluationDimension:
@@ -308,10 +522,17 @@ def _classification_dimension(artifact: dict, plan: dict) -> EvaluationDimension
     )
 
 
-def _unnecessary_work_dimension(expected_files: Iterable[str], planned_files: Iterable[str]) -> EvaluationDimension:
-    expected_set = _normalize_set(expected_files)
-    actual_set = _normalize_set(planned_files)
-    unnecessary = sorted(actual_set - expected_set)
+def _unnecessary_work_dimension(plan: dict, artifact: dict) -> EvaluationDimension:
+    expected_set = _normalize_set(artifact.get("files", []))
+    actual_set = _normalize_set(_plan_files(plan))
+    unnecessary_set = actual_set - expected_set
+    doc_match = _documentation_match(plan, artifact)
+    if doc_match["flexible_pass"]:
+        exact_docs = doc_match["exact_paths"]
+        unnecessary_set = {
+            path for path in unnecessary_set if not (_is_doc_path(path) and path not in exact_docs)
+        }
+    unnecessary = sorted(unnecessary_set)
     score = 100.0 if not unnecessary else max(0.0, 100.0 - len(unnecessary) * 15.0)
     return EvaluationDimension(
         name="unnecessary_work",
@@ -321,6 +542,172 @@ def _unnecessary_work_dimension(expected_files: Iterable[str], planned_files: It
         actual=sorted(actual_set),
         unnecessary=unnecessary,
     )
+
+
+def _orchestration_contract_dimension(plan: dict) -> EvaluationDimension:
+    contract = plan.get("orchestration_contract") or {}
+    probes = plan.get("adversarial_probes") or []
+    if not contract or not probes:
+        return _not_captured_dimension(
+            "orchestration_contract",
+            "Orchestration contract/probe payload was not captured.",
+        )
+    return EvaluationDimension(
+        name="orchestration_contract",
+        status="PASS",
+        score=100.0,
+        expected=["orchestration_contract", "adversarial_probes"],
+        actual=["orchestration_contract", "adversarial_probes"],
+    )
+
+
+def _orchestration_required_evidence_dimension(evidence: dict) -> EvaluationDimension:
+    captured = set(evidence)
+    missing = sorted(REQUIRED_ORCHESTRATION_EVIDENCE_FIELDS - captured)
+    if missing:
+        return _not_captured_dimension(
+            "orchestration_required_evidence",
+            f"Missing orchestration evidence fields: {', '.join(missing)}",
+        )
+    return EvaluationDimension(
+        name="orchestration_required_evidence",
+        status="PASS",
+        score=100.0,
+        expected=sorted(REQUIRED_ORCHESTRATION_EVIDENCE_FIELDS),
+        actual=sorted(captured),
+    )
+
+
+def _orchestration_participants_dimension(plan: dict, evidence: dict) -> EvaluationDimension:
+    contract = plan.get("orchestration_contract") or {}
+    expected_workflows = _ids_from_contract(contract.get("workflows"))
+    expected_projects = _ids_from_contract(contract.get("projects"))
+    actual_workflows = _normalize_set(evidence.get("participating_workflows", []))
+    actual_projects = _normalize_set(evidence.get("participating_projects", []))
+    if not actual_workflows or not actual_projects:
+        return _not_captured_dimension(
+            "orchestration_participants",
+            "Participating workflow/project evidence was not captured.",
+        )
+    missing = sorted((expected_workflows - actual_workflows) | (expected_projects - actual_projects))
+    extra = sorted((actual_workflows - expected_workflows) | (actual_projects - expected_projects))
+    ok = not missing and not extra
+    return EvaluationDimension(
+        name="orchestration_participants",
+        status="PASS" if ok else "FAIL",
+        score=100.0 if ok else 0.0,
+        expected=sorted(expected_workflows | expected_projects),
+        actual=sorted(actual_workflows | actual_projects),
+        missing=missing,
+        unnecessary=extra,
+    )
+
+
+def _ids_from_contract(values: object) -> set[str]:
+    if isinstance(values, dict):
+        return _normalize_set(values.keys())
+    if isinstance(values, list):
+        ids: list[str] = []
+        for value in values:
+            if isinstance(value, dict):
+                ids.append(str(value.get("id") or value.get("workflow_id") or value.get("project_id") or ""))
+            else:
+                ids.append(str(value))
+        return _normalize_set(ids)
+    return _normalize_set([])
+
+
+def _orchestration_boolean_dimension(
+    name: str,
+    value: object,
+    *,
+    required_result: str | None = None,
+    message: str | None = None,
+) -> EvaluationDimension:
+    if value is None:
+        return _not_captured_dimension(name, message or f"{name} evidence was not captured.")
+    if isinstance(value, dict):
+        result = str(value.get("result") or value.get("status") or "").upper()
+        violations = value.get("violations") or []
+        passed = result == (required_result or "PASS") and not violations
+        actual = [f"result={result or 'UNKNOWN'}", *[str(item) for item in violations]]
+    else:
+        passed = bool(value)
+        actual = [str(value)]
+    return EvaluationDimension(
+        name=name,
+        status="PASS" if passed else "FAIL",
+        score=100.0 if passed else 0.0,
+        expected=[required_result or "PASS"],
+        actual=actual,
+    )
+
+
+def _orchestration_scheduler_dimension(evidence: dict) -> EvaluationDimension:
+    decisions = evidence.get("scheduler_decisions")
+    if not decisions:
+        return _not_captured_dimension("scheduler_decisions", "Scheduler decision evidence was not captured.")
+    false_dispatch = [
+        str(item.get("item_id") or item.get("selected_item_id") or index)
+        for index, item in enumerate(decisions)
+        if isinstance(item, dict) and item.get("mutation_identity_matches_selection") is not True
+    ]
+    return EvaluationDimension(
+        name="scheduler_decisions",
+        status="PASS" if not false_dispatch else "FAIL",
+        score=100.0 if not false_dispatch else 0.0,
+        expected=["all mutation_identity_matches_selection=True"],
+        actual=[str(item) for item in decisions],
+        missing=false_dispatch,
+    )
+
+
+def _orchestration_resume_dimension(evidence: dict) -> EvaluationDimension:
+    resumes = evidence.get("checkpoints_resumes")
+    if not resumes:
+        return _not_captured_dimension("checkpoints_resumes", "Checkpoint/resume evidence was not captured.")
+    invalid = [
+        str(item.get("checkpoint_id") or index)
+        for index, item in enumerate(resumes)
+        if not isinstance(item, dict)
+        or item.get("resolved") is not True
+        or item.get("fresh_session_reconstruction") is not True
+    ]
+    capacity = evidence.get("blockers_capacity_release")
+    capacity_dimension = _orchestration_boolean_dimension("blockers_capacity_release", capacity)
+    if capacity_dimension.status != "PASS":
+        invalid.append("blockers_capacity_release")
+    return EvaluationDimension(
+        name="checkpoint_resume_capacity",
+        status="PASS" if not invalid else "FAIL",
+        score=100.0 if not invalid else 0.0,
+        expected=["resolved checkpoints", "fresh-session reconstruction", "capacity release"],
+        actual=[*[str(item) for item in resumes], str(capacity)],
+        missing=invalid,
+    )
+
+
+def _orchestration_provenance_dimension(evidence: dict) -> EvaluationDimension:
+    refs = _normalize_set(evidence.get("provenance_refs", []))
+    if not refs:
+        return _not_captured_dimension("orchestration_provenance", "Semantic provenance refs were not captured.")
+    unrelated = sorted(ref for ref in refs if not ref.startswith(("LPLAN_", "LFREEZE_", "LEVALPLAN_", "LBENCH_", "LAUDIT_", "LQCHK_", "LWORK_", "LRSTATE_")))
+    return EvaluationDimension(
+        name="orchestration_provenance",
+        status="PASS" if not unrelated else "FAIL",
+        score=100.0 if not unrelated else 0.0,
+        expected=["canonical artifact refs"],
+        actual=sorted(refs),
+        unnecessary=unrelated,
+    )
+
+
+def _tests_documentation_evidence(evidence: dict) -> dict:
+    tests = evidence.get("tests") or {}
+    docs = evidence.get("documentation") or {}
+    tests_pass = tests.get("result") == "PASS" if isinstance(tests, dict) else bool(tests)
+    docs_pass = docs.get("result") == "PASS" if isinstance(docs, dict) else bool(docs)
+    return {"result": "PASS" if tests_pass and docs_pass else "FAIL"}
 
 
 def _hallucinated_paths_dimension(known_paths: Iterable[str], planned_files: Iterable[str]) -> EvaluationDimension:
@@ -393,13 +780,23 @@ def _missed_work_dimension(material_work: Iterable[str], plan_text: str) -> Eval
 
 def _corrections(dimensions: list[EvaluationDimension]) -> list[PlanCorrection]:
     corrections: list[PlanCorrection] = []
+    critical_dimensions = {
+        "hallucinated_files_paths",
+        "unsupported_claims",
+        "scheduler_decisions",
+        "orchestration_participants",
+        "exact_selection_mutation",
+        "dependency_isolation",
+        "target_isolation",
+        "authority_compliance",
+    }
     for dimension in dimensions:
         if dimension.applicability == MetricApplicability.NOT_APPLICABLE:
             continue
         if dimension.applicability == MetricApplicability.NOT_CAPTURED:
             corrections.append(PlanCorrection(severity="MODERATE", dimension=dimension.name, message=dimension.notes or "Required evidence was not captured."))
         elif dimension.score is not None and dimension.score < 60:
-            severity = "CRITICAL" if dimension.name in {"hallucinated_files_paths", "unsupported_claims"} else "MAJOR"
+            severity = "CRITICAL" if dimension.name in critical_dimensions else "MAJOR"
             corrections.append(PlanCorrection(severity=severity, dimension=dimension.name, message=f"Dimension scored {dimension.score}."))
         elif dimension.score is not None and dimension.score < 80:
             corrections.append(PlanCorrection(severity="MODERATE", dimension=dimension.name, message=f"Dimension scored {dimension.score}."))
@@ -418,9 +815,10 @@ def _result(
         and item.name in {"schema_migration_awareness", "dependency_awareness"}
         for item in dimensions
     )
-    if material_change_failure:
+    critical_control_failure = any(item.severity == "CRITICAL" for item in corrections)
+    if material_change_failure or critical_control_failure:
         return EngineeringPlanEvaluationResult.FAIL
-    if any(item.severity == "CRITICAL" for item in corrections) or aggregate < 60:
+    if aggregate < 60:
         return EngineeringPlanEvaluationResult.FAIL
     if corrections or aggregate < 85:
         return EngineeringPlanEvaluationResult.PASS_WITH_WARNINGS

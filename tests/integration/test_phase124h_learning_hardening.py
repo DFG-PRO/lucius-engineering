@@ -9,7 +9,9 @@ from lucius.domain.enums import (
     AuthorityLevel,
     BenchmarkRunStatus,
     EngineeringPlanEvaluationMode,
+    EngineeringPlanEvaluationResult,
     Environment,
+    MetricApplicability,
     PersistentWorkflowState,
     QueueWorkItemState,
     RepositoryAccessMode,
@@ -563,6 +565,387 @@ def test_unsupported_verified_claim_still_blocks_before_extended_orchestration_f
 
     with pytest.raises(PlanFreezeSemanticError, match="UNSUPPORTED_VERIFIED_PLAN_CLAIM"):
         PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def test_documentation_evaluation_enforces_exact_required_path(session):
+    freeze = _documentation_freeze(
+        session,
+        [{"target": "docs/runtime/exact.md", "reason": "Exact operator contract.", "trigger": "docs", "exact_path_required": True}],
+        affected_files=["docs/runtime/exact.md"],
+    )
+
+    passed = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(["docs/runtime/exact.md"]),
+    )
+    failed = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(["docs/runtime/other.md"]),
+    )
+
+    assert _dimension(passed, "documentation_strategy").status == "PASS"
+    assert _dimension(failed, "documentation_strategy").status == "FAIL"
+
+
+def test_flexible_canonical_documentation_target_allows_architecture_correct_path(session):
+    freeze = _documentation_freeze(
+        session,
+        [
+            {
+                "target": "research observability runtime docs",
+                "reason": "Canonical target may be selected during implementation.",
+                "trigger": "operator docs",
+                "target_type": "CANONICAL_DOCUMENT",
+                "exact_path_required": False,
+                "acceptable_paths": ["docs/runtime/research-run-lifecycle.md"],
+                "acceptable_categories": ["runtime"],
+                "canonical_target": "research-run-lifecycle",
+            }
+        ],
+        affected_files=["docs/runtime/research-loop.md"],
+    )
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(
+            ["docs/runtime/research-run-lifecycle.md"],
+            canonical_targets=["research-run-lifecycle"],
+            categories=["runtime"],
+        ),
+    )
+
+    assert _dimension(result, "documentation_strategy").status == "PASS"
+    assert _dimension(result, "file_path_prediction").status == "PASS"
+    assert _dimension(result, "unnecessary_work").status == "PASS"
+
+
+def test_flexible_documentation_target_rejects_unrelated_documentation(session):
+    freeze = _documentation_freeze(
+        session,
+        [
+            {
+                "target": "runtime docs",
+                "reason": "Runtime docs must be updated.",
+                "trigger": "operator docs",
+                "target_type": "CANONICAL_DOCUMENT",
+                "acceptable_categories": ["runtime"],
+            }
+        ],
+        affected_files=["docs/runtime/research-loop.md"],
+    )
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(["docs/architecture/unrelated.md"], categories=["architecture"]),
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.FAIL
+    assert _dimension(result, "documentation_strategy").status == "FAIL"
+
+
+def test_proposed_new_documentation_path_remains_enforceable(session):
+    freeze = _documentation_freeze(
+        session,
+        [
+            {
+                "target": "new repair record",
+                "reason": "New phase docs.",
+                "trigger": "phase repair",
+                "target_type": "NEW_DOCUMENT",
+                "proposed_path": "docs/phases/PHASE_X.md",
+            }
+        ],
+        affected_files=["docs/phases/PHASE_X.md"],
+    )
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(["docs/phases/PHASE_X.md"]),
+    )
+
+    assert _dimension(result, "documentation_strategy").status == "PASS"
+
+
+def test_target_project_canonical_documentation_requirement_matches_semantic_target(session):
+    freeze = _documentation_freeze(
+        session,
+        [
+            {
+                "target": "target project operational docs",
+                "reason": "Implementation may select target canonical document.",
+                "trigger": "target docs",
+                "target_type": "TARGET_PROJECT_CANONICAL_DOCUMENTATION",
+                "canonical_target": "runtime/research-run-lifecycle",
+                "acceptable_categories": ["runtime"],
+            }
+        ],
+        affected_files=["docs/runtime/research-loop.md"],
+    )
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_documentation_artifact(
+            ["docs/runtime/research-run-lifecycle.md"],
+            canonical_targets=["runtime/research-run-lifecycle"],
+            categories=["runtime"],
+        ),
+    )
+
+    assert _dimension(result, "documentation_strategy").status == "PASS"
+
+
+def test_valid_no_file_orchestration_plan_uses_control_plane_evaluation(session):
+    freeze = _orchestration_freeze(session)
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(),
+    )
+
+    assert result.evaluation_mode == EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE
+    assert result.result == EngineeringPlanEvaluationResult.PASS
+    assert _dimension(result, "file_path_prediction", required=False) is None
+
+
+def test_orchestration_evaluation_missing_scheduler_evidence_is_insufficient(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact()
+    artifact["orchestration_evidence"].pop("scheduler_decisions")
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert _dimension(result, "scheduler_decisions").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def test_orchestration_evaluation_missing_resume_evidence_is_insufficient(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact()
+    artifact["orchestration_evidence"].pop("checkpoints_resumes")
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert _dimension(result, "checkpoints_resumes").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def test_orchestration_evaluation_false_exact_dispatch_claim_fails(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact()
+    artifact["orchestration_evidence"]["exact_selection_mutation"] = {"result": "FAIL"}
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.FAIL
+    assert any(correction.severity == "CRITICAL" for correction in result.corrections)
+
+
+def test_orchestration_evaluation_rejects_unrelated_participant_evidence(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact()
+    artifact["orchestration_evidence"]["participating_workflows"] = ["UNRELATED_WORK"]
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.FAIL
+    assert _dimension(result, "orchestration_participants").status == "FAIL"
+
+
+def test_orchestration_evaluation_missing_authority_evidence_is_insufficient(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact()
+    artifact["orchestration_evidence"].pop("authority")
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert _dimension(result, "authority_compliance").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def test_ordinary_implementation_plan_still_uses_implementation_evaluation(session):
+    freeze = _documentation_freeze(
+        session,
+        [{"target": "docs/runtime/exact.md", "reason": "Docs.", "trigger": "docs", "exact_path_required": True}],
+        affected_files=["src/lucius/pilots/evaluation.py", "docs/runtime/exact.md"],
+    )
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact={
+            "architecture": ["pilot evaluation"],
+            "components": ["pilot evaluation"],
+            "files": ["src/lucius/pilots/evaluation.py", "docs/runtime/exact.md"],
+            "known_paths": ["src/lucius/pilots/evaluation.py", "docs/runtime/exact.md"],
+            "tests": ["pytest"],
+            "documentation": ["docs/runtime/exact.md"],
+            "change_evidence": {
+                "migrations": {"state": "NO_CHANGE_CONFIRMED"},
+                "dependencies": {"state": "NO_CHANGE_CONFIRMED"},
+            },
+            "risk_level": "LOW",
+            "required_authority_level": "L1",
+            "material_work": ["pilot evaluation"],
+        },
+    )
+
+    assert result.evaluation_mode == EngineeringPlanEvaluationMode.PLAN_VS_IMPLEMENTATION
+
+
+def test_mixed_orchestration_plan_requires_control_and_file_evidence(session):
+    freeze = _orchestration_freeze(session, affected_files=["src/lucius/pilots/evaluation.py"])
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(files=[]),
+    )
+
+    assert result.evaluation_mode == EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert _dimension(result, "file_path_prediction").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def _documentation_freeze(session, requirements: list[dict], *, affected_files: list[str]):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.affected_components = ["pilot evaluation"]
+    plan.affected_files = [
+        {"path": path, "status": "LIKELY_EXISTING" if not path.startswith("docs/phases/PHASE_X") else "NEW_PROPOSED"}
+        for path in affected_files
+    ]
+    plan.steps = []
+    plan.documentation_requirements = requirements
+    session.flush()
+    return PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def _documentation_artifact(
+    docs: list[str],
+    *,
+    canonical_targets: list[str] | None = None,
+    categories: list[str] | None = None,
+) -> dict:
+    files = list(docs)
+    return {
+        "architecture": ["pilot evaluation"],
+        "components": ["pilot evaluation"],
+        "files": files,
+        "known_paths": files,
+        "tests": ["pytest"],
+        "documentation": docs,
+        "documentation_evidence": {
+            "paths": docs,
+            "canonical_targets": canonical_targets or [],
+            "categories": categories or [],
+        },
+        "change_evidence": {
+            "migrations": {"state": "NO_CHANGE_CONFIRMED"},
+            "dependencies": {"state": "NO_CHANGE_CONFIRMED"},
+        },
+        "risk_level": "LOW",
+        "required_authority_level": "L1",
+        "material_work": ["pilot evaluation"],
+    }
+
+
+def _orchestration_freeze(session, *, affected_files: list[str] | None = None):
+    _project, _task, _contract, plan = _project_task_plan(session)
+    plan.orchestration_contract_required = True
+    contract = _complete_orchestration_contract()
+    contract["projects"] = ["LPROJ_A", "LPROJ_B"]
+    contract["workflows"] = ["LWORK_A", "LWORK_B"]
+    plan.orchestration_contract = contract
+    plan.adversarial_probes = _complete_adversarial_probes(plan.id)
+    plan.unknowns = [{"statement": "Orchestration evidence must be reconstructed from persisted operational artifacts."}]
+    plan.affected_components = ["global queue", "persistent workflows", "plan freeze", "target isolation", "evaluation"]
+    plan.affected_files = [{"path": path, "status": "LIKELY_EXISTING"} for path in (affected_files or [])]
+    plan.steps = [
+        {
+            "step_id": "STEP-1",
+            "sequence": 1,
+            "title": "Evaluate orchestration evidence",
+            "description": "Evaluate persisted control-plane evidence.",
+            "affected_components": ["evaluation"],
+            "affected_files": list(affected_files or []),
+            "expected_result": "Control-plane evidence is evaluated.",
+            "validation": "Orchestration evaluation dimensions pass or fail closed.",
+        }
+    ]
+    plan.test_strategy = [{"kind": "INTEGRATION", "description": "Evaluate persisted orchestration evidence."}]
+    plan.documentation_requirements = [
+        {
+            "target": "canonical closure report",
+            "reason": "Operational pilot evidence.",
+            "trigger": "pilot closure",
+            "target_type": "CANONICAL_DOCUMENT",
+            "exact_path_required": False,
+            "canonical_target": "canonical closure report",
+        }
+    ]
+    session.flush()
+    return PlanFreezeService(session).freeze(plan_id=plan.id)
+
+
+def _orchestration_artifact(*, files: list[str] | None = None) -> dict:
+    return {
+        "architecture": ["global queue", "persistent workflows", "plan freeze", "target isolation", "evaluation"],
+        "components": ["global queue", "persistent workflows", "plan freeze", "target isolation", "evaluation"],
+        "files": files or [],
+        "known_paths": files or [],
+        "migrations": [],
+        "tests": ["target verification", "full Lucius suite", "POST benchmark"],
+        "documentation": ["canonical closure report"],
+        "change_evidence": {
+            "migrations": {"state": "NO_CHANGE_CONFIRMED"},
+            "dependencies": {"state": "NO_CHANGE_CONFIRMED"},
+        },
+        "risk_level": "LOW",
+        "required_authority_level": "L1",
+        "material_work": ["global queue", "persistent workflows", "plan freeze", "target isolation", "evaluation"],
+        "orchestration_evidence": {
+            "participating_workflows": ["LWORK_A", "LWORK_B"],
+            "participating_projects": ["LPROJ_A", "LPROJ_B"],
+            "pre_mutation_release": {"result": "PASS"},
+            "scheduler_decisions": [
+                {"item_id": "A", "mutation_identity_matches_selection": True},
+                {"item_id": "B", "mutation_identity_matches_selection": True},
+            ],
+            "blockers_capacity_release": {"result": "PASS"},
+            "checkpoints_resumes": [
+                {"checkpoint_id": "LQCHK_A", "resolved": True, "fresh_session_reconstruction": True}
+            ],
+            "priority": {"result": "PASS"},
+            "no_preemption": {"result": "PASS"},
+            "exact_selection_mutation": {"result": "PASS"},
+            "dependency_isolation": {"result": "PASS"},
+            "fresh_process_reconstruction": {"result": "PASS"},
+            "target_isolation": {"result": "PASS"},
+            "provenance_refs": ["LPLAN_000001", "LFREEZE_000001", "LAUDIT_000001", "LQCHK_000001"],
+            "tests": {"result": "PASS"},
+            "documentation": {"result": "PASS"},
+            "authority": {"result": "PASS", "violations": []},
+            "closure_claims": {"result": "PASS"},
+        },
+    }
+
+
+def _dimension(result, name: str, *, required: bool = True):
+    dimension = next((item for item in result.dimensions if item.name == name), None)
+    if required and dimension is None:
+        raise AssertionError(f"missing dimension {name}")
+    return dimension
 
 
 def _complete_orchestration_contract() -> dict:

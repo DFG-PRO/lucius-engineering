@@ -150,6 +150,12 @@ class DocumentationRequirement(BaseModel):
     target: str
     reason: str
     trigger: str
+    target_type: str | None = None
+    exact_path_required: bool | None = None
+    acceptable_paths: list[str] = Field(default_factory=list)
+    acceptable_categories: list[str] = Field(default_factory=list)
+    proposed_path: str | None = None
+    canonical_target: str | None = None
 
 
 class PlanRisk(BaseModel):
