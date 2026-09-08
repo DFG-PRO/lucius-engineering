@@ -36,9 +36,29 @@ from lucius.persistence.orm import (
 from lucius.pilots.workflows import PersistentWorkflowService
 from lucius.projects.service import ProjectRegistryService
 from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
-from lucius.runtime.schemas import ExecutionAdapterResult, RuntimeExecutionContext, RuntimeLoopConfig
+from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
+from lucius.runtime.schemas import (
+    ExecutionAdapterResult,
+    RuntimeExecutionRequest,
+    RuntimeExecutionResult,
+    RuntimeLoopConfig,
+    RuntimePlanReference,
+)
 from lucius.runtime.service import ExecutionRuntimeLoopService
 from lucius.tasks.service import TaskService
+
+
+def _runtime(session, provider=None, planning_adapter=None) -> ExecutionRuntimeLoopService:
+    provider = provider or ScriptedExecutionAdapter()
+    return ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=planning_adapter or ScriptedRuntimePlanningAdapter(),
+        execution_router=ModelExecutionRouter(
+            session,
+            registry=RuntimeProviderRegistry([provider]),
+            actor=Actor.LUCIUS,
+        ),
+    )
 
 
 def test_runtime_loop_plans_freezes_executes_and_continues_between_tasks(session):
@@ -48,10 +68,9 @@ def test_runtime_loop_plans_freezes_executes_and_continues_between_tasks(session
         backlog=[_item("DARWIN-A", order=1), _item("DARWIN-B", order=2)],
     )
 
-    result = ExecutionRuntimeLoopService(
+    result = _runtime(
         session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(
+        ScriptedExecutionAdapter(
             {
                 "DARWIN-A": ExecutionAdapterResult(
                     outcome="COMPLETED",
@@ -95,10 +114,9 @@ def test_runtime_blocks_one_item_and_releases_capacity_for_next_workflow(session
     blocked = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-BLOCKED", priority="HIGH")])
     alternative = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-ALT", priority="NORMAL")])
 
-    result = ExecutionRuntimeLoopService(
+    result = _runtime(
         session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(
+        ScriptedExecutionAdapter(
             {
                 "DARWIN-BLOCKED": ExecutionAdapterResult(
                     outcome="BLOCKED",
@@ -142,14 +160,14 @@ def test_runtime_counts_ready_to_resume_without_repeating_completed_substeps(ses
         ],
     )
 
-    result = ExecutionRuntimeLoopService(
+    result = _runtime(
         session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(
+        ScriptedExecutionAdapter(
             {
                 "DARWIN-RESUME": ExecutionAdapterResult(
                     outcome="COMPLETED",
                     completed_substeps=["already inspected repo", "finished resumed work"],
+                    verification=[{"result": "PASS", "scope": "resume"}],
                     active_execution_seconds=0.5,
                 )
             }
@@ -167,11 +185,7 @@ def test_runtime_execution_backend_is_replaceable(session):
     workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-CUSTOM")])
     adapter = CustomExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert adapter.contexts[0].item_id == "DARWIN-CUSTOM"
     assert result.provider_ids == ["custom-test-adapter"]
@@ -181,20 +195,16 @@ def test_runtime_execution_backend_is_replaceable(session):
 def test_runtime_blocks_fail_closed_when_execution_adapter_raises(session):
     workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-RAISES")])
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=RaisingExecutionAdapter(),
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, RaisingExecutionAdapter()).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.status == "FAILED"
     assert result.blocked_tasks == 1
     assert result.completed_tasks == 0
-    assert result.stopped_reason == "Execution adapter raised before returning a canonical result."
+    assert "boom for DARWIN-RAISES" in result.stopped_reason
     assert row.active_task_id is None
     assert row.task_backlog[0]["state"] == QueueWorkItemState.WAITING_HUMAN.value
-    assert row.task_backlog[0]["blocker_category"] == "EXECUTION_ADAPTER_EXCEPTION"
+    assert row.task_backlog[0]["blocker_category"] == "PROVIDER_EXCEPTION"
     assert row.task_backlog[0]["current_block_checkpoint_id"]
 
 
@@ -207,11 +217,7 @@ def test_runtime_plan_and_result_survive_fresh_session(tmp_path: Path):
     with Session() as session:
         workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-PERSIST")])
         workflow_id = workflow.id
-        result = ExecutionRuntimeLoopService(
-            session,
-            planning_adapter=ScriptedRuntimePlanningAdapter(),
-            execution_adapter=ScriptedExecutionAdapter(),
-        ).run(RuntimeLoopConfig(workflow_ids=[workflow_id], max_tasks=1))
+        result = _runtime(session).run(RuntimeLoopConfig(workflow_ids=[workflow_id], max_tasks=1))
         freeze_id = result.plan_references[0].plan_freeze_id
         session.commit()
 
@@ -225,6 +231,12 @@ def test_runtime_plan_and_result_survive_fresh_session(tmp_path: Path):
         assert (
             session.query(AuditEventORM)
             .filter(AuditEventORM.event_type == "NATIVE_RUNTIME_LOOP_COMPLETED")
+            .count()
+            == 1
+        )
+        assert (
+            session.query(AuditEventORM)
+            .filter(AuditEventORM.event_type == "MODEL_EXECUTION_ROUTING_DECISION")
             .count()
             == 1
         )
@@ -283,11 +295,7 @@ def test_runtime_missing_repository_blocks_before_provider_dispatch(session):
     )
     adapter = CountingExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.status == "FAILED"
@@ -313,11 +321,7 @@ def test_runtime_repository_attachment_without_rereadiness_still_blocks_dispatch
     )
     adapter = CountingExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert result.status == "FAILED"
     assert adapter.calls == []
@@ -339,11 +343,7 @@ def test_runtime_explicit_rereadiness_after_repository_attachment_allows_dispatc
     ready = TaskService(session).mark_ready(workflow.task_id, actor=Actor.LUCIUS)
     adapter = CountingExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert ready.valid is True
     assert result.status == "COMPLETED"
@@ -370,15 +370,37 @@ def test_runtime_stale_readiness_after_contract_change_blocks_dispatch(session):
     )
     adapter = CountingExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert result.status == "FAILED"
     assert adapter.calls == []
     assert "readiness is stale" in result.stopped_reason
+
+
+def test_runtime_missing_frozen_plan_blocks_before_router_dispatch(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-NO-FREEZE")])
+    workflow_row = session.get(PersistentWorkflowORM, workflow.id)
+    workflow_row.plan_id = None
+    workflow_row.plan_freeze_id = None
+    workflow_row.workflow_state = PersistentWorkflowState.PLAN_READY.value
+    session.flush()
+    adapter = CountingExecutionAdapter()
+
+    result = _runtime(
+        session,
+        adapter,
+        planning_adapter=NoopRuntimePlanningAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "FAILED"
+    assert adapter.calls == []
+    assert "no frozen EngineeringPlan" in result.stopped_reason
+    assert (
+        session.query(AuditEventORM)
+        .filter(AuditEventORM.event_type == "MODEL_EXECUTION_ROUTING_REQUEST_ACCEPTED")
+        .count()
+        == 0
+    )
 
 
 def test_runtime_selected_task_identity_mismatch_blocks_before_provider_dispatch(session):
@@ -389,11 +411,7 @@ def test_runtime_selected_task_identity_mismatch_blocks_before_provider_dispatch
     )
     adapter = CountingExecutionAdapter()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=adapter,
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert result.status == "FAILED"
     assert adapter.calls == []
@@ -415,11 +433,7 @@ def test_runtime_resume_blocked_interval_uses_canonical_queue_timestamps(session
         ],
     )
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(),
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     assert result.status == "COMPLETED"
     assert result.resumed_tasks == 1
@@ -433,11 +447,7 @@ def test_runtime_partial_workflow_does_not_normalize_parent_task_early(session):
         backlog=[_item("DARWIN-PARTIAL-A", order=1), _item("DARWIN-PARTIAL-B", order=2)],
     )
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(),
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.completed_tasks == 1
@@ -448,11 +458,7 @@ def test_runtime_partial_workflow_does_not_normalize_parent_task_early(session):
 
 def test_runtime_completed_workflow_reconciliation_is_idempotent(session):
     workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-IDEMPOTENT")])
-    service = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(),
-    )
+    service = _runtime(session)
     first = service.run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
     audit_count = (
         session.query(AuditEventORM)
@@ -487,11 +493,7 @@ def test_runtime_startup_reconciles_preexisting_completed_workflow_parent_task(s
     row.workflow_state = PersistentWorkflowState.PLAN_READY.value
     session.flush()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(),
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.status == "IDLE"
@@ -509,14 +511,14 @@ def test_runtime_completed_workflow_with_missing_required_docs_becomes_documenta
         documentation_required=True,
     )
 
-    result = ExecutionRuntimeLoopService(
+    result = _runtime(
         session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(
+        ScriptedExecutionAdapter(
             {
                 "DARWIN-DOCS-PENDING": ExecutionAdapterResult(
                     outcome="COMPLETED",
                     completed_substeps=["completed implementation without canonical documentation evidence"],
+                    verification=[{"result": "PASS", "scope": "implementation"}],
                     active_execution_seconds=0.25,
                 )
             }
@@ -535,11 +537,7 @@ def test_runtime_completed_workflow_reconciliation_preserves_historical_rows_wit
     workflow_row.task_id = None
     session.flush()
 
-    result = ExecutionRuntimeLoopService(
-        session,
-        planning_adapter=ScriptedRuntimePlanningAdapter(),
-        execution_adapter=ScriptedExecutionAdapter(),
-    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    result = _runtime(session).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.status == "FAILED"
@@ -548,41 +546,57 @@ def test_runtime_completed_workflow_reconciliation_preserves_historical_rows_wit
     assert session.get(TaskORM, workflow.task_id).status == TaskStatus.READY.value
 
 
-class CustomExecutionAdapter:
-    provider_id = "custom-test-adapter"
-
+class CustomExecutionAdapter(ScriptedExecutionAdapter):
     def __init__(self):
-        self.contexts: list[RuntimeExecutionContext] = []
+        super().__init__(provider_id="custom-test-adapter")
+        self.contexts: list[RuntimeExecutionRequest] = []
 
-    def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
-        self.contexts.append(context)
-        return ExecutionAdapterResult(
-            outcome="COMPLETED",
+    def invoke(self, request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
+        self.contexts.append(request)
+        return RuntimeExecutionResult(
+            execution_id=request.execution_id,
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            routing_decision_id=request.routing_decision_id,
+            status="COMPLETED",
             completed_substeps=["custom adapter completed work"],
+            verification=[{"result": "PASS", "provider": self.provider_id}],
             active_execution_seconds=0.25,
         )
 
 
-class RaisingExecutionAdapter:
-    provider_id = "raising-test-adapter"
-
-    def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
-        raise RuntimeError(f"boom for {context.item_id}")
-
-
-class CountingExecutionAdapter:
-    provider_id = "counting-test-adapter"
-
+class RaisingExecutionAdapter(ScriptedExecutionAdapter):
     def __init__(self):
+        super().__init__(provider_id="raising-test-adapter")
+
+    def invoke(self, request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
+        raise RuntimeError(f"boom for {request.item_id}")
+
+
+class CountingExecutionAdapter(ScriptedExecutionAdapter):
+    def __init__(self):
+        super().__init__(provider_id="counting-test-adapter")
         self.calls: list[str] = []
 
-    def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
-        self.calls.append(context.item_id)
-        return ExecutionAdapterResult(
-            outcome="COMPLETED",
-            completed_substeps=[f"{context.item_id}: safely dispatched"],
+    def invoke(self, request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
+        self.calls.append(request.item_id)
+        return RuntimeExecutionResult(
+            execution_id=request.execution_id,
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            routing_decision_id=request.routing_decision_id,
+            status="COMPLETED",
+            completed_substeps=[f"{request.item_id}: safely dispatched"],
+            verification=[{"result": "PASS", "provider": self.provider_id}],
             active_execution_seconds=0.25,
         )
+
+
+class NoopRuntimePlanningAdapter:
+    provider_id = "noop-planning-adapter"
+
+    def prepare_workflow_plan(self, session, workflow_id):
+        return RuntimePlanReference(workflow_id=workflow_id, plan_id="", plan_freeze_id="")
 
 
 def _workflow(

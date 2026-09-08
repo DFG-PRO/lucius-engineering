@@ -245,15 +245,20 @@ def _run_command(args: argparse.Namespace) -> None:
             print(result.model_dump_json(indent=2))
         elif args.command == "run-runtime-loop":
             from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
+            from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
             from lucius.runtime.schemas import RuntimeLoopConfig
             from lucius.runtime.service import ExecutionRuntimeLoopService
 
-            execution_adapter = ScriptedExecutionAdapter()
-            execution_adapter.provider_id = args.provider_id
+            execution_provider = ScriptedExecutionAdapter(provider_id=args.provider_id)
+            execution_router = ModelExecutionRouter(
+                session,
+                registry=RuntimeProviderRegistry([execution_provider]),
+                actor=Actor.LUCIUS,
+            )
             result = ExecutionRuntimeLoopService(
                 session,
                 planning_adapter=ScriptedRuntimePlanningAdapter(),
-                execution_adapter=execution_adapter,
+                execution_router=execution_router,
                 actor=Actor.LUCIUS,
             ).run(
                 RuntimeLoopConfig(

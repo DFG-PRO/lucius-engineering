@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
@@ -11,6 +12,20 @@ class RuntimeExecutionOutcome(StrEnum):
     BLOCKED = "BLOCKED"
     ESCALATED = "ESCALATED"
     FAILED = "FAILED"
+
+
+class RuntimeProviderStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    DISABLED = "DISABLED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class RuntimeRetryability(StrEnum):
+    RETRYABLE = "RETRYABLE"
+    FAILOVERABLE = "FAILOVERABLE"
+    RETRYABLE_OR_FAILOVERABLE = "RETRYABLE_OR_FAILOVERABLE"
+    NON_RETRYABLE = "NON_RETRYABLE"
 
 
 class RuntimeLoopStatus(StrEnum):
@@ -66,6 +81,72 @@ class RuntimeExecutionContext(BaseModel):
     queue_item: dict[str, Any] = Field(default_factory=dict)
 
 
+class RuntimeProviderModel(BaseModel):
+    model_id: str
+    model_version: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    context_limit_tokens: int | None = None
+    cost_class: str | None = None
+    latency_class: str | None = None
+
+
+class RuntimeProviderRegistration(BaseModel):
+    provider_id: str
+    provider_version: str = "unknown"
+    status: RuntimeProviderStatus = RuntimeProviderStatus.ACTIVE
+    capabilities: list[str] = Field(default_factory=list)
+    supported_task_classes: list[str] = Field(default_factory=list)
+    supports_code_modification: bool = False
+    supported_workspace_kinds: list[str] = Field(default_factory=list)
+    supported_isolation_modes: list[str] = Field(default_factory=list)
+    supported_tools: list[str] = Field(default_factory=list)
+    max_context_tokens: int | None = None
+    models: list[RuntimeProviderModel] = Field(default_factory=list)
+    available: bool = True
+    retry_eligible: bool = True
+    failover_eligible: bool = True
+    cost_class: str | None = None
+    latency_class: str | None = None
+    policy_labels: list[str] = Field(default_factory=list)
+    allowed_project_ids: list[str] = Field(default_factory=list)
+    allowed_repository_ids: list[str] = Field(default_factory=list)
+    reliability_score: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("reliability_score")
+    @classmethod
+    def reliability_score_range(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("reliability_score must be between 0 and 100")
+        return value
+
+
+class RuntimeExecutionRequest(BaseModel):
+    execution_id: str
+    task_id: str
+    workflow_id: str
+    item_id: str
+    logical_task_id: str
+    plan_id: str
+    plan_freeze_id: str
+    project_id: str | None = None
+    repository_id: str | None = None
+    isolated_workspace: str
+    task_intent: str
+    allowed_mutation_scope: str
+    required_capabilities: list[str] = Field(default_factory=list)
+    task_type: str | None = None
+    tool_requirements: list[str] = Field(default_factory=list)
+    isolation_mode: str = "ISOLATED_WORKTREE"
+    context_limits: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int | None = None
+    budget_policy: dict[str, Any] = Field(default_factory=dict)
+    release_evidence_refs: list[str] = Field(default_factory=list)
+    routing_decision_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ExecutionAdapterResult(BaseModel):
     outcome: RuntimeExecutionOutcome
     completed_substeps: list[str] = Field(default_factory=list)
@@ -76,12 +157,33 @@ class ExecutionAdapterResult(BaseModel):
     external_capacity_wait_seconds: float = 0.0
     human_wait_seconds: float = 0.0
     blocked_task_seconds: float = 0.0
+    latency_ms: int | None = None
     retries: int = 0
     escalations: int = 0
     blocking_reason: str | None = None
     blocker_category: str | None = None
     resume_condition: str | None = None
     error: str | None = None
+    execution_id: str | None = None
+    provider_id: str | None = None
+    provider_version: str | None = None
+    model_id: str | None = None
+    model_version: str | None = None
+    routing_decision_id: str | None = None
+    provider_native_status: str | None = None
+    retryability: RuntimeRetryability = RuntimeRetryability.NON_RETRYABLE
+    failure_class: str | None = None
+    provider_error_metadata: dict[str, Any] = Field(default_factory=dict)
+    fallback_used: bool = False
+    failover_from_provider_id: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: float | None = None
+    cost_currency: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    verification_handoff_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator(
         "active_execution_seconds",
@@ -94,6 +196,71 @@ class ExecutionAdapterResult(BaseModel):
         if value < 0:
             raise ValueError("runtime durations must be non-negative")
         return value
+
+
+class RuntimeExecutionResult(BaseModel):
+    execution_id: str
+    provider_id: str
+    provider_version: str = "unknown"
+    model_id: str | None = None
+    model_version: str | None = None
+    routing_decision_id: str | None = None
+    status: RuntimeExecutionOutcome
+    provider_native_status: str | None = None
+    output_artifact_refs: list[dict[str, Any]] = Field(default_factory=list)
+    mutation_summary: str | None = None
+    completed_substeps: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    verification: list[dict[str, Any]] = Field(default_factory=list)
+    documentation: list[dict[str, Any]] = Field(default_factory=list)
+    active_execution_seconds: float = 0.0
+    external_capacity_wait_seconds: float = 0.0
+    human_wait_seconds: float = 0.0
+    blocked_task_seconds: float = 0.0
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: float | None = None
+    cost_currency: str | None = None
+    retryability: RuntimeRetryability = RuntimeRetryability.NON_RETRYABLE
+    failure_class: str | None = None
+    provider_error_metadata: dict[str, Any] = Field(default_factory=dict)
+    fallback_used: bool = False
+    failover_from_provider_id: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    verification_handoff_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator(
+        "active_execution_seconds",
+        "external_capacity_wait_seconds",
+        "human_wait_seconds",
+        "blocked_task_seconds",
+    )
+    @classmethod
+    def runtime_result_duration_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("runtime durations must be non-negative")
+        return value
+
+
+class RuntimeProviderCandidateEvaluation(BaseModel):
+    provider_id: str
+    eligible: bool
+    reasons: list[str] = Field(default_factory=list)
+    selected_model_id: str | None = None
+
+
+class RuntimeRoutingDecision(BaseModel):
+    routing_decision_id: str
+    execution_id: str
+    selected_provider_id: str | None = None
+    selected_model_id: str | None = None
+    fallback_provider_ids: list[str] = Field(default_factory=list)
+    candidates: list[RuntimeProviderCandidateEvaluation] = Field(default_factory=list)
+    policy_reasons: list[str] = Field(default_factory=list)
+    no_eligible_reason: str | None = None
 
 
 class RuntimeTaskExecutionRecord(BaseModel):

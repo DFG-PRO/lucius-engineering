@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Protocol
 
 from sqlalchemy import select
@@ -28,7 +29,15 @@ from lucius.planning.schemas import (
     PlanStep,
     TestRecommendation,
 )
-from lucius.runtime.schemas import ExecutionAdapterResult, RuntimeExecutionContext, RuntimePlanReference
+from lucius.runtime.schemas import (
+    ExecutionAdapterResult,
+    RuntimeExecutionContext,
+    RuntimeExecutionRequest,
+    RuntimeExecutionResult,
+    RuntimePlanReference,
+    RuntimeProviderModel,
+    RuntimeProviderRegistration,
+)
 
 
 class RuntimePlanningAdapter(Protocol):
@@ -42,6 +51,16 @@ class ExecutionAdapter(Protocol):
     provider_id: str
 
     def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
+        ...
+
+
+class RuntimeExecutionProvider(Protocol):
+    registration: RuntimeProviderRegistration
+
+    def is_available(self) -> bool:
+        ...
+
+    def invoke(self, request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
         ...
 
 
@@ -97,15 +116,94 @@ class ScriptedRuntimePlanningAdapter:
 
 
 class ScriptedExecutionAdapter:
-    provider_id = "scripted-execution-adapter"
-
-    def __init__(self, outcomes_by_item_id: Mapping[str, ExecutionAdapterResult] | None = None):
+    def __init__(
+        self,
+        outcomes_by_item_id: Mapping[str, ExecutionAdapterResult | RuntimeExecutionResult] | None = None,
+        *,
+        provider_id: str = "scripted-execution-adapter",
+        provider_version: str = "1",
+        available: bool = True,
+        capabilities: list[str] | None = None,
+        supported_tools: list[str] | None = None,
+        reliability_score: int = 50,
+        model_id: str | None = "scripted-runtime-model",
+    ):
+        self.provider_id = provider_id
+        self.provider_version = provider_version
+        self.available = available
         self._outcomes_by_item_id = dict(outcomes_by_item_id or {})
+        models = [
+            RuntimeProviderModel(
+                model_id=model_id,
+                model_version=provider_version,
+                capabilities=capabilities or ["code_modification"],
+            )
+        ] if model_id else []
+        self.registration = RuntimeProviderRegistration(
+            provider_id=provider_id,
+            provider_version=provider_version,
+            capabilities=capabilities or ["code_modification"],
+            supported_task_classes=["engineering"],
+            supports_code_modification=True,
+            supported_workspace_kinds=["local_git_worktree"],
+            supported_isolation_modes=["ISOLATED_WORKTREE"],
+            supported_tools=supported_tools or [],
+            models=models,
+            available=available,
+            retry_eligible=True,
+            failover_eligible=True,
+            cost_class="FREE",
+            latency_class="LOW",
+            policy_labels=["deterministic-test-provider"],
+            reliability_score=reliability_score,
+        )
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def invoke(self, request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
+        started_at = datetime.now(timezone.utc)
+        result = self._outcomes_by_item_id.get(request.item_id)
+        if isinstance(result, RuntimeExecutionResult):
+            return result.model_copy(
+                update={
+                    "execution_id": request.execution_id,
+                    "provider_id": self.provider_id,
+                    "provider_version": self.provider_version,
+                    "model_id": result.model_id or _default_model_id(self.registration),
+                    "started_at": result.started_at or started_at,
+                    "completed_at": result.completed_at or datetime.now(timezone.utc),
+                }
+            )
+        adapter_result = result or ExecutionAdapterResult(
+            outcome="COMPLETED",
+            completed_substeps=[f"{request.item_id}: executed by scripted adapter"],
+            evidence=[
+                {
+                    "type": "scripted_runtime_execution",
+                    "workflow_id": request.workflow_id,
+                    "item_id": request.item_id,
+                    "provider_id": self.provider_id,
+                }
+            ],
+            verification=[{"type": "scripted_verification", "result": "PASS"}],
+            active_execution_seconds=0.001,
+        )
+        return _runtime_result_from_adapter(
+            adapter_result,
+            request=request,
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            model_id=_default_model_id(self.registration),
+            started_at=started_at,
+        )
 
     def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
         result = self._outcomes_by_item_id.get(context.item_id)
-        if result is not None:
+        if isinstance(result, ExecutionAdapterResult):
             return result
+        if isinstance(result, RuntimeExecutionResult):
+            return ExecutionAdapterResult(outcome=result.status, completed_substeps=result.completed_substeps)
         return ExecutionAdapterResult(
             outcome="COMPLETED",
             completed_substeps=[f"{context.item_id}: executed by scripted adapter"],
@@ -120,6 +218,57 @@ class ScriptedExecutionAdapter:
             verification=[{"type": "scripted_verification", "result": "PASS"}],
             active_execution_seconds=0.001,
         )
+
+
+def _default_model_id(registration: RuntimeProviderRegistration) -> str | None:
+    return registration.models[0].model_id if registration.models else None
+
+
+def _runtime_result_from_adapter(
+    adapter_result: ExecutionAdapterResult,
+    *,
+    request: RuntimeExecutionRequest,
+    provider_id: str,
+    provider_version: str,
+    model_id: str | None,
+    started_at: datetime,
+) -> RuntimeExecutionResult:
+    return RuntimeExecutionResult(
+        execution_id=request.execution_id,
+        provider_id=provider_id,
+        provider_version=provider_version,
+        model_id=model_id,
+        model_version=provider_version if model_id else None,
+        routing_decision_id=request.routing_decision_id,
+        status=adapter_result.outcome,
+        provider_native_status=adapter_result.provider_native_status or adapter_result.outcome.value,
+        output_artifact_refs=adapter_result.evidence,
+        mutation_summary=adapter_result.blocking_reason,
+        completed_substeps=adapter_result.completed_substeps,
+        evidence=adapter_result.evidence,
+        verification=adapter_result.verification,
+        documentation=adapter_result.documentation,
+        active_execution_seconds=adapter_result.active_execution_seconds,
+        external_capacity_wait_seconds=adapter_result.external_capacity_wait_seconds,
+        human_wait_seconds=adapter_result.human_wait_seconds,
+        blocked_task_seconds=adapter_result.blocked_task_seconds,
+        latency_ms=adapter_result.latency_ms,
+        input_tokens=adapter_result.input_tokens,
+        output_tokens=adapter_result.output_tokens,
+        total_tokens=adapter_result.total_tokens,
+        estimated_cost=adapter_result.estimated_cost,
+        cost_currency=adapter_result.cost_currency,
+        retryability=adapter_result.retryability,
+        failure_class=adapter_result.failure_class or adapter_result.blocker_category,
+        provider_error_metadata=adapter_result.provider_error_metadata
+        or ({"message": adapter_result.error} if adapter_result.error else {}),
+        fallback_used=adapter_result.fallback_used,
+        failover_from_provider_id=adapter_result.failover_from_provider_id,
+        started_at=started_at,
+        completed_at=datetime.now(timezone.utc),
+        verification_handoff_metadata=adapter_result.verification_handoff_metadata
+        or ({"resume_condition": adapter_result.resume_condition} if adapter_result.resume_condition else {}),
+    )
 
 
 def _planning_context_from_workflow(session: Session, workflow: PersistentWorkflowORM) -> PlanningContext:

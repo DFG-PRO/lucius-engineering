@@ -23,7 +23,8 @@ from lucius.persistence.orm import (
 )
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.tasks.service import TaskService
-from lucius.runtime.adapters import ExecutionAdapter, RuntimePlanningAdapter
+from lucius.runtime.adapters import RuntimePlanningAdapter
+from lucius.runtime.router import ModelExecutionRouter
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
     ExecutionRuntimeLoopResult,
@@ -49,12 +50,12 @@ class ExecutionRuntimeLoopService:
         session: Session,
         *,
         planning_adapter: RuntimePlanningAdapter,
-        execution_adapter: ExecutionAdapter,
+        execution_router: ModelExecutionRouter,
         actor: Actor = Actor.LUCIUS,
     ):
         self.session = session
         self.planning_adapter = planning_adapter
-        self.execution_adapter = execution_adapter
+        self.execution_router = execution_router
         self.actor = actor
         self.audit = AuditService(session)
         self.queue = NonBlockingQueueService(session)
@@ -96,15 +97,16 @@ class ExecutionRuntimeLoopService:
                     result.stopped_reason = pre_dispatch_error
                     break
 
-                provider_ids.append(self.execution_adapter.provider_id)
-                adapter_result = self._execute_adapter_fail_closed(context)
+                adapter_result = self._execute_router_fail_closed(context)
+                if adapter_result.provider_id:
+                    provider_ids.append(adapter_result.provider_id)
                 self._add_observability(result, adapter_result)
                 result.task_records.append(
                     RuntimeTaskExecutionRecord(
                         workflow_id=context.workflow_id,
                         item_id=context.item_id,
                         project_id=context.project_id,
-                        provider_id=self.execution_adapter.provider_id,
+                        provider_id=adapter_result.provider_id or self.execution_router.router_id,
                         outcome=adapter_result.outcome,
                         completed_substeps=adapter_result.completed_substeps,
                         evidence_count=len(adapter_result.evidence),
@@ -294,21 +296,22 @@ class ExecutionRuntimeLoopService:
             actor=self.actor,
         )
 
-    def _execute_adapter_fail_closed(
+    def _execute_router_fail_closed(
         self,
         context: RuntimeExecutionContext,
     ) -> ExecutionAdapterResult:
         started_at = time.monotonic()
         try:
-            return self.execution_adapter.execute(context)
+            return self.execution_router.execute(context)
         except Exception as error:
             return ExecutionAdapterResult(
                 outcome="FAILED",
                 active_execution_seconds=max(0.0, time.monotonic() - started_at),
                 error=f"{error.__class__.__name__}: {error}",
-                blocker_category="EXECUTION_ADAPTER_EXCEPTION",
-                blocking_reason="Execution adapter raised before returning a canonical result.",
-                resume_condition="Repair the adapter or task implementation and resume from the blocked queue item.",
+                provider_id=self.execution_router.router_id,
+                blocker_category="EXECUTION_ROUTER_EXCEPTION",
+                blocking_reason="Execution router raised before returning a canonical result.",
+                resume_condition="Repair the router/provider path and resume from the blocked queue item.",
             )
 
     def _add_observability(
@@ -340,17 +343,27 @@ class ExecutionRuntimeLoopService:
             metadata={
                 "workflow_id": context.workflow_id,
                 "item_id": context.item_id,
-                "provider_id": self.execution_adapter.provider_id,
+                "provider_id": adapter_result.provider_id or self.execution_router.router_id,
+                "provider_version": adapter_result.provider_version,
+                "model_id": adapter_result.model_id,
+                "model_version": adapter_result.model_version,
+                "routing_decision_id": adapter_result.routing_decision_id,
                 "completed_substeps": adapter_result.completed_substeps,
                 "evidence": adapter_result.evidence,
                 "verification": adapter_result.verification,
                 "documentation": adapter_result.documentation,
                 "active_execution_seconds": adapter_result.active_execution_seconds,
+                "latency_ms": adapter_result.latency_ms,
+                "input_tokens": adapter_result.input_tokens,
+                "output_tokens": adapter_result.output_tokens,
+                "total_tokens": adapter_result.total_tokens,
+                "estimated_cost": adapter_result.estimated_cost,
                 "external_capacity_wait_seconds": adapter_result.external_capacity_wait_seconds,
                 "human_wait_seconds": adapter_result.human_wait_seconds,
                 "blocked_task_seconds": adapter_result.blocked_task_seconds,
                 "retries": adapter_result.retries,
                 "escalations": adapter_result.escalations,
+                "fallback_used": adapter_result.fallback_used,
             },
         )
 
