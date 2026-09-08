@@ -7,6 +7,9 @@ from lucius.runtime.adapters import (
 )
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.schemas import (
+    DispatchCandidate,
+    DispatchCandidateEvaluation,
+    DispatchSelection,
     ExecutionAdapterResult,
     ExecutionRuntimeLoopResult,
     RuntimeExecutionContext,
@@ -18,13 +21,18 @@ from lucius.runtime.schemas import (
     RuntimeRoutingDecision,
 )
 from lucius.runtime.service import ExecutionRuntimeLoopService
+from lucius.runtime.dispatcher import MultiProjectDispatcher
 
 __all__ = [
+    "DispatchCandidate",
+    "DispatchCandidateEvaluation",
+    "DispatchSelection",
     "ExecutionAdapter",
     "ExecutionAdapterResult",
     "ExecutionRuntimeLoopResult",
     "ExecutionRuntimeLoopService",
     "ModelExecutionRouter",
+    "MultiProjectDispatcher",
     "RuntimeExecutionContext",
     "RuntimeExecutionProvider",
     "RuntimeExecutionRequest",

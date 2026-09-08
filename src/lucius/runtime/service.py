@@ -21,9 +21,11 @@ from lucius.persistence.orm import (
     TaskORM,
     utc_now,
 )
+from lucius.persistence.json_fields import set_json_field
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.tasks.service import TaskService
 from lucius.runtime.adapters import RuntimePlanningAdapter
+from lucius.runtime.dispatcher import MultiProjectDispatcher
 from lucius.runtime.router import ModelExecutionRouter
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
@@ -51,6 +53,7 @@ class ExecutionRuntimeLoopService:
         *,
         planning_adapter: RuntimePlanningAdapter,
         execution_router: ModelExecutionRouter,
+        dispatcher: MultiProjectDispatcher | None = None,
         actor: Actor = Actor.LUCIUS,
     ):
         self.session = session
@@ -59,6 +62,7 @@ class ExecutionRuntimeLoopService:
         self.actor = actor
         self.audit = AuditService(session)
         self.queue = NonBlockingQueueService(session)
+        self.dispatcher = dispatcher or MultiProjectDispatcher(session, actor=actor)
 
     def run(self, config: RuntimeLoopConfig) -> ExecutionRuntimeLoopResult:
         if config.dispatcher_count != 1:
@@ -67,6 +71,7 @@ class ExecutionRuntimeLoopService:
         started_at = time.monotonic()
         result = ExecutionRuntimeLoopResult(status=RuntimeLoopStatus.IDLE)
         provider_ids: list[str] = []
+        project_ids: list[str] = []
         workflow_ids = config.workflow_ids
 
         plan_references = self._prepare_workflow_plans(workflow_ids)
@@ -74,17 +79,29 @@ class ExecutionRuntimeLoopService:
 
         try:
             while result.selected_tasks < config.max_tasks:
-                selection = self.queue.start_global_next(workflow_ids, actor=self.actor)
-                if selection.selected_workflow_id is None or selection.selected_item_id is None:
-                    result.status = RuntimeLoopStatus.IDLE if result.selected_tasks == 0 else RuntimeLoopStatus.COMPLETED
-                    result.stopped_reason = selection.reason
+                selection = self.dispatcher.start_next(workflow_ids)
+                result.scheduler_decisions.append(selection.model_dump(mode="json"))
+                if selection.selected is None:
+                    dispatch_block_reason = _dispatch_fail_closed_reason(selection)
+                    if dispatch_block_reason:
+                        self._block_dispatch_selection_failure(selection, dispatch_block_reason)
+                        result.blocked_tasks += 1
+                        result.status = RuntimeLoopStatus.FAILED
+                        result.stopped_reason = dispatch_block_reason
+                    else:
+                        result.status = RuntimeLoopStatus.IDLE if result.selected_tasks == 0 else RuntimeLoopStatus.COMPLETED
+                        result.stopped_reason = selection.reason
                     break
 
                 context = self._execution_context(
-                    workflow_id=selection.selected_workflow_id,
-                    item_id=selection.selected_item_id,
+                    workflow_id=selection.selected.workflow_id,
+                    item_id=selection.selected.item_id,
                 )
                 result.selected_tasks += 1
+                if context.project_id:
+                    project_ids.append(context.project_id)
+                    if len(project_ids) >= 2 and project_ids[-1] != project_ids[-2]:
+                        result.project_switches += 1
                 if selection.started_previous_state == QueueWorkItemState.READY_TO_RESUME.value:
                     result.resumed_tasks += 1
                     result.blocked_task_time_seconds += _blocked_interval_seconds(context.queue_item)
@@ -148,6 +165,7 @@ class ExecutionRuntimeLoopService:
             )
         finally:
             result.provider_ids = list(dict.fromkeys(provider_ids))
+            result.project_ids = list(dict.fromkeys(project_ids))
             result.wall_clock_duration_seconds = max(0.0, time.monotonic() - started_at)
             self.audit.record(
                 event_type="NATIVE_RUNTIME_LOOP_COMPLETED",
@@ -272,6 +290,46 @@ class ExecutionRuntimeLoopService:
             work_completed=[],
             relevant_artifacts=[],
             actor=self.actor,
+        )
+
+    def _block_dispatch_selection_failure(self, selection, reason: str) -> None:
+        evaluation = _first_dispatch_fail_closed_evaluation(selection)
+        if evaluation is None:
+            return
+        candidate = evaluation.candidate
+        workflow = self.session.get(PersistentWorkflowORM, candidate.workflow_id)
+        if workflow is None:
+            return
+        items = [dict(item) for item in workflow.task_backlog]
+        try:
+            item = _queue_item(items, candidate.item_id)
+        except ExecutionRuntimeLoopError:
+            return
+        item["state"] = QueueWorkItemState.WAITING_HUMAN.value
+        item["version"] = int(item.get("version", 0)) + 1
+        item["updated_at"] = utc_now().isoformat()
+        item["blocking_reason"] = reason
+        item["blocker_category"] = BlockerCode.AUTHORITY_INSUFFICIENT.value
+        item["resume_condition"] = "Run canonical readiness/release validation successfully before retrying dispatch."
+        workflow.active_task_id = None
+        set_json_field(workflow, "task_backlog", items)
+        workflow.updated_at = utc_now()
+        self.session.flush()
+        self.audit.record(
+            event_type="NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED",
+            actor=self.actor.value,
+            project_id=candidate.project_id,
+            repository_id=candidate.repository_id,
+            task_id=candidate.task_id,
+            action="validate_dispatch_selection_release",
+            result="BLOCKED",
+            metadata={
+                "workflow_id": candidate.workflow_id,
+                "item_id": candidate.item_id,
+                "reason": reason,
+                "dispatcher_cycle_id": selection.cycle_id,
+                "candidate_reasons": evaluation.reasons,
+            },
         )
 
     def _block_for_non_completion(
@@ -577,3 +635,46 @@ def _status_for_non_completion(adapter_result: ExecutionAdapterResult) -> Runtim
     if adapter_result.outcome.value == "FAILED":
         return RuntimeLoopStatus.FAILED
     return RuntimeLoopStatus.BLOCKED
+
+
+def _dispatch_fail_closed_reason(selection) -> str | None:
+    evaluation = _first_dispatch_fail_closed_evaluation(selection)
+    if evaluation is None:
+        return None
+    for reason in evaluation.reasons:
+        if reason.startswith("TASK_NOT_READY:"):
+            return f"Task {evaluation.candidate.task_id} is not READY for execution: {reason.split(':', 1)[1]}"
+        if reason == "FROZEN_PLAN_MISSING":
+            return "Selected workflow has no frozen EngineeringPlan/PlanFreeze references."
+        if reason == "TASK_MISSING":
+            return "Persistent workflow has no canonical task bound for pre-mutation release."
+        if reason == "REPOSITORY_MISSING":
+            return "Selected workflow repository is not attached to the task project."
+        if reason == "REPOSITORY_UNATTACHED":
+            return "Selected workflow repository is not attached to the task project."
+        return reason
+    return None
+
+
+def _first_dispatch_fail_closed_evaluation(selection):
+    critical_reasons = {
+        "PROJECT_MISSING",
+        "TASK_MISSING",
+        "TASK_PROJECT_MISMATCH",
+        "TASK_NOT_READY",
+        "WORKFLOW_PROJECT_MISSING",
+        "REPOSITORY_MISSING",
+        "REPOSITORY_PROJECT_MISMATCH",
+        "REPOSITORY_UNATTACHED",
+        "FROZEN_PLAN_MISSING",
+        "PLAN_FREEZE_PROJECT_OR_TASK_MISMATCH",
+        "QUEUE_STATE_MALFORMED_OR_MISSING",
+    }
+    for evaluation in selection.excluded_candidates:
+        if evaluation.candidate.state in {QueueWorkItemState.COMPLETED, QueueWorkItemState.FAILED}:
+            continue
+        for reason in evaluation.reasons:
+            reason_key = reason.split(":", 1)[0]
+            if reason_key in critical_reasons:
+                return evaluation
+    return None

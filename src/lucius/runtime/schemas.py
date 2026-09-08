@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from lucius.domain.enums import QueueWorkItemState
+
 
 class RuntimeExecutionOutcome(StrEnum):
     COMPLETED = "COMPLETED"
@@ -79,6 +81,54 @@ class RuntimeExecutionContext(BaseModel):
     plan_id: str | None = None
     plan_freeze_id: str | None = None
     queue_item: dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchCandidate(BaseModel):
+    project_id: str
+    workflow_id: str
+    task_id: str | None = None
+    repository_id: str | None = None
+    item_id: str
+    logical_task_id: str
+    priority: str = "NORMAL"
+    project_priority: str = "NORMAL"
+    state: QueueWorkItemState
+    dependency_state: str = "COMPLETE"
+    blocker_state: str = "NONE"
+    retry_state: str = "READY"
+    resume_state: str = "NEW"
+    created_order: int = 0
+    ready_timestamp: str | None = None
+    created_at: str | None = None
+    required_capabilities: list[str] = Field(default_factory=list)
+    plan_id: str | None = None
+    plan_freeze_id: str | None = None
+    item_version: int = 0
+    scheduling_metadata: dict[str, Any] = Field(default_factory=dict)
+    tie_break_fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchCandidateEvaluation(BaseModel):
+    candidate: DispatchCandidate
+    eligible: bool
+    reasons: list[str] = Field(default_factory=list)
+    scheduling_key: list[str | int] = Field(default_factory=list)
+
+
+class DispatchSelection(BaseModel):
+    cycle_id: str
+    selected: DispatchCandidate | None = None
+    started: bool = False
+    started_previous_state: str | None = None
+    started_new_state: str | None = None
+    started_previous_version: int | None = None
+    started_new_version: int | None = None
+    reason: str
+    eligible_candidates: list[DispatchCandidateEvaluation] = Field(default_factory=list)
+    excluded_candidates: list[DispatchCandidateEvaluation] = Field(default_factory=list)
+    blocked_candidates: list[DispatchCandidateEvaluation] = Field(default_factory=list)
+    fairness_applied: bool = False
+    deterministic_tie_break_reason: str | None = None
 
 
 class RuntimeProviderModel(BaseModel):
@@ -284,6 +334,9 @@ class ExecutionRuntimeLoopResult(BaseModel):
     retries: int = 0
     escalations: int = 0
     provider_ids: list[str] = Field(default_factory=list)
+    project_ids: list[str] = Field(default_factory=list)
+    project_switches: int = 0
+    scheduler_decisions: list[dict[str, Any]] = Field(default_factory=list)
     plan_references: list[RuntimePlanReference] = Field(default_factory=list)
     task_records: list[RuntimeTaskExecutionRecord] = Field(default_factory=list)
     wall_clock_duration_seconds: float = 0.0
