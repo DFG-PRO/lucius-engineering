@@ -19,6 +19,7 @@ from lucius.domain.enums import (
     RepositoryAdapterType,
     TaskComplexity,
     TaskPriority,
+    TaskStatus,
 )
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
 from lucius.persistence.orm import (
@@ -84,8 +85,9 @@ def test_runtime_loop_plans_freezes_executes_and_continues_between_tasks(session
     assert result.external_capacity_wait_time_seconds == 0.25
     assert result.human_wait_time_seconds == 0.1
     assert result.single_dispatcher_enforced is True
-    assert row.workflow_state == PersistentWorkflowState.PLAN_READY.value
+    assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
     assert [item["state"] for item in row.task_backlog] == ["COMPLETED", "COMPLETED"]
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.COMPLETE.value
     assert freeze.plan_payload["summary"].startswith("Runtime plan")
 
 
@@ -121,7 +123,9 @@ def test_runtime_blocks_one_item_and_releases_capacity_for_next_workflow(session
     assert result.blocked_task_time_seconds == 3.0
     assert blocked_row.task_backlog[0]["state"] == QueueWorkItemState.WAITING_EXTERNAL.value
     assert blocked_row.task_backlog[0]["completed_substeps"] == ["captured partial evidence"]
+    assert session.get(TaskORM, blocked.task_id).status == TaskStatus.READY.value
     assert alternative_row.task_backlog[0]["state"] == QueueWorkItemState.COMPLETED.value
+    assert session.get(TaskORM, alternative.task_id).status == TaskStatus.COMPLETE.value
 
 
 def test_runtime_counts_ready_to_resume_without_repeating_completed_substeps(session):
@@ -154,7 +158,9 @@ def test_runtime_counts_ready_to_resume_without_repeating_completed_substeps(ses
 
     row = session.get(PersistentWorkflowORM, workflow.id)
     assert result.resumed_tasks == 1
+    assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
     assert row.task_backlog[0]["completed_substeps"] == ["already inspected repo", "finished resumed work"]
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.COMPLETE.value
 
 
 def test_runtime_execution_backend_is_replaceable(session):
@@ -212,6 +218,8 @@ def test_runtime_plan_and_result_survive_fresh_session(tmp_path: Path):
     with Session() as session:
         row = session.get(PersistentWorkflowORM, workflow_id)
         assert row.task_backlog[0]["state"] == QueueWorkItemState.COMPLETED.value
+        assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+        assert session.get(TaskORM, row.task_id).status == TaskStatus.COMPLETE.value
         assert row.plan_freeze_id == freeze_id
         assert session.get(PlanFreezeORM, freeze_id).plan_payload["task_id"] == row.task_id
         assert (
@@ -418,6 +426,128 @@ def test_runtime_resume_blocked_interval_uses_canonical_queue_timestamps(session
     assert result.blocked_task_time_seconds == 150.0
 
 
+def test_runtime_partial_workflow_does_not_normalize_parent_task_early(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-PARTIAL-A", order=1), _item("DARWIN-PARTIAL-B", order=2)],
+    )
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.completed_tasks == 1
+    assert [item["state"] for item in row.task_backlog] == ["COMPLETED", "READY"]
+    assert row.workflow_state == PersistentWorkflowState.PLAN_READY.value
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.READY.value
+
+
+def test_runtime_completed_workflow_reconciliation_is_idempotent(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-IDEMPOTENT")])
+    service = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(),
+    )
+    first = service.run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    audit_count = (
+        session.query(AuditEventORM)
+        .filter(AuditEventORM.event_type == "NATIVE_RUNTIME_WORKFLOW_PARENT_TASK_RECONCILED")
+        .count()
+    )
+
+    second = service.run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert first.status == "COMPLETED"
+    assert second.status == "IDLE"
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.COMPLETE.value
+    assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+    assert (
+        session.query(AuditEventORM)
+        .filter(AuditEventORM.event_type == "NATIVE_RUNTIME_WORKFLOW_PARENT_TASK_RECONCILED")
+        .count()
+        == audit_count
+    )
+
+
+def test_runtime_startup_reconciles_preexisting_completed_workflow_parent_task(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-STALE-COMPLETE")])
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    item = dict(row.task_backlog[0])
+    item["state"] = QueueWorkItemState.COMPLETED.value
+    item["completed_at"] = "2026-09-08T10:00:00+00:00"
+    row.task_backlog = [item]
+    row.completed_task_ids = ["DARWIN-STALE-COMPLETE"]
+    row.pending_task_ids = []
+    row.workflow_state = PersistentWorkflowState.PLAN_READY.value
+    session.flush()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.status == "IDLE"
+    assert result.completed_tasks == 0
+    assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.COMPLETE.value
+    assert result.plan_references == []
+
+
+def test_runtime_completed_workflow_with_missing_required_docs_becomes_documentation_pending(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-DOCS-PENDING")],
+        documentation_required=True,
+    )
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(
+            {
+                "DARWIN-DOCS-PENDING": ExecutionAdapterResult(
+                    outcome="COMPLETED",
+                    completed_substeps=["completed implementation without canonical documentation evidence"],
+                    active_execution_seconds=0.25,
+                )
+            }
+        ),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.status == "COMPLETED"
+    assert row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.DOCUMENTATION_PENDING.value
+
+
+def test_runtime_completed_workflow_reconciliation_preserves_historical_rows_without_bound_task(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-HISTORICAL")])
+    workflow_row = session.get(PersistentWorkflowORM, workflow.id)
+    workflow_row.task_id = None
+    session.flush()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.status == "FAILED"
+    assert result.completed_tasks == 0
+    assert row.task_backlog[0]["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.READY.value
+
+
 class CustomExecutionAdapter:
     provider_id = "custom-test-adapter"
 
@@ -461,6 +591,7 @@ def _workflow(
     project_id: str,
     backlog: list[dict],
     attach_repository: bool = True,
+    documentation_required: bool = False,
 ):
     project = _ensure_project(session, project_id)
     first_item_id = str(backlog[0].get("item_id") or backlog[0].get("task_id"))
@@ -491,7 +622,8 @@ def _workflow(
         ],
         environment=Environment.DEVELOPMENT,
         authority_level=AuthorityLevel.L1,
-        documentation_required=False,
+        documentation_required=documentation_required,
+        documentation_targets=["docs/runtime.md"] if documentation_required else [],
         actor=Actor.LUCIUS,
     )
     TaskService(session).mark_ready(task.id, actor=Actor.LUCIUS)

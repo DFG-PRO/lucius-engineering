@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, BlockerCode, QueueWorkItemState, TaskStatus
+from lucius.domain.enums import Actor, BlockerCode, PersistentWorkflowState, QueueWorkItemState, TaskStatus
 from lucius.persistence.orm import (
     AuditEventORM,
+    DocumentationCompletionORM,
     EngineeringPlanORM,
     PersistentWorkflowORM,
     PlanFreezeORM,
@@ -18,6 +19,7 @@ from lucius.persistence.orm import (
     RepositoryRegistrationORM,
     TaskContractORM,
     TaskORM,
+    utc_now,
 )
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.tasks.service import TaskService
@@ -28,6 +30,7 @@ from lucius.runtime.schemas import (
     RuntimeExecutionContext,
     RuntimeLoopConfig,
     RuntimeLoopStatus,
+    RuntimePlanReference,
     RuntimeTaskExecutionRecord,
 )
 
@@ -117,6 +120,7 @@ class ExecutionRuntimeLoopService:
                         completed_substeps=adapter_result.completed_substeps,
                         actor=self.actor,
                     )
+                    self._reconcile_completed_workflow_parent_task(context.workflow_id)
                     result.completed_tasks += 1
                     self._record_task_execution(context, adapter_result, "COMPLETED")
                     result.status = RuntimeLoopStatus.COMPLETED
@@ -156,6 +160,18 @@ class ExecutionRuntimeLoopService:
         rows = _workflow_rows(self.session, workflow_ids)
         references = []
         for row in rows:
+            self._reconcile_completed_workflow_parent_task(row.id)
+            if row.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value:
+                if row.plan_id and row.plan_freeze_id:
+                    references.append(
+                        RuntimePlanReference(
+                            workflow_id=row.id,
+                            plan_id=row.plan_id,
+                            plan_freeze_id=row.plan_freeze_id,
+                            created_by_runtime=False,
+                        )
+                    )
+                continue
             references.append(self.planning_adapter.prepare_workflow_plan(self.session, row.id))
         return references
 
@@ -338,6 +354,47 @@ class ExecutionRuntimeLoopService:
             },
         )
 
+    def _reconcile_completed_workflow_parent_task(self, workflow_id: str) -> None:
+        workflow = self.session.get(PersistentWorkflowORM, workflow_id)
+        task = self.session.get(TaskORM, workflow.task_id) if workflow and workflow.task_id else None
+        if workflow is None or task is None:
+            return
+        if not _workflow_successfully_completed(workflow):
+            return
+        target_status = _completed_workflow_task_status(self.session, task.id)
+        if task.status == target_status and workflow.workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value:
+            return
+        previous_task_status = task.status
+        previous_workflow_state = workflow.workflow_state
+        task.status = target_status
+        task.blocker_code = None
+        task.blocker_message = None
+        task.blocked_at = None
+        task.failure_reason = None
+        task.updated_at = utc_now()
+        workflow.workflow_state = PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+        workflow.active_task_id = None
+        workflow.updated_at = utc_now()
+        self.session.flush()
+        self.audit.record(
+            event_type="NATIVE_RUNTIME_WORKFLOW_PARENT_TASK_RECONCILED",
+            actor=self.actor.value,
+            project_id=workflow.project_id,
+            repository_id=workflow.repository_id,
+            task_id=task.id,
+            action="reconcile_completed_runtime_workflow",
+            result=target_status,
+            metadata={
+                "workflow_id": workflow.id,
+                "previous_task_status": previous_task_status,
+                "new_task_status": target_status,
+                "previous_workflow_state": previous_workflow_state,
+                "new_workflow_state": workflow.workflow_state,
+                "completed_task_ids": workflow.completed_task_ids,
+                "pending_task_ids": workflow.pending_task_ids,
+            },
+        )
+
 
 def _workflow_rows(session: Session, workflow_ids: list[str] | None) -> list[PersistentWorkflowORM]:
     if workflow_ids:
@@ -434,6 +491,54 @@ def _plan_freeze_error(
     if plan.task_contract_id != contract.id or plan.task_contract_version != contract.version:
         return "Selected workflow frozen plan is stale relative to the active task contract."
     return None
+
+
+def _workflow_successfully_completed(workflow: PersistentWorkflowORM) -> bool:
+    if workflow.active_task_id is not None:
+        return False
+    items = workflow.task_backlog or []
+    if not items:
+        return False
+    parsed_states: list[QueueWorkItemState] = []
+    for item in items:
+        state = _queue_state_if_valid(item)
+        if state is None:
+            return False
+        parsed_states.append(state)
+    if any(state != QueueWorkItemState.COMPLETED for state in parsed_states):
+        return False
+    item_ids = {_queue_item_id(item) for item in items}
+    completed_ids = set(workflow.completed_task_ids or [])
+    pending_ids = set(workflow.pending_task_ids or [])
+    return item_ids == completed_ids and not pending_ids
+
+
+def _completed_workflow_task_status(session: Session, task_id: str) -> str:
+    contract = _active_contract(session, task_id)
+    if contract is None or not contract.documentation_required:
+        return TaskStatus.COMPLETE.value
+    completion = session.scalar(
+        select(DocumentationCompletionORM).where(DocumentationCompletionORM.task_id == task_id)
+    )
+    if completion is None:
+        return TaskStatus.DOCUMENTATION_PENDING.value
+    missing_targets = sorted(set(contract.documentation_targets or []) - set(completion.targets_completed or []))
+    if missing_targets or not completion.evidence_references:
+        return TaskStatus.DOCUMENTATION_PENDING.value
+    return TaskStatus.COMPLETE.value
+
+
+def _queue_item_id(item: dict[str, Any]) -> str:
+    return str(item.get("item_id") or item.get("task_id"))
+
+
+def _queue_state_if_valid(item: dict[str, Any]) -> QueueWorkItemState | None:
+    if "state" not in item or item.get("state") is None:
+        return None
+    try:
+        return QueueWorkItemState(str(item["state"]))
+    except ValueError:
+        return None
 
 
 def _blocked_interval_seconds(item: dict[str, Any]) -> float:

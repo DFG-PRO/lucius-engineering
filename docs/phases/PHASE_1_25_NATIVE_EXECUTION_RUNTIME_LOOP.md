@@ -30,6 +30,15 @@ planning/execution adapters, and fail-closed task blocking or escalation.
 - Treat execution adapter exceptions as fail-closed task blocks. A provider
   that raises before returning a canonical result does not complete work or
   discard lifecycle state; the selected item is blocked with resume metadata.
+- Reconcile aggregate workflow/task lifecycle after durable queue completion.
+  When every schedulable workflow backlog item is successfully `COMPLETED`,
+  `completed_task_ids` exactly matches the backlog, no `pending_task_ids`
+  remain, and no item is running, blocked, failed, or waiting to resume, the
+  runtime moves the workflow to `COMPLETED_PENDING_INTEGRATION` and moves the
+  bound parent task out of executable `READY`. If no task-level documentation
+  evidence is required, the parent task becomes `COMPLETE`; if required
+  documentation evidence is still missing or incomplete, it becomes
+  `DOCUMENTATION_PENDING`.
 
 ## Runtime Observability
 
@@ -62,6 +71,9 @@ Focused runtime tests cover:
   is reachable;
 - blocked-interval accounting for resumed items when canonical queue
   timestamps include both `blocked_at` and `resolved_at`;
+- aggregate lifecycle reconciliation after successful workflow completion,
+  including blocked, resumed, partial, idempotent, documentation-pending, and
+  historical-row cases;
 - CLI entrypoint execution.
 
 ## Phase 1.25 Darwin Pilot Closure Repair
@@ -73,6 +85,74 @@ readiness transition. The repaired runtime treats that state as non-executable
 and records `NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED` before blocking the
 selected queue item. Provider dispatch is unreachable until the exact task is
 explicitly re-readied and its current repository/plan/freeze evidence validates.
+
+## Phase 1.25 Lifecycle Normalization Repair
+
+The successful Native Runtime Darwin Pilot retry completed all runtime workflow
+queue items, but `LTASK_000077` remained top-level `READY`. That was not a
+reporting defect: the runtime used the queue as the execution lifecycle and did
+not reconcile the bound aggregate `TaskORM` after the workflow backlog reached
+successful terminal completion. The workflow row also remained `PLAN_READY`,
+which kept a completed workflow inside an execution-eligible lifecycle class.
+
+The repaired invariant is:
+
+```text
+A runtime workflow with a bound parent task must not remain execution-eligible
+after all schedulable backlog items are successfully completed, no pending or
+active work remains, and no unresolved blocker/retry/resume state exists.
+```
+
+The repair is deliberately narrow. Reconciliation runs only after
+`NonBlockingQueueService.complete_item` has durably marked a queue item
+`COMPLETED`. It does not hide blocked, partial, failed, malformed, or legacy
+workflow state. Reconciliation is idempotent and records
+`NATIVE_RUNTIME_WORKFLOW_PARENT_TASK_RECONCILED` when it changes canonical
+state.
+
+## Model Execution Router Readiness
+
+Lucius is ready to implement the Model Execution Router as the next phase, but
+the router must remain below runtime orchestration authority. The runtime owns
+global/task selection, repository attachment checks, readiness/release,
+plan/freeze authority, exact dispatch identity, verification, blocking,
+resume, and completion. The router chooses an execution provider for an already
+authorized `RuntimeExecutionContext`; it does not select tasks, mutate queue
+state, alter frozen plans, or grant authority.
+
+The minimum router should provide:
+
+- a deterministic execution-provider registry with declared capabilities,
+  supported task types, repository/project allowlists, privacy/isolation class,
+  tool requirements, context limits, cost/latency classes, availability, and
+  provider/model/version identity;
+- a canonical `RuntimeExecutionRequest` derived from the frozen plan and
+  pre-dispatch release context, carrying required capabilities, policy,
+  budget, sandbox/isolation requirements, tool requirements, and immutable
+  task/workflow/repository/plan/freeze identifiers;
+- a canonical `RuntimeExecutionResult` compatible with the existing
+  `ExecutionAdapterResult`, plus provider/model/version, routing decision,
+  attempt number, fallback flag, usage/cost/latency, retryability, and
+  sanitized error category;
+- deterministic routing over capability fit, policy, repository/project scope,
+  availability, cost/budget, latency, context limits, tool support, sandbox
+  requirements, and reliability history;
+- failover only for provider unavailability or retryable provider failure, not
+  for Lucius-side release, validation, verification, or authority failures;
+- audit events that preserve selected provider/model/profile, rejected
+  candidates, fallback chain, request/result IDs, and sanitized metrics.
+
+The router should reuse Phase 1.8 `ModelGateway` concepts where they fit, but
+it must not simply rename the current scripted/Codex adapter. The structural
+boundary must allow scripted, Codex, API model, local model, and future
+specialized execution providers to satisfy the same runtime execution
+contract.
+
+Explicitly deferred from the router phase: multi-project dispatcher expansion,
+multi-worker leases or heartbeats, provider marketplace discovery, credential
+expansion, push/merge/deploy authority, live-money execution, autonomous
+authority escalation, and providers directly writing Lucius canonical lifecycle
+state.
 
 ## Limits
 
