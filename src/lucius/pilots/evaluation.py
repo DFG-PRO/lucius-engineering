@@ -200,7 +200,7 @@ def _orchestration_control_plane_dimensions(plan: dict, artifact: dict, session:
             message="Pre-mutation freeze/release evidence was not captured.",
         ),
         _orchestration_scheduler_dimension(evidence),
-        _orchestration_resume_dimension(evidence),
+        _orchestration_resume_dimension(evidence, session),
         _orchestration_boolean_dimension("priority_correctness", evidence.get("priority")),
         _orchestration_boolean_dimension("no_preemption", evidence.get("no_preemption")),
         _orchestration_boolean_dimension("exact_selection_mutation", evidence.get("exact_selection_mutation")),
@@ -663,10 +663,10 @@ def _orchestration_scheduler_dimension(evidence: dict) -> EvaluationDimension:
     )
 
 
-def _orchestration_resume_dimension(evidence: dict) -> EvaluationDimension:
+def _orchestration_resume_dimension(evidence: dict, session: Session) -> EvaluationDimension:
     resumes = evidence.get("checkpoints_resumes")
     if not resumes:
-        return _not_captured_dimension("checkpoints_resumes", "Checkpoint/resume evidence was not captured.")
+        return _conditional_checkpoint_resume_dimension(evidence, session)
     invalid = [
         str(item.get("checkpoint_id") or index)
         for index, item in enumerate(resumes)
@@ -686,6 +686,135 @@ def _orchestration_resume_dimension(evidence: dict) -> EvaluationDimension:
         actual=[*[str(item) for item in resumes], str(capacity)],
         missing=invalid,
     )
+
+
+def _conditional_checkpoint_resume_dimension(evidence: dict, session: Session) -> EvaluationDimension:
+    conditional = _conditional_capability_evidence(evidence, "checkpoint_resume_capacity")
+    if not conditional:
+        return _insufficient_conditional_dimension(
+            ["FRESH_EVIDENCE_REQUIRED"],
+            "Checkpoint/resume evidence was not captured.",
+        )
+
+    trigger_status = str(conditional.get("trigger_status") or "").upper()
+    applicability = str(conditional.get("applicability") or "").upper()
+    inherited = conditional.get("inherited_evidence") if isinstance(conditional.get("inherited_evidence"), dict) else {}
+    inherited_status = str(inherited.get("status") or "").upper()
+    fresh_evidence_status = str(conditional.get("fresh_evidence_status") or "").upper()
+
+    if trigger_status != "NOT_TRIGGERED":
+        return _insufficient_conditional_dimension(
+            [trigger_status or "FRESH_EVIDENCE_REQUIRED"],
+            "Checkpoint/resume was required because the trigger condition occurred or was uncertain.",
+        )
+    if conditional.get("artificially_suppressed") is not False:
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INSUFFICIENT_EVIDENCE"],
+            "Conditional checkpoint/resume evidence must prove the trigger was not artificially avoided.",
+        )
+    if not str(conditional.get("not_triggered_reason") or "").strip():
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INSUFFICIENT_EVIDENCE"],
+            "Conditional checkpoint/resume evidence must explain why the trigger did not occur.",
+        )
+    if applicability != "NOT_APPLICABLE_IN_THIS_RUN":
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", applicability or "INSUFFICIENT_EVIDENCE"],
+            "Conditional checkpoint/resume evidence must explicitly classify run applicability.",
+        )
+    if fresh_evidence_status != "NOT_REQUIRED":
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", fresh_evidence_status or "FRESH_EVIDENCE_REQUIRED"],
+            "Conditional checkpoint/resume evidence must explicitly show fresh evidence is not required.",
+        )
+    if inherited_status != "INHERITED_VALID_EVIDENCE":
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", inherited_status or "INSUFFICIENT_EVIDENCE"],
+            "Inherited checkpoint/resume evidence was missing or not classified as valid.",
+        )
+    if str(inherited.get("recency") or "").upper() not in {"CURRENT", "RECENT_APPLICABLE"}:
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE", "INSUFFICIENT_EVIDENCE"],
+            "Inherited checkpoint/resume evidence was not classified as sufficiently recent.",
+        )
+    if str(inherited.get("runtime_applicability") or "").upper() != "APPLICABLE":
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE", "INSUFFICIENT_EVIDENCE"],
+            "Inherited checkpoint/resume evidence was not classified as applicable to the current runtime.",
+        )
+    if inherited.get("relevant_implementation_change_invalidates") is not False:
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE", "INSUFFICIENT_EVIDENCE"],
+            "Inherited checkpoint/resume evidence was invalidated or did not prove absence of invalidating changes.",
+        )
+    validation = _validate_inherited_checkpoint_resume_evidence(inherited.get("evidence_refs", []), evidence, session)
+    if validation:
+        return _insufficient_conditional_dimension(
+            ["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE", "INSUFFICIENT_EVIDENCE"],
+            validation,
+        )
+    return EvaluationDimension(
+        name="checkpoint_resume_capacity",
+        status="NOT_APPLICABLE_IN_THIS_RUN",
+        applicability=MetricApplicability.NOT_APPLICABLE,
+        expected=["resolved checkpoints", "fresh-session reconstruction", "capacity release"],
+        actual=["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE"],
+        notes="Checkpoint/resume did not naturally trigger in this run; recent applicable canonical evidence demonstrates the capability.",
+    )
+
+
+def _conditional_capability_evidence(evidence: dict, capability: str) -> dict:
+    capabilities = evidence.get("conditional_capabilities") or {}
+    if isinstance(capabilities, dict):
+        value = capabilities.get(capability)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _insufficient_conditional_dimension(actual: list[str], message: str) -> EvaluationDimension:
+    return EvaluationDimension(
+        name="checkpoint_resume_capacity",
+        status="INSUFFICIENT_EVIDENCE",
+        applicability=MetricApplicability.NOT_CAPTURED,
+        score=None,
+        expected=[
+            "NOT_TRIGGERED",
+            "NOT_APPLICABLE_IN_THIS_RUN",
+            "INHERITED_VALID_EVIDENCE",
+        ],
+        actual=actual,
+        notes=message,
+    )
+
+
+def _validate_inherited_checkpoint_resume_evidence(
+    evidence_refs: object,
+    current_evidence: dict,
+    session: Session,
+) -> str | None:
+    refs = _normalize_set(evidence_refs if isinstance(evidence_refs, list) else [])
+    if not refs:
+        return "Inherited checkpoint/resume evidence requires canonical evidence refs."
+    provenance_refs = _normalize_set(current_evidence.get("provenance_refs", []))
+    if not refs <= provenance_refs:
+        return "Inherited checkpoint/resume evidence refs must also appear in orchestration provenance refs."
+    for ref in sorted(refs):
+        if not ref.startswith("LEVALPLAN_"):
+            continue
+        evaluation = session.get(EngineeringPlanEvaluationORM, ref)
+        if evaluation is None:
+            return f"Inherited checkpoint/resume evaluation ref was not found: {ref}"
+        if evaluation.result != EngineeringPlanEvaluationResult.PASS.value:
+            return f"Inherited checkpoint/resume evaluation ref is not PASS: {ref}"
+        if evaluation.evaluation_mode != EngineeringPlanEvaluationMode.ORCHESTRATION_CONTROL_PLANE.value:
+            return f"Inherited checkpoint/resume evidence is not an orchestration evaluation: {ref}"
+        dimensions = evaluation.dimensions or []
+        for dimension in dimensions:
+            if dimension.get("name") == "checkpoint_resume_capacity" and dimension.get("status") == "PASS":
+                return None
+        return f"Inherited orchestration evaluation lacks passing checkpoint/resume dimension: {ref}"
+    return "Inherited checkpoint/resume evidence requires a passing LEVALPLAN orchestration evaluation ref."
 
 
 def _orchestration_provenance_dimension(evidence: dict) -> EvaluationDimension:

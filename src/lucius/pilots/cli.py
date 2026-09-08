@@ -85,6 +85,12 @@ def main() -> None:
     queue_global_start = sub.add_parser("queue-global-start")
     queue_global_start.add_argument("workflow_ids", nargs="*")
 
+    runtime_loop = sub.add_parser("run-runtime-loop")
+    runtime_loop.add_argument("workflow_ids", nargs="+")
+    runtime_loop.add_argument("--max-tasks", type=int, default=1)
+    runtime_loop.add_argument("--provider-id", default="scripted-execution-adapter")
+    runtime_loop.add_argument("--stop-on-block", action="store_true")
+
     args = parser.parse_args()
     lock_timeout = float(os.environ.get("LUCIUS_ARTIFACT_STORE_LOCK_TIMEOUT_SECONDS", "10.0"))
     lock = (
@@ -237,6 +243,27 @@ def _run_command(args: argparse.Namespace) -> None:
                 raise SystemExit(1) from error
             session.commit()
             print(result.model_dump_json(indent=2))
+        elif args.command == "run-runtime-loop":
+            from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
+            from lucius.runtime.schemas import RuntimeLoopConfig
+            from lucius.runtime.service import ExecutionRuntimeLoopService
+
+            execution_adapter = ScriptedExecutionAdapter()
+            execution_adapter.provider_id = args.provider_id
+            result = ExecutionRuntimeLoopService(
+                session,
+                planning_adapter=ScriptedRuntimePlanningAdapter(),
+                execution_adapter=execution_adapter,
+                actor=Actor.LUCIUS,
+            ).run(
+                RuntimeLoopConfig(
+                    workflow_ids=args.workflow_ids or None,
+                    max_tasks=args.max_tasks,
+                    stop_on_block=args.stop_on_block,
+                )
+            )
+            session.commit()
+            print(result.model_dump_json(indent=2))
 
 
 def _requires_store_write_serialization(command: str) -> bool:
@@ -250,6 +277,7 @@ def _requires_store_write_serialization(command: str) -> bool:
         "compute-release-gate",
         "queue-start",
         "queue-global-start",
+        "run-runtime-loop",
     }
 
 

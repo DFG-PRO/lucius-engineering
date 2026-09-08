@@ -806,7 +806,102 @@ def test_orchestration_evaluation_missing_resume_evidence_is_insufficient(sessio
     )
 
     assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
-    assert _dimension(result, "checkpoints_resumes").applicability == MetricApplicability.NOT_CAPTURED
+    assert _dimension(result, "checkpoint_resume_capacity").applicability == MetricApplicability.NOT_CAPTURED
+
+
+def test_orchestration_evaluation_accepts_not_applicable_checkpoint_when_inherited_evidence_is_valid(session):
+    freeze = _orchestration_freeze(session)
+    prior = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(),
+    )
+    artifact = _orchestration_artifact_with_conditional_checkpoint(prior.id)
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    dimension = _dimension(result, "checkpoint_resume_capacity")
+    assert result.result == EngineeringPlanEvaluationResult.PASS
+    assert dimension.status == "NOT_APPLICABLE_IN_THIS_RUN"
+    assert dimension.applicability == MetricApplicability.NOT_APPLICABLE
+    assert dimension.actual == ["NOT_TRIGGERED", "INHERITED_VALID_EVIDENCE"]
+
+
+def test_orchestration_evaluation_rejects_not_applicable_when_checkpoint_should_have_triggered(session):
+    freeze = _orchestration_freeze(session)
+    prior = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(),
+    )
+    artifact = _orchestration_artifact_with_conditional_checkpoint(prior.id)
+    artifact["orchestration_evidence"]["conditional_capabilities"]["checkpoint_resume_capacity"][
+        "trigger_status"
+    ] = "TRIGGERED"
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    dimension = _dimension(result, "checkpoint_resume_capacity")
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert dimension.status == "INSUFFICIENT_EVIDENCE"
+    assert dimension.applicability == MetricApplicability.NOT_CAPTURED
+
+
+def test_orchestration_evaluation_rejects_stale_inherited_checkpoint_evidence(session):
+    freeze = _orchestration_freeze(session)
+    prior = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(),
+    )
+    artifact = _orchestration_artifact_with_conditional_checkpoint(prior.id)
+    artifact["orchestration_evidence"]["conditional_capabilities"]["checkpoint_resume_capacity"][
+        "inherited_evidence"
+    ]["recency"] = "STALE"
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert _dimension(result, "checkpoint_resume_capacity").status == "INSUFFICIENT_EVIDENCE"
+
+
+def test_orchestration_evaluation_rejects_invalid_inherited_checkpoint_reference(session):
+    freeze = _orchestration_freeze(session)
+    artifact = _orchestration_artifact_with_conditional_checkpoint("LEVALPLAN_999999")
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert "not found" in (_dimension(result, "checkpoint_resume_capacity").notes or "")
+
+
+def test_orchestration_evaluation_rejects_inherited_checkpoint_evidence_invalidated_by_changes(session):
+    freeze = _orchestration_freeze(session)
+    prior = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=_orchestration_artifact(),
+    )
+    artifact = _orchestration_artifact_with_conditional_checkpoint(prior.id)
+    artifact["orchestration_evidence"]["conditional_capabilities"]["checkpoint_resume_capacity"][
+        "inherited_evidence"
+    ]["relevant_implementation_change_invalidates"] = True
+
+    result = EngineeringPlanEvaluationService(session).evaluate(
+        plan_freeze_id=freeze.id,
+        implementation_artifact=artifact,
+    )
+
+    assert result.result == EngineeringPlanEvaluationResult.INSUFFICIENT_EVIDENCE
+    assert "invalidated" in (_dimension(result, "checkpoint_resume_capacity").notes or "")
 
 
 def test_orchestration_evaluation_false_exact_dispatch_claim_fails(session):
@@ -1053,6 +1148,34 @@ def _orchestration_artifact(*, files: list[str] | None = None) -> dict:
             "closure_claims": {"result": "PASS"},
         },
     }
+
+
+def _orchestration_artifact_with_conditional_checkpoint(evaluation_id: str) -> dict:
+    artifact = _orchestration_artifact()
+    evidence = artifact["orchestration_evidence"]
+    evidence["blockers_capacity_release"] = {
+        "result": "NOT_TRIGGERED",
+        "reason": "No work item genuinely blocked during this run.",
+    }
+    evidence["checkpoints_resumes"] = []
+    evidence["provenance_refs"] = [*evidence["provenance_refs"], evaluation_id]
+    evidence["conditional_capabilities"] = {
+        "checkpoint_resume_capacity": {
+            "trigger_status": "NOT_TRIGGERED",
+            "applicability": "NOT_APPLICABLE_IN_THIS_RUN",
+            "artificially_suppressed": False,
+            "fresh_evidence_status": "NOT_REQUIRED",
+            "not_triggered_reason": "No queued work item entered a blocked state.",
+            "inherited_evidence": {
+                "status": "INHERITED_VALID_EVIDENCE",
+                "evidence_refs": [evaluation_id],
+                "recency": "RECENT_APPLICABLE",
+                "runtime_applicability": "APPLICABLE",
+                "relevant_implementation_change_invalidates": False,
+            },
+        }
+    }
+    return artifact
 
 
 def _dimension(result, name: str, *, required: bool = True):
