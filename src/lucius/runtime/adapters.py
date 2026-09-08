@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucius.domain.enums import (
@@ -15,7 +16,7 @@ from lucius.domain.enums import (
     PlanningEvidenceMode,
     TestStrategyKind,
 )
-from lucius.persistence.orm import PersistentWorkflowORM
+from lucius.persistence.orm import PersistentWorkflowORM, TaskContractORM, TaskORM
 from lucius.pilots.freeze import PlanFreezeService
 from lucius.pilots.workflows import PersistentWorkflowService
 from lucius.planning.persistence import EngineeringPlanRepository
@@ -65,7 +66,7 @@ class ScriptedRuntimePlanningAdapter:
             )
 
         model_plan = self._plans_by_workflow_id.get(workflow_id) or _default_model_plan(workflow)
-        context = _planning_context_from_workflow(workflow)
+        context = _planning_context_from_workflow(session, workflow)
         plan = EngineeringPlanRepository(session).create(
             context=context,
             model_plan=model_plan,
@@ -121,27 +122,33 @@ class ScriptedExecutionAdapter:
         )
 
 
-def _planning_context_from_workflow(workflow: PersistentWorkflowORM) -> PlanningContext:
+def _planning_context_from_workflow(session: Session, workflow: PersistentWorkflowORM) -> PlanningContext:
     task_id = workflow.task_id or workflow.id
+    task = session.get(TaskORM, task_id) if workflow.task_id else None
+    contract = _active_contract(session, task_id) if workflow.task_id else None
     return PlanningContext(
         task_id=task_id,
         run_id=workflow.id,
         project_id=workflow.project_id or "PROJECT_UNSPECIFIED",
         task_title=_workflow_title(workflow),
         task_objective=workflow.objective,
-        task_status="READY",
-        task_authority_level=AuthorityLevel.L1,
-        task_complexity="T1",
-        task_contract_id=f"{task_id}_RUNTIME_CONTRACT",
-        task_contract_version=1,
-        contract_objective=workflow.objective,
-        acceptance_criteria=[{"id": "AC-1", "description": "Runtime-prepared plan can be frozen canonically."}],
-        constraints=["ONE_LOGICAL_DISPATCHER", "NO_PUSH", "NO_MERGE", "NO_DEPLOY"],
-        allowed_actions=["READ_REPOSITORY", "RUN_TESTS", "WRITE_SOURCE", "WRITE_TESTS", "WRITE_DOCUMENTATION"],
-        environment=Environment.DEVELOPMENT,
-        contract_authority_level=AuthorityLevel.L1,
-        documentation_required=True,
-        documentation_targets=["target-project canonical documentation"],
+        task_status=task.status if task else "READY",
+        task_authority_level=AuthorityLevel(task.authority_level) if task else AuthorityLevel.L1,
+        task_complexity=task.complexity if task else "T1",
+        task_contract_id=contract.id if contract else f"{task_id}_RUNTIME_CONTRACT",
+        task_contract_version=contract.version if contract else 1,
+        contract_objective=contract.objective if contract else workflow.objective,
+        acceptance_criteria=contract.acceptance_criteria
+        if contract
+        else [{"id": "AC-1", "description": "Runtime-prepared plan can be frozen canonically."}],
+        constraints=contract.constraints if contract else ["ONE_LOGICAL_DISPATCHER", "NO_PUSH", "NO_MERGE", "NO_DEPLOY"],
+        allowed_actions=contract.allowed_actions
+        if contract
+        else ["READ_REPOSITORY", "RUN_TESTS", "WRITE_SOURCE", "WRITE_TESTS", "WRITE_DOCUMENTATION"],
+        environment=Environment(contract.environment) if contract else Environment.DEVELOPMENT,
+        contract_authority_level=AuthorityLevel(contract.authority_level) if contract else AuthorityLevel.L1,
+        documentation_required=contract.documentation_required if contract else True,
+        documentation_targets=contract.documentation_targets if contract else ["target-project canonical documentation"],
         snapshot_metadata=(
             [{"snapshot_id": workflow.repository_snapshot_id}]
             if workflow.repository_snapshot_id
@@ -205,3 +212,12 @@ def _workflow_title(workflow: PersistentWorkflowORM) -> str:
         if item.get("title"):
             return str(item["title"])
     return workflow.objective
+
+
+def _active_contract(session: Session, task_id: str) -> TaskContractORM | None:
+    return session.scalar(
+        select(TaskContractORM)
+        .where(TaskContractORM.task_id == task_id)
+        .order_by(TaskContractORM.version.desc())
+        .limit(1)
+    )

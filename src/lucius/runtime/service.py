@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+from datetime import datetime
 import time
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, QueueWorkItemState
-from lucius.persistence.orm import PersistentWorkflowORM
+from lucius.domain.enums import Actor, BlockerCode, QueueWorkItemState, TaskStatus
+from lucius.persistence.orm import (
+    AuditEventORM,
+    EngineeringPlanORM,
+    PersistentWorkflowORM,
+    PlanFreezeORM,
+    ProjectRepositoryAttachmentORM,
+    RepositoryRegistrationORM,
+    TaskContractORM,
+    TaskORM,
+)
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
+from lucius.tasks.service import TaskService
 from lucius.runtime.adapters import ExecutionAdapter, RuntimePlanningAdapter
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
@@ -21,6 +33,10 @@ from lucius.runtime.schemas import (
 
 
 class ExecutionRuntimeLoopError(RuntimeError):
+    pass
+
+
+class PreMutationReleaseError(ExecutionRuntimeLoopError):
     pass
 
 
@@ -67,9 +83,18 @@ class ExecutionRuntimeLoopService:
                 result.selected_tasks += 1
                 if selection.started_previous_state == QueueWorkItemState.READY_TO_RESUME.value:
                     result.resumed_tasks += 1
+                    result.blocked_task_time_seconds += _blocked_interval_seconds(context.queue_item)
+
+                pre_dispatch_error = self._pre_dispatch_release_error(context)
+                if pre_dispatch_error:
+                    self._block_pre_dispatch_failure(context, pre_dispatch_error)
+                    result.blocked_tasks += 1
+                    result.status = RuntimeLoopStatus.FAILED
+                    result.stopped_reason = pre_dispatch_error
+                    break
 
                 provider_ids.append(self.execution_adapter.provider_id)
-                adapter_result = self.execution_adapter.execute(context)
+                adapter_result = self._execute_adapter_fail_closed(context)
                 self._add_observability(result, adapter_result)
                 result.task_records.append(
                     RuntimeTaskExecutionRecord(
@@ -102,7 +127,7 @@ class ExecutionRuntimeLoopService:
                 result.escalations += adapter_result.escalations
                 result.status = _status_for_non_completion(adapter_result)
                 self._record_task_execution(context, adapter_result, result.status.value)
-                if adapter_result.outcome.value == "ESCALATED" or config.stop_on_block:
+                if adapter_result.outcome.value in {"ESCALATED", "FAILED"} or config.stop_on_block:
                     result.stopped_reason = adapter_result.blocking_reason or adapter_result.error or adapter_result.outcome.value
                     break
         except QueueStateError as error:
@@ -155,6 +180,82 @@ class ExecutionRuntimeLoopService:
             queue_item=dict(item),
         )
 
+    def _pre_dispatch_release_error(self, context: RuntimeExecutionContext) -> str | None:
+        workflow = self.session.get(PersistentWorkflowORM, context.workflow_id)
+        task = self.session.get(TaskORM, context.workflow_task_id) if context.workflow_task_id else None
+        if workflow is None:
+            return f"Unknown persistent workflow: {context.workflow_id}"
+        if task is None:
+            return "Persistent workflow has no canonical task bound for pre-mutation release."
+        if task.project_id != context.project_id:
+            return "Selected workflow task project does not match execution context project."
+        if task.status != TaskStatus.READY.value:
+            return f"Task {task.id} is not READY for execution: {task.status}"
+
+        contract = _active_contract(self.session, task.id)
+        if contract is None:
+            return f"Task {task.id} has no active contract."
+        if context.repository_id is None:
+            return "Selected workflow has no repository bound for execution."
+        if context.repository_id not in set(contract.repository_ids or []):
+            return "Selected workflow repository is not authorized by the active task contract."
+        registration = self.session.get(RepositoryRegistrationORM, context.repository_id)
+        attachment = self.session.scalar(
+            select(ProjectRepositoryAttachmentORM).where(
+                ProjectRepositoryAttachmentORM.project_id == task.project_id,
+                ProjectRepositoryAttachmentORM.repository_id == context.repository_id,
+            )
+        )
+        if registration is None or attachment is None:
+            return "Selected workflow repository is not attached to the task project."
+
+        selected_identity_error = _selected_mutation_identity_error(context)
+        if selected_identity_error:
+            return selected_identity_error
+
+        current_contract_errors = [
+            f"{blocker.code.value}: {blocker.message}"
+            for blocker in TaskService(self.session).validate_contract(task.id).blockers
+        ]
+        if current_contract_errors:
+            return "Current task contract is not valid for execution: " + "; ".join(current_contract_errors)
+
+        release_error = _readiness_release_evidence_error(self.session, task.id)
+        if release_error:
+            return release_error
+
+        freeze_error = _plan_freeze_error(self.session, context, contract)
+        if freeze_error:
+            return freeze_error
+
+        item = _queue_item(workflow.task_backlog, context.item_id)
+        if item.get("state") != QueueWorkItemState.RUNNING.value:
+            return "Selected queue item is no longer RUNNING immediately before dispatch."
+        return None
+
+    def _block_pre_dispatch_failure(self, context: RuntimeExecutionContext, reason: str) -> None:
+        self.audit.record(
+            event_type="NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED",
+            actor=self.actor.value,
+            project_id=context.project_id,
+            repository_id=context.repository_id,
+            task_id=context.workflow_task_id,
+            action="validate_pre_mutation_release",
+            result="BLOCKED",
+            metadata={"workflow_id": context.workflow_id, "item_id": context.item_id, "reason": reason},
+        )
+        self.queue.block_running_item(
+            context.workflow_id,
+            context.item_id,
+            blocking_state=QueueWorkItemState.WAITING_HUMAN,
+            blocking_reason=reason,
+            blocker_category=BlockerCode.AUTHORITY_INSUFFICIENT.value,
+            resume_condition="Run canonical readiness/release validation successfully before retrying dispatch.",
+            work_completed=[],
+            relevant_artifacts=[],
+            actor=self.actor,
+        )
+
     def _block_for_non_completion(
         self,
         context: RuntimeExecutionContext,
@@ -176,6 +277,23 @@ class ExecutionRuntimeLoopService:
             relevant_artifacts=[str(item) for item in adapter_result.evidence],
             actor=self.actor,
         )
+
+    def _execute_adapter_fail_closed(
+        self,
+        context: RuntimeExecutionContext,
+    ) -> ExecutionAdapterResult:
+        started_at = time.monotonic()
+        try:
+            return self.execution_adapter.execute(context)
+        except Exception as error:
+            return ExecutionAdapterResult(
+                outcome="FAILED",
+                active_execution_seconds=max(0.0, time.monotonic() - started_at),
+                error=f"{error.__class__.__name__}: {error}",
+                blocker_category="EXECUTION_ADAPTER_EXCEPTION",
+                blocking_reason="Execution adapter raised before returning a canonical result.",
+                resume_condition="Repair the adapter or task implementation and resume from the blocked queue item.",
+            )
 
     def _add_observability(
         self,
@@ -240,6 +358,99 @@ def _queue_item(items: list[dict[str, Any]], item_id: str) -> dict[str, Any]:
         if str(item.get("item_id") or item.get("task_id")) == item_id:
             return item
     raise ExecutionRuntimeLoopError(f"Unknown queue item: {item_id}")
+
+
+def _active_contract(session: Session, task_id: str) -> TaskContractORM | None:
+    return session.scalar(
+        select(TaskContractORM)
+        .where(TaskContractORM.task_id == task_id)
+        .order_by(TaskContractORM.version.desc())
+        .limit(1)
+    )
+
+
+def _selected_mutation_identity_error(context: RuntimeExecutionContext) -> str | None:
+    item = context.queue_item or {}
+    item_targets = [
+        item.get("mutation_item_id"),
+        item.get("mutates_item_id"),
+        item.get("execution_item_id"),
+        item.get("selected_item_id"),
+    ]
+    for target in item_targets:
+        if target is not None and str(target) != context.item_id:
+            return "Queue item mutation identity does not match the selected item."
+    task_targets = [item.get("mutation_task_id"), item.get("mutates_task_id")]
+    allowed_task_ids = {context.logical_task_id, context.workflow_task_id, context.item_id} - {None}
+    for target in task_targets:
+        if target is not None and str(target) not in {str(value) for value in allowed_task_ids}:
+            return "Queue item mutation task identity does not match the selected task."
+    return None
+
+
+def _readiness_release_evidence_error(session: Session, task_id: str) -> str | None:
+    latest_ready = _latest_task_audit(session, task_id, {"TASK_READY"})
+    if latest_ready is None:
+        return f"Task {task_id} has no successful canonical readiness transition."
+    latest_failed_ready = _latest_task_audit(session, task_id, {"POLICY_BLOCK", "TASK_BLOCKED"}, action="mark_ready")
+    if latest_failed_ready and latest_failed_ready.timestamp >= latest_ready.timestamp:
+        return f"Task {task_id} readiness failure was not superseded by a later TASK_READY event."
+    latest_contract_change = _latest_task_audit(session, task_id, {"TASK_CONTRACT_CREATED", "TASK_CONTRACT_UPDATED"})
+    if latest_contract_change and latest_contract_change.timestamp > latest_ready.timestamp:
+        return f"Task {task_id} readiness is stale after a contract change."
+    return None
+
+
+def _latest_task_audit(
+    session: Session,
+    task_id: str,
+    event_types: set[str],
+    *,
+    action: str | None = None,
+) -> AuditEventORM | None:
+    query = select(AuditEventORM).where(AuditEventORM.task_id == task_id, AuditEventORM.event_type.in_(event_types))
+    if action is not None:
+        query = query.where(AuditEventORM.action == action)
+    return session.scalar(query.order_by(AuditEventORM.timestamp.desc(), AuditEventORM.id.desc()).limit(1))
+
+
+def _plan_freeze_error(
+    session: Session,
+    context: RuntimeExecutionContext,
+    contract: TaskContractORM,
+) -> str | None:
+    if not context.plan_id or not context.plan_freeze_id:
+        return "Selected workflow has no frozen EngineeringPlan."
+    plan = session.get(EngineeringPlanORM, context.plan_id)
+    freeze = session.get(PlanFreezeORM, context.plan_freeze_id)
+    if plan is None or freeze is None:
+        return "Selected workflow references an unknown EngineeringPlan or PlanFreeze."
+    if freeze.plan_id != plan.id:
+        return "Selected workflow PlanFreeze does not match the EngineeringPlan."
+    if plan.task_id != context.workflow_task_id or freeze.task_id != context.workflow_task_id:
+        return "Selected workflow frozen plan does not match the exact selected task."
+    if plan.project_id != context.project_id or freeze.project_id != context.project_id:
+        return "Selected workflow frozen plan does not match the execution project."
+    if plan.task_contract_id != contract.id or plan.task_contract_version != contract.version:
+        return "Selected workflow frozen plan is stale relative to the active task contract."
+    return None
+
+
+def _blocked_interval_seconds(item: dict[str, Any]) -> float:
+    blocked_at = _parse_datetime(item.get("blocked_at"))
+    resolved_at = _parse_datetime(item.get("resolved_at"))
+    if blocked_at is None or resolved_at is None or resolved_at < blocked_at:
+        return 0.0
+    return (resolved_at - blocked_at).total_seconds()
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _status_for_non_completion(adapter_result: ExecutionAdapterResult) -> RuntimeLoopStatus:

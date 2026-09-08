@@ -19,6 +19,17 @@ planning/execution adapters, and fail-closed task blocking or escalation.
 - Preserve one-dispatcher semantics. The runtime rejects dispatcher counts
   other than one and the CLI command runs under the canonical artifact-store
   write lock.
+- Enforce canonical pre-mutation release immediately before provider dispatch.
+  The selected workflow item may only reach the execution adapter when the
+  bound task is READY, its active contract is valid, its repository is
+  registered and attached to the task project, its frozen plan matches the
+  exact task/project/contract, and selection/mutation identity markers match.
+- Preserve explicit re-readiness semantics after setup failure. A repository
+  attachment made after a `MISSING_REPOSITORY` block does not implicitly
+  authorize execution; the task must pass a later `TASK_READY` transition.
+- Treat execution adapter exceptions as fail-closed task blocks. A provider
+  that raises before returning a canonical result does not complete work or
+  discard lifecycle state; the selected item is blocked with resume metadata.
 
 ## Runtime Observability
 
@@ -45,7 +56,23 @@ Focused runtime tests cover:
 - resume counting without duplicate completed substeps;
 - fresh-session readback of plan freeze and completed queue state;
 - replaceable execution adapter behavior;
+- fail-closed blocking when an execution adapter raises;
+- fail-closed pre-mutation blocking for missing repositories, stale readiness,
+  and selected-task/mutation identity mismatches before the provider callback
+  is reachable;
+- blocked-interval accounting for resumed items when canonical queue
+  timestamps include both `blocked_at` and `resolved_at`;
 - CLI entrypoint execution.
+
+## Phase 1.25 Darwin Pilot Closure Repair
+
+The first Native Runtime Darwin Pilot exposed a canonical pre-mutation release
+gap: `LTASK_000076` blocked on `MISSING_REPOSITORY` at `LAUDIT_002571` /
+`LAUDIT_002572`, yet isolated target mutation began without a later successful
+readiness transition. The repaired runtime treats that state as non-executable
+and records `NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED` before blocking the
+selected queue item. Provider dispatch is unreachable until the exact task is
+explicitly re-readied and its current repository/plan/freeze evidence validates.
 
 ## Limits
 

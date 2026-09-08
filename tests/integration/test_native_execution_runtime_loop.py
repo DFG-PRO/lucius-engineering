@@ -4,13 +4,40 @@ import subprocess
 import sys
 from pathlib import Path
 
-from lucius.domain.enums import PersistentWorkflowState, QueueWorkItemState
+from sqlalchemy import select
+
+from lucius.domain.enums import (
+    Actor,
+    AllowedAction,
+    AuthorityLevel,
+    Environment,
+    PersistentWorkflowState,
+    ProjectStatus,
+    ProjectType,
+    QueueWorkItemState,
+    RepositoryAccessMode,
+    RepositoryAdapterType,
+    TaskComplexity,
+    TaskPriority,
+)
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
-from lucius.persistence.orm import AuditEventORM, PersistentWorkflowORM, PlanFreezeORM
+from lucius.persistence.orm import (
+    AuditEventORM,
+    PersistentWorkflowORM,
+    PlanFreezeORM,
+    ProjectORM,
+    ProjectRepositoryAttachmentORM,
+    RepositoryRegistrationORM,
+    TaskContractORM,
+    TaskORM,
+    utc_now,
+)
 from lucius.pilots.workflows import PersistentWorkflowService
+from lucius.projects.service import ProjectRegistryService
 from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
 from lucius.runtime.schemas import ExecutionAdapterResult, RuntimeExecutionContext, RuntimeLoopConfig
 from lucius.runtime.service import ExecutionRuntimeLoopService
+from lucius.tasks.service import TaskService
 
 
 def test_runtime_loop_plans_freezes_executes_and_continues_between_tasks(session):
@@ -145,6 +172,26 @@ def test_runtime_execution_backend_is_replaceable(session):
     assert result.completed_tasks == 1
 
 
+def test_runtime_blocks_fail_closed_when_execution_adapter_raises(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-RAISES")])
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=RaisingExecutionAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.status == "FAILED"
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 0
+    assert result.stopped_reason == "Execution adapter raised before returning a canonical result."
+    assert row.active_task_id is None
+    assert row.task_backlog[0]["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert row.task_backlog[0]["blocker_category"] == "EXECUTION_ADAPTER_EXCEPTION"
+    assert row.task_backlog[0]["current_block_checkpoint_id"]
+
+
 def test_runtime_plan_and_result_survive_fresh_session(tmp_path: Path):
     database = tmp_path / "native-runtime.sqlite"
     engine = create_sqlite_engine(database)
@@ -219,6 +266,158 @@ def test_runtime_rejects_multi_dispatcher_configuration(session):
         raise AssertionError("multi-dispatcher runtime configuration should be rejected")
 
 
+def test_runtime_missing_repository_blocks_before_provider_dispatch(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-MISSING-REPO")],
+        attach_repository=False,
+    )
+    adapter = CountingExecutionAdapter()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=adapter,
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert result.status == "FAILED"
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 0
+    assert adapter.calls == []
+    assert result.provider_ids == []
+    assert row.task_backlog[0]["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert "not READY" in result.stopped_reason
+
+
+def test_runtime_repository_attachment_without_rereadiness_still_blocks_dispatch(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-ATTACH-NO-REREADY")],
+        attach_repository=False,
+    )
+    ProjectRegistryService(session).attach_repository(
+        project_id=workflow.project_id,
+        repository_id=workflow.repository_id,
+        actor=Actor.LUCIUS,
+    )
+    adapter = CountingExecutionAdapter()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=adapter,
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "FAILED"
+    assert adapter.calls == []
+    assert "not READY" in result.stopped_reason
+
+
+def test_runtime_explicit_rereadiness_after_repository_attachment_allows_dispatch(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-REREADY")],
+        attach_repository=False,
+    )
+    ProjectRegistryService(session).attach_repository(
+        project_id=workflow.project_id,
+        repository_id=workflow.repository_id,
+        actor=Actor.LUCIUS,
+    )
+    ready = TaskService(session).mark_ready(workflow.task_id, actor=Actor.LUCIUS)
+    adapter = CountingExecutionAdapter()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=adapter,
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert ready.valid is True
+    assert result.status == "COMPLETED"
+    assert result.completed_tasks == 1
+    assert adapter.calls == ["DARWIN-REREADY"]
+
+
+def test_runtime_stale_readiness_after_contract_change_blocks_dispatch(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-STALE-READY")])
+    task = session.get(TaskORM, workflow.task_id)
+    contract = session.query(TaskContractORM).filter(TaskContractORM.task_id == task.id).one()
+    TaskService(session).create_or_update_contract(
+        task_id=task.id,
+        objective=contract.objective,
+        acceptance_criteria=contract.acceptance_criteria,
+        constraints=contract.constraints,
+        repository_ids=contract.repository_ids,
+        allowed_actions=contract.allowed_actions,
+        environment=Environment(contract.environment),
+        authority_level=AuthorityLevel(contract.authority_level),
+        documentation_required=contract.documentation_required,
+        documentation_targets=contract.documentation_targets,
+        actor=Actor.LUCIUS,
+    )
+    adapter = CountingExecutionAdapter()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=adapter,
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "FAILED"
+    assert adapter.calls == []
+    assert "readiness is stale" in result.stopped_reason
+
+
+def test_runtime_selected_task_identity_mismatch_blocks_before_provider_dispatch(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-MISMATCH") | {"mutates_item_id": "DARWIN-OTHER"}],
+    )
+    adapter = CountingExecutionAdapter()
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=adapter,
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "FAILED"
+    assert adapter.calls == []
+    assert "mutation identity does not match" in result.stopped_reason
+
+
+def test_runtime_resume_blocked_interval_uses_canonical_queue_timestamps(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[
+            _item("DARWIN-TIMED-RESUME", state=QueueWorkItemState.READY_TO_RESUME)
+            | {
+                "blocked_at": "2026-09-08T10:00:00+00:00",
+                "resolved_at": "2026-09-08T10:02:30+00:00",
+                "current_block_checkpoint_id": "LQCHK_TIMED",
+                "block_checkpoints": [{"id": "LQCHK_TIMED", "item_version": 1}],
+            }
+        ],
+    )
+
+    result = ExecutionRuntimeLoopService(
+        session,
+        planning_adapter=ScriptedRuntimePlanningAdapter(),
+        execution_adapter=ScriptedExecutionAdapter(),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "COMPLETED"
+    assert result.resumed_tasks == 1
+    assert result.blocked_task_time_seconds == 150.0
+
+
 class CustomExecutionAdapter:
     provider_id = "custom-test-adapter"
 
@@ -234,18 +433,136 @@ class CustomExecutionAdapter:
         )
 
 
-def _workflow(session, *, project_id: str, backlog: list[dict]):
+class RaisingExecutionAdapter:
+    provider_id = "raising-test-adapter"
+
+    def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
+        raise RuntimeError(f"boom for {context.item_id}")
+
+
+class CountingExecutionAdapter:
+    provider_id = "counting-test-adapter"
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
+        self.calls.append(context.item_id)
+        return ExecutionAdapterResult(
+            outcome="COMPLETED",
+            completed_substeps=[f"{context.item_id}: safely dispatched"],
+            active_execution_seconds=0.25,
+        )
+
+
+def _workflow(
+    session,
+    *,
+    project_id: str,
+    backlog: list[dict],
+    attach_repository: bool = True,
+):
+    project = _ensure_project(session, project_id)
+    first_item_id = str(backlog[0].get("item_id") or backlog[0].get("task_id"))
+    repository = _ensure_repository(session, project.id, f"{first_item_id}_REPOSITORY")
+    if attach_repository:
+        _ensure_attachment(session, project.id, repository.id)
+    task = TaskService(session).create_task(
+        project_id=project.id,
+        title=f"Runtime task {first_item_id}",
+        objective="Execute a bounded Darwin runtime task.",
+        priority=TaskPriority.NORMAL,
+        complexity=TaskComplexity.T1,
+        authority_level=AuthorityLevel.L1,
+        created_by=Actor.LUCIUS,
+    )
+    TaskService(session).create_or_update_contract(
+        task_id=task.id,
+        objective=task.objective,
+        acceptance_criteria=["Runtime dispatch must pass canonical pre-mutation readiness."],
+        constraints=["ONE_LOGICAL_DISPATCHER", "NO_PUSH", "NO_MERGE", "NO_DEPLOY"],
+        repository_ids=[repository.id],
+        allowed_actions=[
+            AllowedAction.READ_REPOSITORY,
+            AllowedAction.RUN_TESTS,
+            AllowedAction.WRITE_SOURCE,
+            AllowedAction.WRITE_TESTS,
+            AllowedAction.WRITE_DOCUMENTATION,
+        ],
+        environment=Environment.DEVELOPMENT,
+        authority_level=AuthorityLevel.L1,
+        documentation_required=False,
+        actor=Actor.LUCIUS,
+    )
+    TaskService(session).mark_ready(task.id, actor=Actor.LUCIUS)
     return PersistentWorkflowService(session).create(
         objective="Execute a bounded Darwin runtime task.",
         expected_main_head="HEAD",
         isolated_branch="lucius/native-runtime-test",
         worktree_path="/private/tmp/darwin-runtime-test",
         authority_tier="ISOLATED_DEVELOPMENT_ONLY",
-        project_id=project_id,
-        repository_id=f"{project_id}_REPOSITORY",
-        task_id=f"{project_id}_TASK",
+        project_id=project.id,
+        repository_id=repository.id,
+        task_id=task.id,
         task_backlog=backlog,
         pending_task_ids=[str(item.get("item_id") or item.get("task_id")) for item in backlog],
+    )
+
+
+def _ensure_project(session, project_id: str) -> ProjectORM:
+    project = session.get(ProjectORM, project_id)
+    if project is not None:
+        return project
+    project = ProjectORM(
+        id=project_id,
+        name=f"Project {project_id}",
+        slug=project_id.lower(),
+        project_type=ProjectType.DFG_INTERNAL.value,
+        status=ProjectStatus.ACTIVE.value,
+        documentation_policy={},
+        default_authority_level=AuthorityLevel.L1.value,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session.add(project)
+    session.flush()
+    return project
+
+
+def _ensure_repository(session, project_id: str, repository_id: str) -> RepositoryRegistrationORM:
+    repository = session.get(RepositoryRegistrationORM, repository_id)
+    if repository is not None:
+        return repository
+    repository = RepositoryRegistrationORM(
+        id=repository_id,
+        project_id=project_id,
+        name=f"Repository {repository_id}",
+        adapter_type=RepositoryAdapterType.LOCAL_GIT.value,
+        location=f"/private/tmp/{repository_id.lower()}",
+        default_branch="main",
+        access_mode=RepositoryAccessMode.READ_ONLY.value,
+        status="ACTIVE",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session.add(repository)
+    session.flush()
+    return repository
+
+
+def _ensure_attachment(session, project_id: str, repository_id: str) -> None:
+    existing = session.scalar(
+        select(ProjectRepositoryAttachmentORM).where(
+            ProjectRepositoryAttachmentORM.project_id == project_id,
+            ProjectRepositoryAttachmentORM.repository_id == repository_id,
+        )
+    )
+    if existing is not None:
+        return
+    ProjectRegistryService(session).attach_repository(
+        project_id=project_id,
+        repository_id=repository_id,
+        actor=Actor.LUCIUS,
     )
 
 
