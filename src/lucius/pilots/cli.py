@@ -88,7 +88,10 @@ def main() -> None:
     runtime_loop = sub.add_parser("run-runtime-loop")
     runtime_loop.add_argument("workflow_ids", nargs="+")
     runtime_loop.add_argument("--max-tasks", type=int, default=1)
-    runtime_loop.add_argument("--provider-id", default="scripted-execution-adapter")
+    runtime_loop.add_argument("--provider-id", default=None)
+    runtime_loop.add_argument("--execution-provider", choices=["scripted", "ollama"], default="scripted")
+    runtime_loop.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
+    runtime_loop.add_argument("--ollama-model", default="qwen3:8b")
     runtime_loop.add_argument("--stop-on-block", action="store_true")
 
     args = parser.parse_args()
@@ -245,11 +248,19 @@ def _run_command(args: argparse.Namespace) -> None:
             print(result.model_dump_json(indent=2))
         elif args.command == "run-runtime-loop":
             from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
+            from lucius.runtime.ollama import OllamaExecutionProvider
             from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
             from lucius.runtime.schemas import RuntimeLoopConfig
             from lucius.runtime.service import ExecutionRuntimeLoopService
 
-            execution_provider = ScriptedExecutionAdapter(provider_id=args.provider_id)
+            if args.execution_provider == "ollama":
+                execution_provider = OllamaExecutionProvider(
+                    provider_id=args.provider_id or "ollama-local",
+                    endpoint=args.ollama_endpoint,
+                    model=args.ollama_model,
+                )
+            else:
+                execution_provider = ScriptedExecutionAdapter(provider_id=args.provider_id or "scripted-execution-adapter")
             execution_router = ModelExecutionRouter(
                 session,
                 registry=RuntimeProviderRegistry([execution_provider]),

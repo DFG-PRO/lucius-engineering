@@ -438,8 +438,20 @@ def _evaluate_provider(
     )
 
 
-def _provider_selection_key(registration: RuntimeProviderRegistration) -> tuple[int, str]:
-    return (-registration.reliability_score, registration.provider_id)
+_RUNTIME_COST_RANK = {
+    "LOCAL_FREE": 0,
+    "FREE": 0,
+    "LOW_COST": 1,
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "PREMIUM": 4,
+}
+
+
+def _provider_selection_key(registration: RuntimeProviderRegistration) -> tuple[int, int, str]:
+    cost_rank = _RUNTIME_COST_RANK.get(str(registration.cost_class or "").upper(), 99)
+    return (cost_rank, -registration.reliability_score, registration.provider_id)
 
 
 def _selected_model_id(registration: RuntimeProviderRegistration, request: RuntimeExecutionRequest) -> str | None:

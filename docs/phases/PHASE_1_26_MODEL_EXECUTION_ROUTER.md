@@ -72,10 +72,37 @@ self-registration.
 authorized request. It filters providers by status, availability, required
 capabilities, task type, project/repository policy, isolation mode, tool
 requirements, and context limit. Eligible providers are selected
-deterministically by reliability score and provider ID.
+deterministically by cost class, reliability score, and provider ID, so local
+free or low-cost capable providers are preferred before premium providers once
+health and capability constraints have already passed.
 
-The initial policy is intentionally simple. It is auditable and deterministic,
-not an optimization marketplace.
+The policy is intentionally simple. It is auditable and deterministic, not an
+optimization marketplace.
+
+## Local Ollama Provider
+
+Lucius now includes a minimal `OllamaExecutionProvider` for real local
+execution through an Ollama HTTP endpoint. The provider implements the existing
+runtime provider contract and receives only a provider-neutral
+`RuntimeExecutionRequest`; it does not receive global scheduling authority,
+lifecycle authority, release-gate authority, frozen-plan authority,
+repository-selection authority, or owner-authorization authority.
+
+The provider requires `ISOLATED_WORKTREE`, validates that the workspace is
+inside configured temporary roots, sends bounded task instructions to the
+selected local model, captures the model response, applies only bounded
+relative file changes returned as strict JSON, records provider/model identity,
+latency, token counts exposed by Ollama, zero estimated cost, verification
+handoff evidence, and fails closed on unavailable endpoints, malformed
+responses, unsafe paths, missing workspaces, or missing file changes.
+
+The canonical runtime CLI can select it with:
+
+```text
+python -m lucius.pilots.cli run-runtime-loop --execution-provider ollama --ollama-model qwen3:8b
+```
+
+`qwen3:8b` is the preferred local text/code model when available.
 
 ## Retry And Failover
 
