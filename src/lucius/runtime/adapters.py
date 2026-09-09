@@ -84,7 +84,8 @@ class ScriptedRuntimePlanningAdapter:
                 created_by_runtime=False,
             )
 
-        model_plan = self._plans_by_workflow_id.get(workflow_id) or _default_model_plan(workflow)
+        contract = _active_contract(session, workflow.task_id) if workflow.task_id else None
+        model_plan = self._plans_by_workflow_id.get(workflow_id) or _default_model_plan(workflow, contract)
         context = _planning_context_from_workflow(session, workflow)
         plan = EngineeringPlanRepository(session).create(
             context=context,
@@ -306,15 +307,19 @@ def _planning_context_from_workflow(session: Session, workflow: PersistentWorkfl
     )
 
 
-def _default_model_plan(workflow: PersistentWorkflowORM) -> ModelEngineeringPlanOutput:
+def _default_model_plan(
+    workflow: PersistentWorkflowORM,
+    contract: TaskContractORM | None = None,
+) -> ModelEngineeringPlanOutput:
     task_id = workflow.task_id or workflow.id
+    affected_files = _runtime_affected_files(workflow, contract)
     return ModelEngineeringPlanOutput(
         summary=f"Runtime plan for {task_id}",
         objective=workflow.objective,
         risk_level=PlanRiskLevel.LOW,
         required_authority_level=AuthorityLevel.L1,
         affected_components=["native_execution_runtime_loop"],
-        affected_files=[AffectedFilePlan(path=workflow.worktree_path, status=AffectedFileStatus.UNKNOWN)],
+        affected_files=affected_files,
         steps=[
             PlanStep(
                 step_id="STEP-1",
@@ -361,6 +366,25 @@ def _workflow_title(workflow: PersistentWorkflowORM) -> str:
         if item.get("title"):
             return str(item["title"])
     return workflow.objective
+
+
+def _runtime_affected_files(
+    workflow: PersistentWorkflowORM,
+    contract: TaskContractORM | None,
+) -> list[AffectedFilePlan]:
+    paths = list(contract.documentation_targets or []) if contract else []
+    if not paths:
+        paths = [
+            str(item.get("path"))
+            for item in workflow.task_backlog or []
+            if isinstance(item, dict) and item.get("path")
+        ]
+    if not paths:
+        paths = ["docs/runtime.md"]
+    return [
+        AffectedFilePlan(path=path, status=AffectedFileStatus.NEW_PROPOSED)
+        for path in dict.fromkeys(paths)
+    ]
 
 
 def _active_contract(session: Session, task_id: str) -> TaskContractORM | None:
