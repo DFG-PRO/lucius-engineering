@@ -10,6 +10,11 @@ from lucius.domain.enums import Actor, AuthorityLevel
 from lucius.persistence.orm import AuditEventORM
 from lucius.persistence.repositories import next_id
 from lucius.runtime.provider_quality import evidence_sensitive_provider_quality_issues
+from lucius.runtime.schema_constraints import (
+    SKELETON_METADATA_KEY,
+    enforce_schema_constrained_output,
+    schema_constrained_output_skeleton,
+)
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
     RuntimeExecutionContext,
@@ -241,6 +246,14 @@ class ModelExecutionRouter:
             raise ValueError("Runtime execution context must include frozen plan references.")
         execution_id = next_id(self.session, "model_execution")
         queue_item = context.queue_item or {}
+        context_limits = dict(queue_item.get("context_limits", {}))
+        metadata = {
+            "queue_item_version": queue_item.get("version"),
+            "queue_item_priority": queue_item.get("priority"),
+        }
+        skeleton = schema_constrained_output_skeleton(context_limits)
+        if skeleton:
+            metadata[SKELETON_METADATA_KEY] = skeleton
         return RuntimeExecutionRequest(
             execution_id=execution_id,
             task_id=context.workflow_task_id,
@@ -258,14 +271,11 @@ class ModelExecutionRouter:
             task_type=str(queue_item.get("task_type", "engineering")),
             tool_requirements=[str(item) for item in queue_item.get("tool_requirements", [])],
             isolation_mode=str(queue_item.get("isolation_mode", "ISOLATED_WORKTREE")),
-            context_limits=dict(queue_item.get("context_limits", {})),
+            context_limits=context_limits,
             timeout_seconds=queue_item.get("timeout_seconds"),
             budget_policy=dict(queue_item.get("budget_policy", {})),
             release_evidence_refs=_release_evidence_refs(self.session, context),
-            metadata={
-                "queue_item_version": queue_item.get("version"),
-                "queue_item_priority": queue_item.get("priority"),
-            },
+            metadata=metadata,
         )
 
     def _route(
@@ -524,6 +534,9 @@ def _enforce_provider_result_contract(
                 },
             }
         )
+    result = enforce_schema_constrained_output(request, result)
+    if result.status.value != "COMPLETED":
+        return result
     quality_issues = evidence_sensitive_provider_quality_issues(request, result)
     if result.status.value == "COMPLETED" and quality_issues:
         return result.model_copy(

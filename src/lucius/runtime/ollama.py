@@ -15,6 +15,7 @@ from lucius.runtime.schemas import (
     RuntimeProviderRegistration,
     RuntimeRetryability,
 )
+from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
 
 
 @dataclass(frozen=True)
@@ -244,26 +245,33 @@ class _ProviderBlocked(Exception):
 
 
 def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> str:
-    return "\n".join(
-        [
-            "You are a bounded local execution provider for Lucius.",
-            "Lucius retains scheduling, lifecycle, repository selection, release, and authorization authority.",
-            "Work only inside the supplied isolated workspace.",
-            "Return strict JSON only, with no markdown.",
-            "Schema:",
-            '{"summary":"...","completed_substeps":["..."],"files":[{"path":"relative/path","content":"..."}],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
-            f"Execution id: {runtime_request.execution_id}",
-            f"Task id: {runtime_request.task_id}",
-            f"Plan id: {runtime_request.plan_id}",
-            f"Plan freeze id: {runtime_request.plan_freeze_id}",
-            f"Allowed mutation scope: {runtime_request.allowed_mutation_scope}",
-            f"Workspace: {workspace}",
-            f"Task intent: {runtime_request.task_intent}",
-            "Keep the change tiny, deterministic, and automatically verifiable.",
-            "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
-            "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
-        ]
-    )
+    lines = [
+        "You are a bounded local execution provider for Lucius.",
+        "Lucius retains scheduling, lifecycle, repository selection, release, and authorization authority.",
+        "Work only inside the supplied isolated workspace.",
+        "Return strict JSON only, with no markdown.",
+        "Schema:",
+        '{"summary":"...","completed_substeps":["..."],"files":[{"path":"relative/path","content":"..."}],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
+        f"Execution id: {runtime_request.execution_id}",
+        f"Task id: {runtime_request.task_id}",
+        f"Plan id: {runtime_request.plan_id}",
+        f"Plan freeze id: {runtime_request.plan_freeze_id}",
+        f"Allowed mutation scope: {runtime_request.allowed_mutation_scope}",
+        f"Workspace: {workspace}",
+        f"Task intent: {runtime_request.task_intent}",
+        "Keep the change tiny, deterministic, and automatically verifiable.",
+        "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
+        "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
+    ]
+    skeleton = runtime_request.metadata.get(SKELETON_METADATA_KEY)
+    if isinstance(skeleton, str) and skeleton.strip():
+        lines.extend(
+            [
+                "Schema-constrained output skeleton follows. Preserve this required structure.",
+                skeleton.strip(),
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _parse_model_payload(body: dict[str, Any]) -> dict[str, Any]:

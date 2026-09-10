@@ -7,6 +7,7 @@ import pytest
 from lucius.persistence.orm import AuditEventORM
 from lucius.runtime.adapters import ScriptedExecutionAdapter
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
+from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
 from lucius.runtime.schemas import (
     RuntimeExecutionContext,
     RuntimeExecutionRequest,
@@ -349,12 +350,198 @@ def test_router_still_fails_unclassified_financial_or_research_quantities(sessio
     )
 
 
+def test_router_supplies_schema_constrained_skeleton_to_provider(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text(_schema_valid_conservative_content(), encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-schema",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(worktree_path=tmp_path, queue_item=_schema_queue_item("readiness.md"))
+    )
+
+    request = provider.requests[0]
+    assert result.outcome == "COMPLETED"
+    assert "readiness.md" in request.metadata[SKELETON_METADATA_KEY]
+    assert "## Current Verified Facts" in request.metadata[SKELETON_METADATA_KEY]
+    assert "DERIVED_VALUE" in request.metadata[SKELETON_METADATA_KEY]
+
+
+def test_router_structurally_repairs_missing_required_category_without_inventing_content(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text(
+        _schema_valid_conservative_content().replace(
+            "- DERIVED_VALUE: NOT_ESTABLISHED; no derived values were supplied by verified local evidence.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    provider = SequencedProvider(
+        "provider-schema-repair",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(worktree_path=tmp_path, queue_item=_schema_queue_item("readiness.md"))
+    )
+
+    repaired = report.read_text(encoding="utf-8")
+    assert result.outcome == "COMPLETED"
+    assert "DERIVED_VALUE: NOT_ESTABLISHED" in repaired
+    assert "provider did not supply verified content" in repaired
+    assert result.verification_handoff_metadata["schema_constraint"]["status"] == "PASS_WITH_STRUCTURAL_REPAIR"
+
+
+def test_router_fails_missing_structure_when_safe_repair_is_not_allowed(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text("- FACT: evidence source exists.\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-schema-missing",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            queue_item=_schema_queue_item("readiness.md", allow_safe_structural_repair=False),
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "SCHEMA_CONSTRAINT_VALIDATION_FAILED"
+    assert result.provider_error_metadata["schema_constraint_issues"][0]["reason"] == "MISSING_REQUIRED_STRUCTURE"
+
+
+def test_router_schema_constrained_output_still_fails_unsupported_numeric_claim(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text(_schema_valid_conservative_content() + "\n- Win rate 55%\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-schema-quantity",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(worktree_path=tmp_path, queue_item=_schema_queue_item("readiness.md"))
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+
+
+def test_router_schema_constrained_output_fails_fabricated_evidence(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text(
+        _schema_valid_conservative_content() + "\n- FACT: verified OOS result exists.\n",
+        encoding="utf-8",
+    )
+    provider = SequencedProvider(
+        "provider-schema-fabrication",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(worktree_path=tmp_path, queue_item=_schema_queue_item("readiness.md"))
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "SCHEMA_CONSTRAINT_VALIDATION_FAILED"
+    assert result.provider_error_metadata["schema_constraint_issues"][0]["reason"] == (
+        "FORBIDDEN_SCHEMA_CONSTRAINED_CONTENT"
+    )
+
+
+def test_router_schema_constrained_conservative_output_passes_and_records_provider_identity(session, tmp_path):
+    report = tmp_path / "readiness.md"
+    report.write_text(_schema_valid_conservative_content(), encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-schema-valid",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "readiness.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(worktree_path=tmp_path, queue_item=_schema_queue_item("readiness.md"))
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert result.provider_id == "provider-schema-valid"
+    assert result.model_id == "scripted-runtime-model"
+    assert result.verification_handoff_metadata["schema_constraint"]["status"] == "PASS"
+
+
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:
     return ModelExecutionRouter(
         session,
         registry=RuntimeProviderRegistry(providers),
         max_provider_retries=max_provider_retries,
         max_failovers=max_failovers,
+    )
+
+
+def _schema_queue_item(
+    path: str,
+    *,
+    allow_safe_structural_repair: bool = True,
+) -> dict:
+    return {
+        "context_limits": {
+            "evidence_sensitive": True,
+            "schema_constraint": {
+                "files": [
+                    {
+                        "path": path,
+                        "required_sections": [
+                            "## Current Verified Facts",
+                            "## Evidence Required Before Controlled Paper Validation",
+                            "## Explicit Unknowns",
+                            "## Disallowed Conclusions",
+                            "## Final Decision",
+                        ],
+                        "required_labels": [
+                            "FACT",
+                            "DERIVED_VALUE",
+                            "ASSUMPTION",
+                            "PROPOSED_PARAMETER",
+                            "UNKNOWN",
+                            "REQUIRES_VALIDATION",
+                            "INSUFFICIENT_EVIDENCE",
+                        ],
+                        "forbidden_patterns": [
+                            r"verified\s+OOS\s+result\s+exists",
+                            r"ready\s+for\s+controlled\s+paper\s+validation",
+                        ],
+                        "allow_safe_structural_repair": allow_safe_structural_repair,
+                    }
+                ]
+            },
+        }
+    }
+
+
+def _schema_valid_conservative_content() -> str:
+    return "\n".join(
+        [
+            "# Paper Validation Readiness",
+            "",
+            "## Current Verified Facts",
+            "- FACT: Darwin isolated workspace evidence source exists.",
+            "- DERIVED_VALUE: NOT_ESTABLISHED; no derived values were supplied by verified local evidence.",
+            "",
+            "## Evidence Required Before Controlled Paper Validation",
+            "- REQUIRES_VALIDATION: Exported historical result artifact must be produced and verified.",
+            "",
+            "## Explicit Unknowns",
+            "- UNKNOWN: Strategy performance remains NOT_ESTABLISHED.",
+            "",
+            "## Disallowed Conclusions",
+            "- ASSUMPTION: No unsupported performance conclusion may be treated as fact.",
+            "- PROPOSED_PARAMETER: Protocol values require review before use.",
+            "",
+            "## Final Decision",
+            "- INSUFFICIENT_EVIDENCE: Existing strategy remains in evidence-gathering status.",
+            "",
+        ]
     )
 
 

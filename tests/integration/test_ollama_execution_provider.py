@@ -4,6 +4,7 @@ from pathlib import Path
 
 from lucius.runtime.ollama import OllamaExecutionProvider, OllamaHttpResponse
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
+from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
 from lucius.runtime.schemas import RuntimeExecutionContext, RuntimeExecutionRequest
 
 
@@ -80,6 +81,28 @@ def test_router_selected_ollama_without_codex_registered(session, tmp_path):
     assert (tmp_path / "provider-proof.txt").exists()
 
 
+def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
+    provider = FakeOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(
+        update={
+            "metadata": {
+                SKELETON_METADATA_KEY: (
+                    "File: docs/runtime/readiness.md\n"
+                    "## Current Verified Facts\n"
+                    "- DERIVED_VALUE: NOT_ESTABLISHED"
+                )
+            }
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload is not None
+    assert "Schema-constrained output skeleton follows" in provider.last_payload["prompt"]
+    assert "DERIVED_VALUE: NOT_ESTABLISHED" in provider.last_payload["prompt"]
+
+
 class FakeOllamaProvider(OllamaExecutionProvider):
     def __init__(
         self,
@@ -91,6 +114,7 @@ class FakeOllamaProvider(OllamaExecutionProvider):
         super().__init__(provider_id=provider_id, allowed_workspace_roots=[workspace])
         self.files = files or [{"path": "provider-proof.txt", "content": "created by local ollama\n"}]
         self.generate_called = False
+        self.last_payload: dict | None = None
 
     def is_available(self) -> bool:
         return True
@@ -99,6 +123,7 @@ class FakeOllamaProvider(OllamaExecutionProvider):
         assert path == "/api/generate"
         assert payload["model"] == "qwen3:8b"
         self.generate_called = True
+        self.last_payload = payload
         file_payload = ",".join(
             '{"path":' + repr(item["path"]).replace("'", '"') + ',"content":' + repr(item["content"]).replace("'", '"') + "}"
             for item in self.files
