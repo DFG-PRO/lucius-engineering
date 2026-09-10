@@ -260,6 +260,8 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
             f"Workspace: {workspace}",
             f"Task intent: {runtime_request.task_intent}",
             "Keep the change tiny, deterministic, and automatically verifiable.",
+            "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
+            "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
         ]
     )
 

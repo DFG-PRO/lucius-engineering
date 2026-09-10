@@ -9,6 +9,7 @@ from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, AuthorityLevel
 from lucius.persistence.orm import AuditEventORM
 from lucius.persistence.repositories import next_id
+from lucius.runtime.provider_quality import evidence_sensitive_provider_quality_issues
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
     RuntimeExecutionContext,
@@ -171,7 +172,7 @@ class ModelExecutionRouter:
                         "failover_from_provider_id": previous_provider_id,
                     }
                 )
-                provider_result = _enforce_provider_result_contract(provider_result)
+                provider_result = _enforce_provider_result_contract(provider_result, request)
                 self.audit.record(
                     event_type="MODEL_EXECUTION_PROVIDER_INVOCATION_COMPLETED",
                     actor=self.actor.value,
@@ -505,7 +506,10 @@ def _provider_result_audit_payload(result: RuntimeExecutionResult, attempt_numbe
     }
 
 
-def _enforce_provider_result_contract(result: RuntimeExecutionResult) -> RuntimeExecutionResult:
+def _enforce_provider_result_contract(
+    result: RuntimeExecutionResult,
+    request: RuntimeExecutionRequest,
+) -> RuntimeExecutionResult:
     if result.status.value == "COMPLETED" and not result.verification:
         return result.model_copy(
             update={
@@ -517,6 +521,22 @@ def _enforce_provider_result_contract(result: RuntimeExecutionResult) -> Runtime
                 "provider_error_metadata": {
                     **result.provider_error_metadata,
                     "reason": "COMPLETED result requires verification handoff evidence.",
+                },
+            }
+        )
+    quality_issues = evidence_sensitive_provider_quality_issues(request, result)
+    if result.status.value == "COMPLETED" and quality_issues:
+        return result.model_copy(
+            update={
+                "status": RuntimeExecutionOutcome.FAILED,
+                "provider_native_status": result.provider_native_status or "COMPLETED_WITH_UNSUPPORTED_CLAIMS",
+                "retryability": RuntimeRetryability.NON_RETRYABLE,
+                "failure_class": "UNSUPPORTED_QUANTITATIVE_CLAIM",
+                "mutation_summary": "Evidence-sensitive provider output contains untyped or unsupported quantitative claims.",
+                "provider_error_metadata": {
+                    **result.provider_error_metadata,
+                    "reason": "Evidence-sensitive quantitative claims require FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN classification.",
+                    "quality_issues": quality_issues,
                 },
             }
         )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from lucius.persistence.orm import AuditEventORM
 from lucius.runtime.adapters import ScriptedExecutionAdapter
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
@@ -208,6 +210,80 @@ def test_router_request_is_provider_neutral_and_contains_release_refs(session):
     assert not hasattr(request, "session")
 
 
+def test_router_fails_evidence_sensitive_quantitative_output_without_claim_typing(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text("- Win Rate: 55%\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-claims",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "QUANTITATIVE_CLAIM_MISSING_CLASSIFICATION"
+    )
+
+
+def test_router_fails_evidence_sensitive_fact_without_evidence_source(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text("- FACT: Win Rate 55% was observed.\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-claims",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "FACT_OR_DERIVED_VALUE_MISSING_EVIDENCE_REFERENCE"
+    )
+
+
+def test_router_accepts_evidence_sensitive_quantitative_output_with_safe_claim_typing(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text(
+        "\n".join(
+            [
+                "- UNKNOWN: Win Rate 55% is NOT_ESTABLISHED.",
+                "- PROPOSED_PARAMETER: Minimum trade count threshold of 20 trades requires owner review before use.",
+                "- FACT: Trading Dashboard commit 0363221ea126a7ee3f7fc971b3ae408be7127db8 was inspected as read-only evidence source.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    provider = SequencedProvider(
+        "provider-claims",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:
     return ModelExecutionRouter(
         session,
@@ -217,7 +293,12 @@ def _router(session, providers, *, max_provider_retries: int = 0, max_failovers:
     )
 
 
-def _context(queue_item: dict | None = None) -> RuntimeExecutionContext:
+def _context(
+    queue_item: dict | None = None,
+    *,
+    worktree_path: Path | str = "/private/tmp/runtime-router-test",
+    title: str = "Implement a bounded runtime task",
+) -> RuntimeExecutionContext:
     return RuntimeExecutionContext(
         workflow_id="LWORK_TEST",
         item_id="ITEM_A",
@@ -225,9 +306,9 @@ def _context(queue_item: dict | None = None) -> RuntimeExecutionContext:
         project_id="PROJECT_A",
         repository_id="REPO_A",
         workflow_task_id="LTASK_TEST",
-        title="Implement a bounded runtime task",
+        title=title,
         workflow_objective="Execute a bounded runtime task",
-        worktree_path="/private/tmp/runtime-router-test",
+        worktree_path=str(worktree_path),
         authority_tier="ISOLATED_DEVELOPMENT_ONLY",
         plan_id="LPLAN_TEST",
         plan_freeze_id="LFREEZE_TEST",
@@ -276,6 +357,7 @@ class SequencedProvider(ScriptedExecutionAdapter):
             routing_decision_id=request.routing_decision_id,
             status=outcome.get("status", "COMPLETED"),
             provider_native_status=outcome.get("provider_native_status", outcome.get("status", "COMPLETED")),
+            output_artifact_refs=outcome.get("output_artifact_refs", []),
             completed_substeps=outcome.get("completed_substeps", []),
             evidence=outcome.get("evidence", [{"artifact": "router-provider-result"}]),
             verification=outcome.get("verification", [{"result": "PASS"}]),
