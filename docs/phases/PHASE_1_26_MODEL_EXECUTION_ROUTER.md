@@ -104,6 +104,87 @@ python -m lucius.pilots.cli run-runtime-loop --execution-provider ollama --ollam
 
 `qwen3:8b` is the preferred local text/code model when available.
 
+Current locally observed Ollama models include:
+
+- `qwen3:8b`;
+- `qwen3-coder:30b`;
+- `qwen2.5vl:7b`;
+- `qwen2.5vl:3b`.
+
+These model names are local environment evidence, not a universal Lucius
+assumption. `qwen3:8b` remains the Tier 1 candidate/default for bounded,
+simple, automatically verifiable local tasks. `qwen3-coder:30b` is validated
+for complex supervised schema-constrained work after Benchmark 3 PASS, but it
+is not qualified for unattended operation or Night Shift use. `qwen2.5vl:7b`
+is available for visual workloads and possible Production Engine use, but
+Production Engine integration and qualification remain governed by that
+project's own evidence and authority gates. Codex and other premium providers
+remain escalation paths; they are not required for validated local Ollama
+provider execution.
+
+On the current Mac mini with Apple M2 and 24 GB unified memory,
+`qwen3-coder:30b` should be treated as a heavy local workload. Avoid concurrent
+heavy model workloads until resource scheduling and concurrency are explicitly
+validated for this machine. This is operational guidance for the observed host,
+not a Lucius architecture rule.
+
+## Provider Quality Gate
+
+Evidence-sensitive provider outputs are subject to deterministic quality
+validation after provider execution and before Lucius accepts the normalized
+provider result. The gate distinguishes:
+
+- `FACT`;
+- `DERIVED_VALUE`;
+- `ASSUMPTION`;
+- `PROPOSED_PARAMETER`;
+- `UNKNOWN`;
+- `REQUIRES_VALIDATION`;
+- `INSUFFICIENT_EVIDENCE`.
+
+Unsupported quantitative or factual claims in evidence-sensitive workflows
+must fail closed. Proposed protocol values, thresholds, dates, costs, markets,
+credentials, or performance values must not be represented as verified facts
+without supplied evidence. `FACT` and `DERIVED_VALUE` quantitative claims must
+carry evidence/source/provenance on the same claim line where the current
+line-oriented gate can verify it.
+
+Identifier and provenance tokens are not quantitative claims merely because
+they contain numbers. Git SHAs, file/content hashes, UUIDs, Lucius task,
+workflow, audit, plan, and freeze IDs, version identifiers, semantic asset IDs,
+and repository identifiers may appear as provenance without being classified as
+financial or research quantities. This exemption is intentionally narrow and
+does not apply to genuine financial, trading, performance, threshold, window,
+date, leverage, or research-metric claims.
+
+## Schema-Constrained Provider Execution
+
+For schema-sensitive work, Lucius can now use a provider-neutral
+schema-constrained execution path:
+
+```text
+canonical schema
+  -> deterministic output skeleton
+  -> provider completion
+  -> safe deterministic structural repair
+  -> provider quality validation
+  -> deterministic acceptance or fail closed
+```
+
+The runtime/router path derives a deterministic output skeleton from the
+request's schema constraint and passes it to the provider in request metadata.
+The Ollama provider includes that skeleton in the model prompt and instructs
+the model to preserve the required structure. After provider execution, Lucius
+checks required files, sections, labels, and explicitly forbidden semantic
+patterns before running the evidence-sensitive quality gate.
+
+Deterministic repair is limited to safe structural placeholders, such as
+restoring a missing required empty category with
+`DERIVED_VALUE: NOT_ESTABLISHED`. It must not invent semantic content,
+evidence, conclusions, thresholds, performance, or readiness claims. Unsafe
+semantic content, fabricated evidence, missing files, unsafe paths, unsupported
+quantitative claims, or unrecoverable schema omissions fail closed.
+
 ## Retry And Failover
 
 Provider retry, provider failover, and Lucius deterministic correction are
@@ -158,7 +239,26 @@ policy/tool/context exclusion, no-provider fail-closed behavior, bounded
 retry, non-retryable failure, bounded failover, failover exhaustion, result
 normalization, routing/provider/model audit evidence, provider-neutral request
 shape, runtime release-gate containment, CLI routing evidence, missing
-verification-handoff rejection, and provider replaceability.
+verification-handoff rejection, provider replaceability, Ollama prompt skeleton
+delivery, schema-constrained structural validation, safe missing-category
+repair, unsupported quantitative-claim rejection, fabricated-evidence
+rejection, conservative schema-valid output acceptance, provenance identifier
+handling, and provider/model identity preservation.
+
+Relevant validated local-provider commits:
+
+- `89fe49d49922f986aeef5dc3e27368b3c1695492`: added the local Ollama runtime provider;
+- `0b6b661c33a9128e03c3c97c848374d1269399be`: preserved the native runtime planning path repair;
+- `f5a4069ab73733b99a7f523f99f69a0aaf4d925d`: hardened provider output quality checks;
+- `d4707eb9db37a096480e46aa258a60457f32836d`: refined identifier/provenance handling;
+- `a01494384f4285735306dadac3e493ad8ec46fd7`: added schema-constrained provider execution.
+
+Post-commit benchmark `LBENCH_000109` passed
+`LUCIUS_CORE_BENCH_V0_1` with aggregate 100 and hard gate PASS on the clean
+`a01494384f4285735306dadac3e493ad8ec46fd7` tree. Benchmark 3 for
+`qwen3-coder:30b` passed under schema-constrained execution, with the caveat
+that one successful benchmark qualifies it only for supervised Tier 2 use with
+deterministic validation, not for unattended operation.
 
 ## Deferred
 
