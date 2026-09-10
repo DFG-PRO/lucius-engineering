@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from lucius.persistence.orm import AuditEventORM
 from lucius.runtime.adapters import ScriptedExecutionAdapter
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
@@ -282,6 +284,69 @@ def test_router_accepts_evidence_sensitive_quantitative_output_with_safe_claim_t
     )
 
     assert result.outcome == "COMPLETED"
+
+
+def test_router_accepts_provenance_identifiers_without_claim_typing(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text(
+        "\n".join(
+            [
+                "- Trading Dashboard commit 0363221ea126a7ee3f7fc971b3ae408be7127db8 was inspected read-only.",
+                "- Recovery audit LAUDIT_004609 links workflow LWORK_000110, task LTASK_000155, plan LPLAN_000118, and freeze LFREEZE_000118.",
+                "- Manifest content hash d41d8cd98f00b204e9800998ecf8427e was recorded.",
+                "- Repository identifier repo 12345 was used only as provenance.",
+                "- Schema version 2 is an identifier, not a result metric.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    provider = SequencedProvider(
+        "provider-identifiers",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- Win rate 55%",
+        "- Required capital $2,000",
+        "- Leverage 10x",
+        "- Minimum trade count threshold 20 trades",
+        "- Walk-forward window 60 days",
+    ],
+)
+def test_router_still_fails_unclassified_financial_or_research_quantities(session, tmp_path, line):
+    report = tmp_path / "protocol.md"
+    report.write_text(f"{line}\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-unsupported-quantity",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "QUANTITATIVE_CLAIM_MISSING_CLASSIFICATION"
+    )
 
 
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:

@@ -32,6 +32,32 @@ _EVIDENCE_SENSITIVE_TERMS = {
 _QUANTITATIVE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(?:\d{4}-\d{2}-\d{2}|\$?\d+(?:,\d{3})*(?:\.\d+)?%?|\d+x|[A-Fa-f0-9]{8,})(?![A-Za-z0-9_])"
 )
+_UUID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_LONG_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{8,128}$")
+_VERSION_TOKEN_PATTERN = re.compile(r"^v?\d+(?:\.\d+)*(?:[-_][A-Za-z0-9]+)*$", re.IGNORECASE)
+_PROVENANCE_IDENTIFIER_CONTEXT_TERMS = {
+    "artifact",
+    "audit",
+    "checksum",
+    "commit",
+    "digest",
+    "freeze",
+    "hash",
+    "id",
+    "identifier",
+    "manifest",
+    "plan",
+    "repository",
+    "repo",
+    "revision",
+    "sha",
+    "snapshot",
+    "task",
+    "version",
+    "workflow",
+}
 _SOURCE_TERMS = ("source", "evidence", "verified", "commit", "schema", "code", "artifact", "path", "repository", "from ", "per ")
 
 
@@ -53,7 +79,7 @@ def evidence_sensitive_provider_quality_issues(
             continue
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
-            if not stripped or not _QUANTITATIVE_PATTERN.search(stripped):
+            if not stripped or not _claim_quantitative_matches(stripped):
                 continue
             classification = _line_classification(stripped)
             if classification is None:
@@ -108,6 +134,40 @@ def _written_paths(result: RuntimeExecutionResult) -> list[str]:
 
 def _is_text_path(path: str) -> bool:
     return Path(path).suffix.lower() in {".md", ".txt", ".json", ".yaml", ".yml", ".csv"}
+
+
+def _claim_quantitative_matches(line: str) -> list[re.Match[str]]:
+    return [
+        match
+        for match in _QUANTITATIVE_PATTERN.finditer(line)
+        if not _is_provenance_identifier_token(line, match)
+    ]
+
+
+def _is_provenance_identifier_token(line: str, match: re.Match[str]) -> bool:
+    token = match.group(0).strip("`'\".,;:()[]{}")
+    if not token:
+        return True
+    if token.startswith("$") or token.endswith("%"):
+        return False
+    if token.lower().endswith("x") and token[:-1].replace(".", "", 1).isdigit():
+        return False
+    before = line[: match.start()].lower()
+    after = line[match.end() :].lower()
+    context = " ".join([before[-48:], after[:24]])
+    if _UUID_PATTERN.fullmatch(token):
+        return True
+    if _LONG_HEX_PATTERN.fullmatch(token) and any(char.isalpha() for char in token):
+        return True
+    if _has_identifier_context(context):
+        return True
+    if _VERSION_TOKEN_PATTERN.fullmatch(token):
+        return "version" in context or "v" in token.lower()
+    return False
+
+
+def _has_identifier_context(context: str) -> bool:
+    return any(re.search(rf"\b{re.escape(term)}\b", context) for term in _PROVENANCE_IDENTIFIER_CONTEXT_TERMS)
 
 
 def _line_classification(line: str) -> str | None:
