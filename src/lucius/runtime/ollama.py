@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import time
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import Any
 from urllib import error, request
 
 from lucius.runtime.schemas import (
+    ModelCapabilityProfile,
+    ModelQualificationStatus,
     RuntimeExecutionRequest,
     RuntimeExecutionResult,
     RuntimeProviderModel,
@@ -44,14 +47,20 @@ class OllamaExecutionProvider:
         self.endpoint = endpoint.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        explicit_allowed_roots = allowed_workspace_roots is not None
         default_roots = [Path("/private/tmp"), Path(tempfile.gettempdir())]
         self.allowed_workspace_roots = [Path(root).resolve() for root in (allowed_workspace_roots or default_roots)]
         self.max_files = max_files
         self.max_file_bytes = max_file_bytes
+        capability_profile = _ollama_model_capability_profile(
+            provider_id=provider_id,
+            model=model,
+            default_timeout_seconds=timeout_seconds,
+        )
         self.registration = RuntimeProviderRegistration(
             provider_id=provider_id,
             provider_version=provider_version,
-            capabilities=["code_modification", "documentation_update"],
+            capabilities=capability_profile.supported_capabilities,
             supported_task_classes=["engineering"],
             supports_code_modification=True,
             supported_workspace_kinds=["local_git_worktree", "local_workspace"],
@@ -61,10 +70,11 @@ class OllamaExecutionProvider:
                 RuntimeProviderModel(
                     model_id=model,
                     model_version=None,
-                    capabilities=["code_modification", "documentation_update"],
+                    capabilities=capability_profile.supported_capabilities,
                     context_limit_tokens=40_960,
                     cost_class="LOCAL_FREE",
                     latency_class="MEDIUM",
+                    capability_profile=capability_profile,
                 )
             ],
             available=True,
@@ -72,9 +82,15 @@ class OllamaExecutionProvider:
             failover_eligible=True,
             cost_class="LOCAL_FREE",
             latency_class="MEDIUM",
-            policy_labels=["local", "ollama", "no-credential-required"],
+            policy_labels=["local", "ollama", "no-credential-required", capability_profile.execution_tier],
             reliability_score=40,
-            metadata={"endpoint": self.endpoint, "authority": "provider_worker_only"},
+            metadata={
+                "endpoint": self.endpoint,
+                "authority": "provider_worker_only",
+                "allowed_workspace_roots": [str(root) for root in self.allowed_workspace_roots],
+                "explicit_allowed_workspace_roots": explicit_allowed_roots,
+                "model_capability_status": capability_profile.status.value,
+            },
         )
 
     def is_available(self) -> bool:
@@ -102,6 +118,59 @@ class OllamaExecutionProvider:
                 timeout_seconds=runtime_request.timeout_seconds or self.timeout_seconds,
             )
             payload = _parse_model_payload(response.body)
+            if runtime_request.read_only:
+                files = payload.get("files")
+                if isinstance(files, list) and files:
+                    raise _ProviderBlocked(
+                        "READ_ONLY_MUTATION_ATTEMPT",
+                        "Ollama response attempted file changes for a read-only request.",
+                    )
+                if files not in (None, []):
+                    raise _ProviderBlocked(
+                        "READ_ONLY_MUTATION_ATTEMPT",
+                        "Ollama response contained malformed file-change data for a read-only request.",
+                    )
+                latency_ms = _latency_ms(response.body, started)
+                prompt_tokens = _optional_int(response.body.get("prompt_eval_count"))
+                output_tokens = _optional_int(response.body.get("eval_count"))
+                return RuntimeExecutionResult(
+                    execution_id=runtime_request.execution_id,
+                    provider_id=self.provider_id,
+                    provider_version=self.provider_version,
+                    model_id=str(response.body.get("model") or self.model),
+                    model_version=self.provider_version,
+                    routing_decision_id=runtime_request.routing_decision_id,
+                    status="COMPLETED",
+                    provider_native_status="DONE" if response.body.get("done", True) else "PARTIAL",
+                    mutation_summary=str(payload.get("summary") or "Ollama provider completed read-only execution."),
+                    completed_substeps=_string_list(payload.get("completed_substeps")) or [
+                        "Completed read-only local model execution without file changes."
+                    ],
+                    evidence=[
+                        {
+                            "type": "ollama_read_only_runtime_execution",
+                            "provider_id": self.provider_id,
+                            "model": str(response.body.get("model") or self.model),
+                            "workspace": str(workspace),
+                        }
+                    ],
+                    verification=_verification(payload, []),
+                    documentation=_dict_list(payload.get("documentation")),
+                    active_execution_seconds=max(0.0, time.monotonic() - started),
+                    latency_ms=latency_ms,
+                    input_tokens=prompt_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=(prompt_tokens + output_tokens) if prompt_tokens is not None and output_tokens is not None else None,
+                    estimated_cost=0.0,
+                    cost_currency="USD",
+                    retryability=RuntimeRetryability.NON_RETRYABLE,
+                    verification_handoff_metadata={
+                        "provider": "ollama",
+                        "endpoint": self.endpoint,
+                        "model_response_captured": True,
+                        "read_only": True,
+                    },
+                )
             written_files = self._apply_file_changes(workspace, payload)
             latency_ms = _latency_ms(response.body, started)
             prompt_tokens = _optional_int(response.body.get("prompt_eval_count"))
@@ -154,12 +223,22 @@ class OllamaExecutionProvider:
                 message=blocked.message,
                 retryability=blocked.retryability,
             )
-        except (TimeoutError, error.URLError) as exc:
+        except TimeoutError as exc:
             return _failed_result(
                 runtime_request,
                 self,
                 started,
-                failure_class="OLLAMA_UNAVAILABLE",
+                failure_class="PROVIDER_TIMEOUT",
+                message=str(exc),
+                retryability=RuntimeRetryability.RETRYABLE_OR_FAILOVERABLE,
+            )
+        except error.URLError as exc:
+            failure_class = "PROVIDER_TIMEOUT" if _url_error_is_timeout(exc) else "OLLAMA_UNAVAILABLE"
+            return _failed_result(
+                runtime_request,
+                self,
+                started,
+                failure_class=failure_class,
                 message=str(exc),
                 retryability=RuntimeRetryability.RETRYABLE_OR_FAILOVERABLE,
             )
@@ -251,7 +330,9 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
         "Work only inside the supplied isolated workspace.",
         "Return strict JSON only, with no markdown.",
         "Schema:",
-        '{"summary":"...","completed_substeps":["..."],"files":[{"path":"relative/path","content":"..."}],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
+        '{"summary":"...","completed_substeps":["..."],"files":[{"path":"relative/path","content":"..."}],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}'
+        if not runtime_request.read_only
+        else '{"summary":"...","completed_substeps":["..."],"files":[],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
         f"Execution id: {runtime_request.execution_id}",
         f"Task id: {runtime_request.task_id}",
         f"Plan id: {runtime_request.plan_id}",
@@ -260,6 +341,9 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
         f"Workspace: {workspace}",
         f"Task intent: {runtime_request.task_intent}",
         "Keep the change tiny, deterministic, and automatically verifiable.",
+        "This is a read-only request. Do not return file changes; files must be an empty array."
+        if runtime_request.read_only
+        else "File changes are permitted only within the supplied isolated workspace.",
         "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
         "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
     ]
@@ -272,6 +356,79 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
             ]
         )
     return "\n".join(lines)
+
+
+def _ollama_model_capability_profile(
+    *,
+    provider_id: str,
+    model: str,
+    default_timeout_seconds: int,
+) -> ModelCapabilityProfile:
+    if model == "qwen3:8b":
+        return ModelCapabilityProfile(
+            provider_id=provider_id,
+            model_id=model,
+            execution_tier="LOCAL_TIER_1",
+            is_local=True,
+            supported_task_classes=["engineering"],
+            supported_capabilities=["inspection_reasoning", "documentation_update", "code_modification"],
+            supports_mutation=True,
+            evidence_sensitive_suitable=False,
+            schema_constrained_required=False,
+            deterministic_verification_required=True,
+            supervision_required=False,
+            unattended_eligible=True,
+            max_task_complexity="T1",
+            default_timeout_seconds=min(default_timeout_seconds, 120),
+            max_timeout_seconds=120,
+            status=ModelQualificationStatus.QUALIFIED_WITH_CONSTRAINTS,
+            policy_notes=[
+                "Qualified only for small, bounded, highly verifiable local work.",
+                "Not qualified for general unattended operation.",
+            ],
+        )
+    if model == "qwen3-coder:30b":
+        return ModelCapabilityProfile(
+            provider_id=provider_id,
+            model_id=model,
+            execution_tier="TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            is_local=True,
+            supported_task_classes=["engineering"],
+            supported_capabilities=["inspection_reasoning", "documentation_update", "code_modification"],
+            supports_mutation=True,
+            evidence_sensitive_suitable=True,
+            schema_constrained_required=True,
+            deterministic_verification_required=True,
+            supervision_required=True,
+            unattended_eligible=False,
+            max_task_complexity="T2",
+            default_timeout_seconds=default_timeout_seconds,
+            max_timeout_seconds=180,
+            status=ModelQualificationStatus.SUPERVISED_ONLY,
+            policy_notes=[
+                "Recent Tier 2 qualification failed on fabricated evidence references.",
+                "May be used only under supervision with schema constraints.",
+            ],
+        )
+    return ModelCapabilityProfile(
+        provider_id=provider_id,
+        model_id=model,
+        execution_tier="UNQUALIFIED_LOCAL_MODEL",
+        is_local=True,
+        supported_task_classes=["engineering"],
+        supported_capabilities=["inspection_reasoning"],
+        supports_mutation=False,
+        evidence_sensitive_suitable=False,
+        schema_constrained_required=True,
+        deterministic_verification_required=True,
+        supervision_required=True,
+        unattended_eligible=False,
+        max_task_complexity="T0",
+        default_timeout_seconds=default_timeout_seconds,
+        max_timeout_seconds=60,
+        status=ModelQualificationStatus.NOT_QUALIFIED,
+        policy_notes=["No Lucius unattended qualification evidence is recorded for this model."],
+    )
 
 
 def _parse_model_payload(body: dict[str, Any]) -> dict[str, Any]:
@@ -333,6 +490,11 @@ def _latency_ms(body: dict[str, Any], started: float) -> int:
 
 def _optional_int(value: Any) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _url_error_is_timeout(exc: error.URLError) -> bool:
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(exc).lower()
 
 
 def _string_list(value: Any) -> list[str]:

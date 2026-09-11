@@ -311,6 +311,33 @@ and reports reasons such as `MALFORMED_UNSCHEDULABLE:UNKNOWN_STATE:<value>`,
 `MALFORMED_UNSCHEDULABLE:NULL_STATE`, or
 `MALFORMED_UNSCHEDULABLE:UNKNOWN_PRIORITY:<value>`.
 
+## Run Native Runtime Loop
+
+The native runtime loop may use the scripted provider or the local Ollama
+provider through the Model Execution Router:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite run-runtime-loop LWORK_000001 \
+  --execution-provider ollama \
+  --execution-supervision UNSUPERVISED \
+  --ollama-model qwen3:8b \
+  --ollama-allowed-workspace-root /private/tmp \
+  --max-tasks 1
+```
+
+`--ollama-allowed-workspace-root` may be repeated. The environment variable
+`LUCIUS_OLLAMA_ALLOWED_WORKSPACE_ROOTS` may also provide roots separated by the
+platform path separator. Ollama execution fails closed when the selected
+isolated workspace is outside the configured roots.
+
+`--execution-supervision` defaults to `UNSUPERVISED`. Supervised-only models
+such as `qwen3-coder:30b` require explicit `SUPERVISED` or `HUMAN_APPROVED`
+operator selection and are still not unattended-authorized.
+
+Allowed roots authorize only provider work inside those roots. They do not
+authorize merge, cherry-pick, push, deployment, production operations, live
+trading, money movement, or integration back into a canonical branch.
+
 ## Phase 1.23A Closure Policies
 
 Plan freeze now enforces planning-claim semantics for direct ORM-created plans

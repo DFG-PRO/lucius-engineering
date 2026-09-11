@@ -90,8 +90,19 @@ def main() -> None:
     runtime_loop.add_argument("--max-tasks", type=int, default=1)
     runtime_loop.add_argument("--provider-id", default=None)
     runtime_loop.add_argument("--execution-provider", choices=["scripted", "ollama"], default="scripted")
+    runtime_loop.add_argument(
+        "--execution-supervision",
+        choices=["UNSUPERVISED", "SUPERVISED", "HUMAN_APPROVED"],
+        default="UNSUPERVISED",
+    )
     runtime_loop.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
     runtime_loop.add_argument("--ollama-model", default="qwen3:8b")
+    runtime_loop.add_argument(
+        "--ollama-allowed-workspace-root",
+        action="append",
+        default=[],
+        help="Allowed root for local Ollama runtime workspaces. May be repeated.",
+    )
     runtime_loop.add_argument("--stop-on-block", action="store_true")
 
     args = parser.parse_args()
@@ -250,14 +261,23 @@ def _run_command(args: argparse.Namespace) -> None:
             from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
             from lucius.runtime.ollama import OllamaExecutionProvider
             from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
-            from lucius.runtime.schemas import RuntimeLoopConfig
+            from lucius.runtime.schemas import RuntimeExecutionSupervision, RuntimeLoopConfig
             from lucius.runtime.service import ExecutionRuntimeLoopService
+
+            execution_supervision = RuntimeExecutionSupervision(args.execution_supervision)
+            if (
+                args.execution_provider == "ollama"
+                and args.ollama_model == "qwen3-coder:30b"
+                and execution_supervision == RuntimeExecutionSupervision.UNSUPERVISED
+            ):
+                raise SystemExit("qwen3-coder:30b requires explicit --execution-supervision SUPERVISED or HUMAN_APPROVED.")
 
             if args.execution_provider == "ollama":
                 execution_provider = OllamaExecutionProvider(
                     provider_id=args.provider_id or "ollama-local",
                     endpoint=args.ollama_endpoint,
                     model=args.ollama_model,
+                    allowed_workspace_roots=_ollama_allowed_workspace_roots(args),
                 )
             else:
                 execution_provider = ScriptedExecutionAdapter(provider_id=args.provider_id or "scripted-execution-adapter")
@@ -265,6 +285,7 @@ def _run_command(args: argparse.Namespace) -> None:
                 session,
                 registry=RuntimeProviderRegistry([execution_provider]),
                 actor=Actor.LUCIUS,
+                default_execution_supervision=execution_supervision,
             )
             result = ExecutionRuntimeLoopService(
                 session,
@@ -308,6 +329,14 @@ def _parse_scores(raw_scores: list[str]) -> dict[str, int]:
         except ValueError as error:
             raise SystemExit(f"Invalid score value for {key}: {value}") from error
     return scores
+
+
+def _ollama_allowed_workspace_roots(args: argparse.Namespace) -> list[Path] | None:
+    roots = [Path(root).expanduser().resolve() for root in getattr(args, "ollama_allowed_workspace_root", [])]
+    raw_env = os.environ.get("LUCIUS_OLLAMA_ALLOWED_WORKSPACE_ROOTS")
+    if raw_env:
+        roots.extend(Path(root).expanduser().resolve() for root in raw_env.split(os.pathsep) if root.strip())
+    return roots or None
 
 
 if __name__ == "__main__":

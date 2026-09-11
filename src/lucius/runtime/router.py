@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, AuthorityLevel
-from lucius.persistence.orm import AuditEventORM
+from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.runtime.provider_quality import evidence_sensitive_provider_quality_issues
 from lucius.runtime.schema_constraints import (
@@ -21,7 +21,11 @@ from lucius.runtime.schemas import (
     RuntimeExecutionOutcome,
     RuntimeExecutionRequest,
     RuntimeExecutionResult,
+    ModelCapabilityProfile,
+    ModelQualificationStatus,
+    RuntimeExecutionSupervision,
     RuntimeProviderCandidateEvaluation,
+    RuntimeProviderModel,
     RuntimeProviderRegistration,
     RuntimeProviderStatus,
     RuntimeRetryability,
@@ -70,12 +74,14 @@ class ModelExecutionRouter:
         actor: Actor = Actor.LUCIUS,
         max_provider_retries: int = 0,
         max_failovers: int = 0,
+        default_execution_supervision: RuntimeExecutionSupervision = RuntimeExecutionSupervision.UNSUPERVISED,
     ):
         self.session = session
         self.registry = registry
         self.actor = actor
         self.max_provider_retries = max(0, max_provider_retries)
         self.max_failovers = max(0, max_failovers)
+        self.default_execution_supervision = default_execution_supervision
         self.audit = AuditService(session)
 
     def execute(self, context: RuntimeExecutionContext) -> ExecutionAdapterResult:
@@ -189,6 +195,13 @@ class ModelExecutionRouter:
                     authority_level=AuthorityLevel.L1,
                     metadata=_provider_result_audit_payload(provider_result, attempt_index + 1),
                 )
+                self._record_model_execution_attempt(
+                    context=context,
+                    request=request,
+                    decision=decision,
+                    result=provider_result,
+                    attempt_number=attempt_index + 1,
+                )
                 final_result = provider_result
                 final_retry_index = attempt_index
                 if provider_result.status.value != "FAILED":
@@ -247,13 +260,28 @@ class ModelExecutionRouter:
         execution_id = next_id(self.session, "model_execution")
         queue_item = context.queue_item or {}
         context_limits = dict(queue_item.get("context_limits", {}))
+        read_only = _queue_item_is_read_only(queue_item)
+        required_capabilities = queue_item.get("required_capabilities")
+        if required_capabilities is None:
+            required_capabilities = ["inspection_reasoning"] if read_only else ["code_modification"]
         metadata = {
             "queue_item_version": queue_item.get("version"),
             "queue_item_priority": queue_item.get("priority"),
+            "read_only": read_only,
+            "task_complexity_explicit": "task_complexity" in queue_item or "complexity" in queue_item,
+            "task_risk_explicit": "task_risk" in queue_item or "risk" in queue_item,
+            "isolation_mode_explicit": "isolation_mode" in queue_item,
+            "deterministic_verification_explicit": "deterministic_verification" in context_limits,
         }
         skeleton = schema_constrained_output_skeleton(context_limits)
         if skeleton:
             metadata[SKELETON_METADATA_KEY] = skeleton
+        raw_supervision = queue_item.get("execution_supervision", self.default_execution_supervision)
+        execution_supervision = (
+            raw_supervision
+            if isinstance(raw_supervision, RuntimeExecutionSupervision)
+            else RuntimeExecutionSupervision(str(raw_supervision))
+        )
         return RuntimeExecutionRequest(
             execution_id=execution_id,
             task_id=context.workflow_task_id,
@@ -267,8 +295,13 @@ class ModelExecutionRouter:
             isolated_workspace=context.worktree_path,
             task_intent=context.title or context.workflow_objective,
             allowed_mutation_scope=context.authority_tier,
-            required_capabilities=[str(item) for item in queue_item.get("required_capabilities", ["code_modification"])],
+            required_capabilities=[str(item) for item in required_capabilities],
             task_type=str(queue_item.get("task_type", "engineering")),
+            task_complexity=str(queue_item.get("task_complexity", queue_item.get("complexity", "T1"))),
+            task_risk=str(queue_item.get("task_risk", queue_item.get("risk", "LOW"))),
+            unattended=bool(queue_item.get("unattended", queue_item.get("unattended_eligible", False))),
+            read_only=read_only,
+            execution_supervision=execution_supervision,
             tool_requirements=[str(item) for item in queue_item.get("tool_requirements", [])],
             isolation_mode=str(queue_item.get("isolation_mode", "ISOLATED_WORKTREE")),
             context_limits=context_limits,
@@ -277,6 +310,53 @@ class ModelExecutionRouter:
             release_evidence_refs=_release_evidence_refs(self.session, context),
             metadata=metadata,
         )
+
+    def _record_model_execution_attempt(
+        self,
+        *,
+        context: RuntimeExecutionContext,
+        request: RuntimeExecutionRequest,
+        decision: RuntimeRoutingDecision,
+        result: RuntimeExecutionResult,
+        attempt_number: int,
+    ) -> None:
+        record_id = request.execution_id
+        if attempt_number > 1 or self.session.get(ModelExecutionORM, record_id) is not None:
+            record_id = next_id(self.session, "model_execution")
+        self.session.add(
+            ModelExecutionORM(
+                id=record_id,
+                request_id=request.execution_id,
+                project_id=context.project_id,
+                task_id=context.workflow_task_id,
+                run_id=context.workflow_id,
+                provider_id=result.provider_id,
+                provider=result.provider_id,
+                model_profile_id=None,
+                model=result.model_id,
+                status=result.status.value,
+                capabilities=list(request.required_capabilities),
+                privacy_class="INTERNAL",
+                routing_decision={
+                    **decision.model_dump(mode="json"),
+                    "attempt_number": attempt_number,
+                    "fallback_used": result.fallback_used,
+                    "failover_from_provider_id": result.failover_from_provider_id,
+                    "retryability": result.retryability.value,
+                },
+                latency_ms=result.latency_ms,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                total_tokens=result.total_tokens,
+                estimated_cost=result.estimated_cost,
+                cost_source="REPORTED" if result.estimated_cost is not None else "UNKNOWN",
+                fallback_used=result.fallback_used,
+                attempt_number=attempt_number,
+                error_code=result.failure_class,
+                created_at=utc_now(),
+            )
+        )
+        self.session.flush()
 
     def _route(
         self,
@@ -440,12 +520,33 @@ def _evaluate_provider(
         and requested_context > registration.max_context_tokens
     ):
         return RuntimeProviderCandidateEvaluation(provider_id=registration.provider_id, eligible=False, reasons=["context limit exceeded"])
+    selected_model = _selected_model(registration, request)
+    profile_reasons = _profile_ineligibility_reasons(request, registration, selected_model)
+    if profile_reasons:
+        return RuntimeProviderCandidateEvaluation(
+            provider_id=registration.provider_id,
+            eligible=False,
+            reasons=profile_reasons,
+            selected_model_id=selected_model.model_id if selected_model else None,
+        )
+    if request.unattended:
+        unattended_reasons = _unattended_ineligibility_reasons(request, registration, selected_model)
+        if unattended_reasons:
+            return RuntimeProviderCandidateEvaluation(
+                provider_id=registration.provider_id,
+                eligible=False,
+                reasons=unattended_reasons,
+                selected_model_id=selected_model.model_id if selected_model else None,
+            )
+        timeout_seconds = _bounded_timeout_seconds(request, selected_model.capability_profile if selected_model else None)
+        if timeout_seconds is not None and request.timeout_seconds is None:
+            request.timeout_seconds = timeout_seconds
     reasons.append("eligible: capability, policy, repository, isolation, tool, and context requirements satisfied")
     return RuntimeProviderCandidateEvaluation(
         provider_id=registration.provider_id,
         eligible=True,
         reasons=reasons,
-        selected_model_id=_selected_model_id(registration, request),
+        selected_model_id=selected_model.model_id if selected_model else None,
     )
 
 
@@ -466,6 +567,11 @@ def _provider_selection_key(registration: RuntimeProviderRegistration) -> tuple[
 
 
 def _selected_model_id(registration: RuntimeProviderRegistration, request: RuntimeExecutionRequest) -> str | None:
+    selected = _selected_model(registration, request)
+    return selected.model_id if selected else None
+
+
+def _selected_model(registration: RuntimeProviderRegistration, request: RuntimeExecutionRequest) -> RuntimeProviderModel | None:
     if not registration.models:
         return None
     capable = [
@@ -473,8 +579,142 @@ def _selected_model_id(registration: RuntimeProviderRegistration, request: Runti
         for model in registration.models
         if set(request.required_capabilities).issubset(set(model.capabilities) | set(registration.capabilities))
     ]
-    selected = sorted(capable or registration.models, key=lambda model: model.model_id)[0]
-    return selected.model_id
+    return sorted(capable or registration.models, key=lambda model: model.model_id)[0]
+
+
+def _profile_ineligibility_reasons(
+    request: RuntimeExecutionRequest,
+    registration: RuntimeProviderRegistration,
+    selected_model: RuntimeProviderModel | None,
+) -> list[str]:
+    profile = selected_model.capability_profile if selected_model else None
+    if profile is None:
+        return []
+    reasons: list[str] = []
+    if profile.status == ModelQualificationStatus.DISABLED:
+        reasons.append("MODEL_NOT_QUALIFIED")
+    if profile.supervision_required and request.execution_supervision not in {
+        RuntimeExecutionSupervision.SUPERVISED,
+        RuntimeExecutionSupervision.HUMAN_APPROVED,
+    }:
+        reasons.append("MODEL_SUPERVISION_REQUIRED")
+    if request.unattended and (profile.supervision_required or profile.status == ModelQualificationStatus.SUPERVISED_ONLY):
+        reasons.append("MODEL_SUPERVISION_REQUIRED")
+    if profile.schema_constrained_required and not request.context_limits.get("schema_constraint"):
+        reasons.append("SCHEMA_CONSTRAINT_REQUIRED")
+    if _requires_mutation(request) and not profile.supports_mutation:
+        reasons.append("MODEL_LACKS_REQUIRED_CAPABILITY")
+    return list(dict.fromkeys(reasons))
+
+
+def _unattended_ineligibility_reasons(
+    request: RuntimeExecutionRequest,
+    registration: RuntimeProviderRegistration,
+    selected_model: RuntimeProviderModel | None,
+) -> list[str]:
+    reasons: list[str] = []
+    profile = selected_model.capability_profile if selected_model else None
+    if profile is None:
+        reasons.append("MODEL_NOT_QUALIFIED_FOR_UNATTENDED")
+    elif profile.status == ModelQualificationStatus.DISABLED:
+        reasons.append("MODEL_NOT_QUALIFIED_FOR_UNATTENDED")
+    elif profile.status == ModelQualificationStatus.SUPERVISED_ONLY or profile.supervision_required:
+        reasons.append("MODEL_SUPERVISION_REQUIRED")
+    elif profile.status == ModelQualificationStatus.NOT_QUALIFIED or not profile.unattended_eligible:
+        reasons.append("MODEL_NOT_QUALIFIED_FOR_UNATTENDED")
+    if profile is not None:
+        if not request.metadata.get("task_complexity_explicit"):
+            reasons.append("TASK_COMPLEXITY_UNKNOWN")
+        if not request.metadata.get("task_risk_explicit"):
+            reasons.append("TASK_RISK_UNKNOWN")
+        if not request.metadata.get("deterministic_verification_explicit"):
+            reasons.append("DETERMINISTIC_VERIFICATION_UNKNOWN")
+        if not request.metadata.get("isolation_mode_explicit"):
+            reasons.append("WORKSPACE_ISOLATION_UNKNOWN")
+        if profile.is_local and not registration.metadata.get("explicit_allowed_workspace_roots"):
+            reasons.append("WORKSPACE_ALLOWED_ROOT_UNKNOWN")
+        missing_model_capabilities = sorted(set(request.required_capabilities) - set(profile.supported_capabilities))
+        if missing_model_capabilities:
+            reasons.append("MODEL_LACKS_REQUIRED_CAPABILITY")
+        if _requires_mutation(request) and not profile.supports_mutation:
+            reasons.append("MODEL_LACKS_REQUIRED_CAPABILITY")
+        if _complexity_rank(request.task_complexity) > _complexity_rank(profile.max_task_complexity):
+            reasons.append("TASK_COMPLEXITY_EXCEEDS_MODEL_PROFILE")
+        if str(request.task_complexity).upper() not in {"T0", "T1", "T2", "T3", "T4"}:
+            reasons.append("TASK_COMPLEXITY_UNKNOWN")
+        if str(request.task_risk).upper() != "LOW":
+            reasons.append("TASK_RISK_EXCEEDS_UNATTENDED_POLICY")
+        if profile.deterministic_verification_required and not request.context_limits.get("deterministic_verification"):
+            reasons.append("DETERMINISTIC_VERIFICATION_REQUIRED")
+        if _is_evidence_sensitive_request(request) and not request.context_limits.get("evidence_reference_validation_required"):
+            reasons.append("EVIDENCE_VALIDATION_REQUIRED")
+        timeout = request.timeout_seconds or profile.default_timeout_seconds
+        if profile.max_timeout_seconds is not None and timeout is not None and timeout > profile.max_timeout_seconds:
+            reasons.append("TIMEOUT_BUDGET_EXCEEDS_MODEL_PROFILE")
+    if request.isolation_mode != "ISOLATED_WORKTREE":
+        reasons.append("WORKSPACE_ISOLATION_REQUIRED")
+    if request.context_limits.get("external_side_effects") is True or _external_side_effect_action(request):
+        reasons.append("EXTERNAL_SIDE_EFFECT_NOT_AUTHORIZED")
+    if _financial_or_live_action(request):
+        reasons.append("FINANCIAL_ACTION_NOT_AUTHORIZED")
+    if request.context_limits.get("semantic_retry_allowed") is True:
+        reasons.append("SEMANTIC_RETRY_NOT_AUTHORIZED")
+    return list(dict.fromkeys(reasons))
+
+
+def _bounded_timeout_seconds(request: RuntimeExecutionRequest, profile: ModelCapabilityProfile | None) -> int | None:
+    if profile is None:
+        return request.timeout_seconds
+    if request.timeout_seconds is not None:
+        return request.timeout_seconds
+    return profile.default_timeout_seconds
+
+
+def _requires_mutation(request: RuntimeExecutionRequest) -> bool:
+    mutation_capabilities = {"code_modification", "documentation_update"}
+    return bool(set(request.required_capabilities) & mutation_capabilities)
+
+
+def _complexity_rank(value: str | None) -> int:
+    ranks = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
+    return ranks.get(str(value or "T1").upper(), 99)
+
+
+def _is_evidence_sensitive_request(request: RuntimeExecutionRequest) -> bool:
+    if request.context_limits.get("evidence_sensitive") is True:
+        return True
+    haystack = " ".join(
+        [
+            request.task_intent or "",
+            request.logical_task_id or "",
+            " ".join(request.required_capabilities or []),
+        ]
+    ).lower()
+    return any(term in haystack for term in ("evidence", "profitability", "backtest", "oos", "capital", "strategy"))
+
+
+def _financial_or_live_action(request: RuntimeExecutionRequest) -> bool:
+    haystack = " ".join(
+        [
+            request.task_intent or "",
+            request.task_type or "",
+            " ".join(request.required_capabilities or []),
+        ]
+    ).lower()
+    blocked_terms = ("live trading", "money movement", "place order", "execute trade")
+    return any(term in haystack for term in blocked_terms)
+
+
+def _external_side_effect_action(request: RuntimeExecutionRequest) -> bool:
+    haystack = " ".join(
+        [
+            request.task_intent or "",
+            request.task_type or "",
+            " ".join(request.required_capabilities or []),
+        ]
+    ).lower()
+    blocked_terms = ("deploy", "push", "merge")
+    return any(term in haystack for term in blocked_terms)
 
 
 def _release_evidence_refs(session: Session, context: RuntimeExecutionContext) -> list[str]:
@@ -489,6 +729,15 @@ def _release_evidence_refs(session: Session, context: RuntimeExecutionContext) -
         if latest_ready is not None:
             refs.append(latest_ready.id)
     return refs
+
+
+def _queue_item_is_read_only(queue_item: dict) -> bool:
+    if queue_item.get("read_only") is True or queue_item.get("mutation_allowed") is False:
+        return True
+    task_type = str(queue_item.get("task_type", "")).lower()
+    if task_type in {"inspection", "reasoning", "analysis", "read_only_engineering"}:
+        return True
+    return False
 
 
 def _provider_result_audit_payload(result: RuntimeExecutionResult, attempt_number: int) -> dict:
@@ -539,16 +788,27 @@ def _enforce_provider_result_contract(
         return result
     quality_issues = evidence_sensitive_provider_quality_issues(request, result)
     if result.status.value == "COMPLETED" and quality_issues:
+        evidence_reference_failed = any(
+            str(issue.get("reason", "")).startswith((
+                "FABRICATED_OR_UNAUTHORIZED_EVIDENCE_REFERENCE",
+                "MALFORMED_EVIDENCE_REFERENCE_FIELD",
+                "MISSING_REQUIRED_EVIDENCE_REFERENCE",
+                "FACT_OR_DERIVED_VALUE_MISSING_ALLOWED_EVIDENCE_REFERENCE",
+            ))
+            for issue in quality_issues
+        )
         return result.model_copy(
             update={
                 "status": RuntimeExecutionOutcome.FAILED,
                 "provider_native_status": result.provider_native_status or "COMPLETED_WITH_UNSUPPORTED_CLAIMS",
                 "retryability": RuntimeRetryability.NON_RETRYABLE,
-                "failure_class": "UNSUPPORTED_QUANTITATIVE_CLAIM",
-                "mutation_summary": "Evidence-sensitive provider output contains untyped or unsupported quantitative claims.",
+                "failure_class": "EVIDENCE_REFERENCE_VALIDATION_FAILED"
+                if evidence_reference_failed
+                else "UNSUPPORTED_QUANTITATIVE_CLAIM",
+                "mutation_summary": "Evidence-sensitive provider output contains fabricated, missing, untyped, or unsupported evidence/quantitative claims.",
                 "provider_error_metadata": {
                     **result.provider_error_metadata,
-                    "reason": "Evidence-sensitive quantitative claims require FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN classification.",
+                    "reason": "Evidence-sensitive claims require allowed evidence references and FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN classification.",
                     "quality_issues": quality_issues,
                 },
             }

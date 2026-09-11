@@ -30,6 +30,20 @@ class RuntimeRetryability(StrEnum):
     NON_RETRYABLE = "NON_RETRYABLE"
 
 
+class ModelQualificationStatus(StrEnum):
+    QUALIFIED = "QUALIFIED"
+    QUALIFIED_WITH_CONSTRAINTS = "QUALIFIED_WITH_CONSTRAINTS"
+    SUPERVISED_ONLY = "SUPERVISED_ONLY"
+    NOT_QUALIFIED = "NOT_QUALIFIED"
+    DISABLED = "DISABLED"
+
+
+class RuntimeExecutionSupervision(StrEnum):
+    UNSUPERVISED = "UNSUPERVISED"
+    SUPERVISED = "SUPERVISED"
+    HUMAN_APPROVED = "HUMAN_APPROVED"
+
+
 class RuntimeLoopStatus(StrEnum):
     COMPLETED = "COMPLETED"
     IDLE = "IDLE"
@@ -138,6 +152,27 @@ class RuntimeProviderModel(BaseModel):
     context_limit_tokens: int | None = None
     cost_class: str | None = None
     latency_class: str | None = None
+    capability_profile: "ModelCapabilityProfile | None" = None
+
+
+class ModelCapabilityProfile(BaseModel):
+    provider_id: str
+    model_id: str
+    execution_tier: str
+    is_local: bool = False
+    supported_task_classes: list[str] = Field(default_factory=list)
+    supported_capabilities: list[str] = Field(default_factory=list)
+    supports_mutation: bool = False
+    evidence_sensitive_suitable: bool = False
+    schema_constrained_required: bool = False
+    deterministic_verification_required: bool = True
+    supervision_required: bool = True
+    unattended_eligible: bool = False
+    max_task_complexity: str = "T0"
+    default_timeout_seconds: int | None = None
+    max_timeout_seconds: int | None = None
+    status: ModelQualificationStatus = ModelQualificationStatus.NOT_QUALIFIED
+    policy_notes: list[str] = Field(default_factory=list)
 
 
 class RuntimeProviderRegistration(BaseModel):
@@ -186,6 +221,11 @@ class RuntimeExecutionRequest(BaseModel):
     allowed_mutation_scope: str
     required_capabilities: list[str] = Field(default_factory=list)
     task_type: str | None = None
+    task_complexity: str = "T1"
+    task_risk: str = "LOW"
+    unattended: bool = False
+    read_only: bool = False
+    execution_supervision: RuntimeExecutionSupervision = RuntimeExecutionSupervision.UNSUPERVISED
     tool_requirements: list[str] = Field(default_factory=list)
     isolation_mode: str = "ISOLATED_WORKTREE"
     context_limits: dict[str, Any] = Field(default_factory=dict)

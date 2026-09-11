@@ -146,6 +146,37 @@ def test_runtime_blocks_one_item_and_releases_capacity_for_next_workflow(session
     assert session.get(TaskORM, alternative.task_id).status == TaskStatus.COMPLETE.value
 
 
+def test_runtime_task_local_semantic_failure_allows_independent_work_but_not_dependents(session):
+    failed = _item("DARWIN-SEMANTIC-FAIL", order=1)
+    independent = _item("DARWIN-INDEPENDENT", order=2)
+    dependent = _item("DARWIN-DEPENDENT", order=3)
+    dependent["dependencies"] = ["DARWIN-SEMANTIC-FAIL"]
+    workflow = _workflow(session, project_id="DARWIN", backlog=[failed, independent, dependent])
+
+    result = _runtime(
+        session,
+        ScriptedExecutionAdapter(
+            {
+                "DARWIN-SEMANTIC-FAIL": ExecutionAdapterResult(
+                    outcome="FAILED",
+                    blocking_reason="Evidence-sensitive output failed validation.",
+                    blocker_category="UNSUPPORTED_QUANTITATIVE_CLAIM",
+                    failure_class="UNSUPPORTED_QUANTITATIVE_CLAIM",
+                )
+            }
+        ),
+    ).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=3))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    states = {item["item_id"]: item["state"] for item in row.task_backlog}
+    assert result.selected_tasks == 2
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 1
+    assert states["DARWIN-SEMANTIC-FAIL"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert states["DARWIN-INDEPENDENT"] == QueueWorkItemState.COMPLETED.value
+    assert states["DARWIN-DEPENDENT"] == QueueWorkItemState.READY.value
+
+
 def test_runtime_counts_ready_to_resume_without_repeating_completed_substeps(session):
     workflow = _workflow(
         session,

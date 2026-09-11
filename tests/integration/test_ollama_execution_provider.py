@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from argparse import Namespace
+from urllib import error
 
+from sqlalchemy import select
+
+from lucius.persistence.orm import ModelExecutionORM
+from lucius.pilots.cli import _ollama_allowed_workspace_roots
 from lucius.runtime.ollama import OllamaExecutionProvider, OllamaHttpResponse
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
@@ -81,6 +87,38 @@ def test_router_selected_ollama_without_codex_registered(session, tmp_path):
     assert (tmp_path / "provider-proof.txt").exists()
 
 
+def test_router_rejects_unattended_ollama_without_explicit_allowed_roots(session, tmp_path):
+    provider = FakeOllamaProvider(tmp_path)
+    provider.registration = provider.registration.model_copy(
+        update={
+            "metadata": {
+                **provider.registration.metadata,
+                "explicit_allowed_workspace_roots": False,
+            }
+        }
+    )
+
+    result = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider])).execute(
+        _unattended_context(tmp_path)
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.blocker_category == "NO_ELIGIBLE_PROVIDER"
+    assert provider.generate_called is False
+
+
+def test_router_allows_unattended_ollama_with_explicit_allowed_root(session, tmp_path):
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider])).execute(
+        _unattended_context(tmp_path)
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.generate_called is True
+    assert (tmp_path / "provider-proof.txt").exists()
+
+
 def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
     provider = FakeOllamaProvider(tmp_path)
     request = _request(tmp_path).model_copy(
@@ -101,6 +139,65 @@ def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
     assert provider.last_payload is not None
     assert "Schema-constrained output skeleton follows" in provider.last_payload["prompt"]
     assert "DERIVED_VALUE: NOT_ESTABLISHED" in provider.last_payload["prompt"]
+
+
+def test_ollama_read_only_request_rejects_file_changes_without_writing(tmp_path):
+    provider = FakeOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(update={"read_only": True, "required_capabilities": ["inspection_reasoning"]})
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "READ_ONLY_MUTATION_ATTEMPT"
+    assert not (tmp_path / "provider-proof.txt").exists()
+    assert provider.last_payload is not None
+    assert "read-only request" in provider.last_payload["prompt"]
+
+
+def test_ollama_timeout_has_distinct_failure_class(tmp_path):
+    provider = TimeoutOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "PROVIDER_TIMEOUT"
+
+
+def test_router_records_ollama_timeout_distinctly(session, tmp_path):
+    provider = TimeoutOllamaProvider(tmp_path)
+
+    result = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider])).execute(_context(tmp_path))
+
+    row = session.scalar(select(ModelExecutionORM).where(ModelExecutionORM.request_id == result.execution_id))
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "PROVIDER_TIMEOUT"
+    assert row is not None
+    assert row.error_code == "PROVIDER_TIMEOUT"
+
+
+def test_ollama_operator_workspace_root_configuration_reaches_provider(tmp_path, monkeypatch):
+    cli_root = tmp_path / "cli-root"
+    env_root = tmp_path / "env-root"
+    cli_root.mkdir()
+    env_root.mkdir()
+    monkeypatch.setenv("LUCIUS_OLLAMA_ALLOWED_WORKSPACE_ROOTS", str(env_root))
+    roots = _ollama_allowed_workspace_roots(Namespace(ollama_allowed_workspace_root=[str(cli_root)]))
+
+    provider = OllamaExecutionProvider(allowed_workspace_roots=roots)
+
+    assert cli_root.resolve() in provider.allowed_workspace_roots
+    assert env_root.resolve() in provider.allowed_workspace_roots
+
+
+def test_ollama_qwen3_coder_profile_is_supervised_only(tmp_path):
+    provider = OllamaExecutionProvider(model="qwen3-coder:30b", allowed_workspace_roots=[tmp_path])
+
+    profile = provider.registration.models[0].capability_profile
+    assert profile is not None
+    assert profile.execution_tier == "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED"
+    assert profile.status == "SUPERVISED_ONLY"
+    assert profile.unattended_eligible is False
+    assert profile.schema_constrained_required is True
 
 
 class FakeOllamaProvider(OllamaExecutionProvider):
@@ -147,6 +244,11 @@ class FakeOllamaProvider(OllamaExecutionProvider):
         )
 
 
+class TimeoutOllamaProvider(FakeOllamaProvider):
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        raise error.URLError(TimeoutError("timed out"))
+
+
 def _request(workspace: Path) -> RuntimeExecutionRequest:
     return RuntimeExecutionRequest(
         execution_id="LEXEC_TEST",
@@ -186,3 +288,16 @@ def _context(workspace: Path) -> RuntimeExecutionContext:
             "task_type": "engineering",
         },
     )
+
+
+def _unattended_context(workspace: Path) -> RuntimeExecutionContext:
+    context = _context(workspace)
+    queue_item = {
+        **context.queue_item,
+        "unattended": True,
+        "task_complexity": "T1",
+        "task_risk": "LOW",
+        "isolation_mode": "ISOLATED_WORKTREE",
+        "context_limits": {"deterministic_verification": True},
+    }
+    return context.model_copy(update={"queue_item": queue_item})

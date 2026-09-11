@@ -3,15 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
-from lucius.persistence.orm import AuditEventORM
+from lucius.persistence.orm import AuditEventORM, ModelExecutionORM
 from lucius.runtime.adapters import ScriptedExecutionAdapter
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
 from lucius.runtime.schemas import (
+    ModelCapabilityProfile,
+    ModelQualificationStatus,
     RuntimeExecutionContext,
     RuntimeExecutionRequest,
     RuntimeExecutionResult,
+    RuntimeExecutionSupervision,
+    RuntimeProviderModel,
     RuntimeProviderStatus,
     RuntimeRetryability,
 )
@@ -287,6 +292,203 @@ def test_router_accepts_evidence_sensitive_quantitative_output_with_safe_claim_t
     assert result.outcome == "COMPLETED"
 
 
+def test_router_accepts_allowed_evidence_reference_when_required(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text("- FACT: Win Rate 55% was observed per evidence LPLAN_000119_EVIDENCE_001.\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-allowed-evidence",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={
+                "context_limits": {
+                    "evidence_sensitive": True,
+                    "evidence_reference_validation_required": True,
+                    "allowed_evidence_refs": ["LPLAN_000119_EVIDENCE_001"],
+                }
+            },
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+
+def test_router_rejects_canonical_looking_nonexistent_evidence_reference(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text("- FACT: Win Rate 55% was observed per evidence LPLAN_000119_EVIDENCE_001.\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-fabricated-evidence",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True, "evidence_reference_validation_required": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "EVIDENCE_REFERENCE_VALIDATION_FAILED"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "FABRICATED_OR_UNAUTHORIZED_EVIDENCE_REFERENCE"
+    )
+
+
+def test_router_rejects_missing_evidence_reference_when_required(session, tmp_path):
+    report = tmp_path / "protocol.md"
+    report.write_text("- FACT: Win Rate 55% was observed per verified evidence source.\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-missing-evidence",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "protocol.md"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create OOS walk-forward protocol evidence",
+            queue_item={"context_limits": {"evidence_sensitive": True, "evidence_reference_validation_required": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "FACT_OR_DERIVED_VALUE_MISSING_ALLOWED_EVIDENCE_REFERENCE"
+    )
+
+
+def test_router_ignores_structural_json_counters_but_preserves_semantic_quantity_gate(session, tmp_path):
+    report = tmp_path / "summary.json"
+    report.write_text('{\n  "total_statements": 2,\n  "categorized_count": 1\n}\n', encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-json-counters",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "summary.json"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create evidence-sensitive summary",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+    report.write_text('{"win_rate": 55}\n', encoding="utf-8")
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create evidence-sensitive summary",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+
+
+@pytest.mark.parametrize("line", ['"trade_count": 20,', '"profit_total": 1200,', '"num_trades": 40,'])
+def test_router_treats_domain_count_and_total_fields_as_semantic_claims(session, tmp_path, line):
+    report = tmp_path / "summary.json"
+    report.write_text("{\n  " + line + "\n}\n", encoding="utf-8")
+    provider = SequencedProvider(
+        "provider-domain-counters",
+        [{"status": "COMPLETED", "output_artifact_refs": [{"path": "summary.json"}]}],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            worktree_path=tmp_path,
+            title="Create evidence-sensitive trading summary",
+            queue_item={"context_limits": {"evidence_sensitive": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "UNSUPPORTED_QUANTITATIVE_CLAIM"
+
+
+def test_router_explicit_evidence_reference_validation_runs_without_heuristic_sensitivity(session):
+    provider = SequencedProvider(
+        "provider-ref-payload",
+        [
+            {
+                "status": "COMPLETED",
+                "evidence": [{"type": "provider_claim", "evidence_reference": "LPLAN_000119_EVIDENCE_001"}],
+            }
+        ],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            title="Inspect simple implementation notes",
+            queue_item={"context_limits": {"evidence_reference_validation_required": True}},
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "EVIDENCE_REFERENCE_VALIDATION_FAILED"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == (
+        "FABRICATED_OR_UNAUTHORIZED_EVIDENCE_REFERENCE"
+    )
+
+
+def test_router_rejects_malformed_evidence_reference_payload(session):
+    provider = SequencedProvider(
+        "provider-ref-malformed",
+        [
+            {
+                "status": "COMPLETED",
+                "evidence": [{"type": "provider_claim", "evidence_reference": {"id": "LEVID_000001"}}],
+            }
+        ],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(queue_item={"context_limits": {"evidence_reference_validation_required": True}})
+    )
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "EVIDENCE_REFERENCE_VALIDATION_FAILED"
+    assert result.provider_error_metadata["quality_issues"][0]["reason"] == "MALFORMED_EVIDENCE_REFERENCE_FIELD"
+
+
+def test_router_accepts_allowed_evidence_reference_list_payload(session):
+    provider = SequencedProvider(
+        "provider-ref-list",
+        [
+            {
+                "status": "COMPLETED",
+                "evidence": [
+                    {
+                        "type": "provider_claim",
+                        "evidence_references": ["LEVID_000001", "LPLAN_000119_EVIDENCE_001"],
+                    }
+                ],
+            }
+        ],
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "context_limits": {
+                    "evidence_reference_validation_required": True,
+                    "allowed_evidence_refs": ["LEVID_000001", "LPLAN_000119_EVIDENCE_001"],
+                }
+            }
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+
 def test_router_accepts_provenance_identifiers_without_claim_typing(session, tmp_path):
     report = tmp_path / "protocol.md"
     report.write_text(
@@ -470,6 +672,301 @@ def test_router_schema_constrained_conservative_output_passes_and_records_provid
     assert result.verification_handoff_metadata["schema_constraint"]["status"] == "PASS"
 
 
+def test_router_read_only_inspection_uses_explicit_non_mutation_capability(session):
+    provider = SequencedProvider(
+        "provider-readonly",
+        [{"status": "COMPLETED"}],
+    )
+    provider.registration = provider.registration.model_copy(
+        update={
+            "capabilities": ["inspection_reasoning"],
+            "supported_task_classes": ["engineering", "inspection"],
+            "supports_code_modification": False,
+            "models": [
+                RuntimeProviderModel(
+                    model_id="readonly-model",
+                    capabilities=["inspection_reasoning"],
+                )
+            ],
+        }
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(queue_item={"read_only": True, "task_type": "inspection", "required_capabilities": None})
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.requests[0].required_capabilities == ["inspection_reasoning"]
+
+
+def test_router_mutation_task_still_requires_mutation_capable_provider(session):
+    provider = SequencedProvider("provider-readonly-only", [{"status": "COMPLETED"}])
+    provider.registration = provider.registration.model_copy(
+        update={
+            "capabilities": ["inspection_reasoning"],
+            "supports_code_modification": False,
+            "models": [
+                RuntimeProviderModel(
+                    model_id="readonly-model",
+                    capabilities=["inspection_reasoning"],
+                )
+            ],
+        }
+    )
+
+    result = _router(session, [provider]).execute(_context())
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "missing capabilities: ['code_modification']" in candidates[0]["reasons"]
+
+
+def test_router_allows_small_unattended_tier1_task_with_strict_constraints(session):
+    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qwen3:8b"))
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "timeout_seconds": 60,
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.requests[0].timeout_seconds == 60
+
+
+def test_router_rejects_unattended_tier1_when_complexity_is_missing(session):
+    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qwen3:8b"))
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "TASK_COMPLEXITY_UNKNOWN" in candidates[0]["reasons"]
+
+
+def test_router_rejects_unattended_tier1_when_risk_is_missing(session):
+    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qwen3:8b"))
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "TASK_RISK_UNKNOWN" in candidates[0]["reasons"]
+
+
+def test_router_rejects_unattended_tier1_when_allowed_roots_not_explicit(session):
+    provider = _profiled_provider(
+        "provider-tier1",
+        _tier1_profile("provider-tier1", "qwen3:8b"),
+        explicit_allowed_workspace_roots=False,
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "WORKSPACE_ALLOWED_ROOT_UNKNOWN" in candidates[0]["reasons"]
+
+
+def test_router_rejects_complex_task_for_tier1_unattended_model(session):
+    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qwen3:8b"))
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T2",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "TASK_COMPLEXITY_EXCEEDS_MODEL_PROFILE" in candidates[0]["reasons"]
+
+
+def test_router_rejects_supervised_only_model_for_unattended(session):
+    profile = _tier1_profile("provider-tier2", "qwen3-coder:30b").model_copy(
+        update={
+            "execution_tier": "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            "status": ModelQualificationStatus.SUPERVISED_ONLY,
+            "supervision_required": True,
+            "unattended_eligible": False,
+        }
+    )
+    provider = _profiled_provider("provider-tier2", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(queue_item={"unattended": True, "context_limits": {"deterministic_verification": True}})
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "MODEL_SUPERVISION_REQUIRED" in candidates[0]["reasons"]
+
+
+def test_router_rejects_supervised_only_model_without_explicit_supervision(session):
+    profile = _tier1_profile("provider-tier2", "qwen3-coder:30b").model_copy(
+        update={
+            "execution_tier": "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            "status": ModelQualificationStatus.SUPERVISED_ONLY,
+            "supervision_required": True,
+            "unattended_eligible": False,
+        }
+    )
+    provider = _profiled_provider("provider-tier2", profile)
+
+    result = _router(session, [provider]).execute(_context())
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "MODEL_SUPERVISION_REQUIRED" in candidates[0]["reasons"]
+
+
+def test_router_rejects_supervised_schema_required_model_without_schema_constraint(session):
+    profile = _tier1_profile("provider-tier2", "qwen3-coder:30b").model_copy(
+        update={
+            "execution_tier": "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            "status": ModelQualificationStatus.SUPERVISED_ONLY,
+            "supervision_required": True,
+            "unattended_eligible": False,
+            "schema_constrained_required": True,
+        }
+    )
+    provider = _profiled_provider("provider-tier2", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(queue_item={"execution_supervision": RuntimeExecutionSupervision.SUPERVISED.value})
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "SCHEMA_CONSTRAINT_REQUIRED" in candidates[0]["reasons"]
+
+
+def test_router_allows_supervised_schema_required_model_with_explicit_supervision_and_schema(session):
+    profile = _tier1_profile("provider-tier2", "qwen3-coder:30b").model_copy(
+        update={
+            "execution_tier": "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            "status": ModelQualificationStatus.SUPERVISED_ONLY,
+            "supervision_required": True,
+            "unattended_eligible": False,
+            "schema_constrained_required": True,
+        }
+    )
+    provider = _profiled_provider("provider-tier2", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "execution_supervision": RuntimeExecutionSupervision.SUPERVISED.value,
+                "context_limits": {
+                    "schema_constraint": {
+                        "required_sections": ["SUMMARY"],
+                    }
+                },
+            }
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+
+
+def test_router_failover_cannot_select_supervised_only_model_without_authorization(session):
+    failing = SequencedProvider(
+        "provider-fails",
+        [{"status": "FAILED", "retryability": RuntimeRetryability.FAILOVERABLE, "failure_class": "PROVIDER_DOWN"}],
+        reliability_score=90,
+    )
+    profile = _tier1_profile("provider-tier2", "qwen3-coder:30b").model_copy(
+        update={
+            "execution_tier": "TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED",
+            "status": ModelQualificationStatus.SUPERVISED_ONLY,
+            "supervision_required": True,
+            "unattended_eligible": False,
+        }
+    )
+    supervised_only = _profiled_provider("provider-tier2", profile)
+
+    result = _router(session, [failing, supervised_only], max_failovers=1).execute(_context())
+
+    assert result.outcome == "FAILED"
+    assert result.provider_id == "provider-fails"
+    assert supervised_only.calls == 0
+
+
+def test_router_rejects_unprofiled_model_for_unattended(session):
+    provider = SequencedProvider("provider-unprofiled", [{"status": "COMPLETED"}])
+
+    result = _router(session, [provider]).execute(
+        _context(queue_item={"unattended": True, "context_limits": {"deterministic_verification": True}})
+    )
+
+    assert result.outcome == "FAILED"
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "MODEL_NOT_QUALIFIED_FOR_UNATTENDED" in candidates[0]["reasons"]
+
+
+def test_router_records_success_failure_and_timeout_attempts_in_model_executions(session):
+    provider = SequencedProvider(
+        "provider-observable",
+        [
+            {"status": "FAILED", "failure_class": "PROVIDER_TIMEOUT", "retryability": RuntimeRetryability.NON_RETRYABLE},
+        ],
+    )
+
+    result = _router(session, [provider]).execute(_context())
+
+    assert result.outcome == "FAILED"
+    rows = session.scalars(select(ModelExecutionORM).order_by(ModelExecutionORM.created_at)).all()
+    assert len(rows) == 1
+    assert rows[0].request_id == result.execution_id
+    assert rows[0].run_id == "LWORK_TEST"
+    assert rows[0].task_id == "LTASK_TEST"
+    assert rows[0].provider_id == "provider-observable"
+    assert rows[0].model == "scripted-runtime-model"
+    assert rows[0].status == "FAILED"
+    assert rows[0].error_code == "PROVIDER_TIMEOUT"
+
+
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:
     return ModelExecutionRouter(
         session,
@@ -477,6 +974,51 @@ def _router(session, providers, *, max_provider_retries: int = 0, max_failovers:
         max_provider_retries=max_provider_retries,
         max_failovers=max_failovers,
     )
+
+
+def _tier1_profile(provider_id: str, model_id: str) -> ModelCapabilityProfile:
+    return ModelCapabilityProfile(
+        provider_id=provider_id,
+        model_id=model_id,
+        execution_tier="LOCAL_TIER_1",
+        is_local=True,
+        supported_task_classes=["engineering"],
+        supported_capabilities=["code_modification", "documentation_update", "inspection_reasoning"],
+        supports_mutation=True,
+        evidence_sensitive_suitable=False,
+        schema_constrained_required=False,
+        deterministic_verification_required=True,
+        supervision_required=False,
+        unattended_eligible=True,
+        max_task_complexity="T1",
+        default_timeout_seconds=60,
+        max_timeout_seconds=120,
+        status=ModelQualificationStatus.QUALIFIED_WITH_CONSTRAINTS,
+    )
+
+
+def _profiled_provider(
+    provider_id: str,
+    profile: ModelCapabilityProfile,
+    *,
+    explicit_allowed_workspace_roots: bool = True,
+) -> "SequencedProvider":
+    provider = SequencedProvider(provider_id, [{"status": "COMPLETED"}])
+    provider.registration = provider.registration.model_copy(
+        update={
+            "capabilities": profile.supported_capabilities,
+            "supports_code_modification": profile.supports_mutation,
+            "metadata": {"explicit_allowed_workspace_roots": explicit_allowed_workspace_roots},
+            "models": [
+                RuntimeProviderModel(
+                    model_id=profile.model_id,
+                    capabilities=profile.supported_capabilities,
+                    capability_profile=profile,
+                )
+            ],
+        }
+    )
+    return provider
 
 
 def _schema_queue_item(

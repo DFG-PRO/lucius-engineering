@@ -150,7 +150,7 @@ class ExecutionRuntimeLoopService:
                 result.escalations += adapter_result.escalations
                 result.status = _status_for_non_completion(adapter_result)
                 self._record_task_execution(context, adapter_result, result.status.value)
-                if adapter_result.outcome.value in {"ESCALATED", "FAILED"} or config.stop_on_block:
+                if _should_stop_after_non_completion(adapter_result, config):
                     result.stopped_reason = adapter_result.blocking_reason or adapter_result.error or adapter_result.outcome.value
                     break
         except QueueStateError as error:
@@ -635,6 +635,26 @@ def _status_for_non_completion(adapter_result: ExecutionAdapterResult) -> Runtim
     if adapter_result.outcome.value == "FAILED":
         return RuntimeLoopStatus.FAILED
     return RuntimeLoopStatus.BLOCKED
+
+
+TASK_LOCAL_FAILURE_CLASSES = {
+    "EVIDENCE_REFERENCE_VALIDATION_FAILED",
+    "MISSING_VERIFICATION_HANDOFF",
+    "READ_ONLY_MUTATION_ATTEMPT",
+    "SCHEMA_CONSTRAINT_VALIDATION_FAILED",
+    "UNSUPPORTED_QUANTITATIVE_CLAIM",
+}
+
+
+def _should_stop_after_non_completion(
+    adapter_result: ExecutionAdapterResult,
+    config: RuntimeLoopConfig,
+) -> bool:
+    if config.stop_on_block or adapter_result.outcome.value == "ESCALATED":
+        return True
+    if adapter_result.outcome.value != "FAILED":
+        return False
+    return adapter_result.failure_class not in TASK_LOCAL_FAILURE_CLASSES
 
 
 def _dispatch_fail_closed_reason(selection) -> str | None:

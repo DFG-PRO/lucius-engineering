@@ -113,9 +113,10 @@ Current locally observed Ollama models include:
 
 These model names are local environment evidence, not a universal Lucius
 assumption. `qwen3:8b` remains the Tier 1 candidate/default for bounded,
-simple, automatically verifiable local tasks. `qwen3-coder:30b` is validated
-for complex supervised schema-constrained work after Benchmark 3 PASS, but it
-is not qualified for unattended operation or Night Shift use. `qwen2.5vl:7b`
+simple, automatically verifiable local tasks. `qwen3-coder:30b` remains
+supervised/schema-constrained only after later qualification evidence showed
+fabricated evidence references; it is not qualified for unattended operation
+or Night Shift use. `qwen2.5vl:7b`
 is available for visual workloads and possible Production Engine use, but
 Production Engine integration and qualification remain governed by that
 project's own evidence and authority gates. Codex and other premium providers
@@ -255,10 +256,10 @@ Relevant validated local-provider commits:
 
 Post-commit benchmark `LBENCH_000109` passed
 `LUCIUS_CORE_BENCH_V0_1` with aggregate 100 and hard gate PASS on the clean
-`a01494384f4285735306dadac3e493ad8ec46fd7` tree. Benchmark 3 for
-`qwen3-coder:30b` passed under schema-constrained execution, with the caveat
-that one successful benchmark qualifies it only for supervised Tier 2 use with
-deterministic validation, not for unattended operation.
+`a01494384f4285735306dadac3e493ad8ec46fd7` tree. Later
+`qwen3-coder:30b` qualification evidence supersedes any stronger reading of
+local benchmark performance: the model is supervised/schema-constrained only,
+not unattended.
 
 ## Deferred
 
