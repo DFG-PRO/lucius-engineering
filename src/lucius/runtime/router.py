@@ -126,6 +126,7 @@ class ModelExecutionRouter:
                 execution_id=request.execution_id,
                 routing_decision_id=decision.routing_decision_id,
                 blocker_category="NO_ELIGIBLE_PROVIDER",
+                failure_class="NO_ELIGIBLE_PROVIDER",
                 blocking_reason=decision.no_eligible_reason or "No eligible runtime execution provider.",
                 resume_condition="Register or restore an eligible execution provider, then rerun canonical readiness/release.",
                 error=decision.no_eligible_reason,

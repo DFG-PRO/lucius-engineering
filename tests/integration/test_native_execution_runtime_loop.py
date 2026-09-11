@@ -761,3 +761,51 @@ def _item(
         "completed_substeps": [],
         "version": 0,
     }
+def test_runtime_no_eligible_provider_blocks_task_locally_and_continues_independent_work(session):
+    rejected = _item("DARWIN-NO-PROVIDER", order=1)
+    rejected["required_capabilities"] = ["documentation_update"]
+
+    independent = _item("DARWIN-INDEPENDENT", order=2)
+
+    dependent = _item("DARWIN-DEPENDENT", order=3)
+    dependent["dependencies"] = ["DARWIN-NO-PROVIDER"]
+
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[rejected, independent, dependent],
+    )
+
+    provider = ScriptedExecutionAdapter(
+        provider_id="provider-no-docs",
+        capabilities=["code_modification"],
+    )
+
+    result = _runtime(
+        session,
+        provider,
+    ).run(
+        RuntimeLoopConfig(
+            workflow_ids=[workflow.id],
+            max_tasks=3,
+        )
+    )
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    states = {item["item_id"]: item["state"] for item in row.task_backlog}
+
+    assert result.selected_tasks == 2
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 1
+
+    assert states["DARWIN-NO-PROVIDER"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert states["DARWIN-INDEPENDENT"] == QueueWorkItemState.COMPLETED.value
+    assert states["DARWIN-DEPENDENT"] == QueueWorkItemState.READY.value
+
+    audit = session.scalars(
+        select(AuditEventORM).where(
+            AuditEventORM.event_type == "MODEL_EXECUTION_NO_ELIGIBLE_PROVIDER"
+        )
+    ).all()
+
+    assert len(audit) == 1
