@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -47,6 +48,14 @@ def changed_paths(repo: str | Path) -> list[str]:
             if raw_path:
                 changed.add(raw_path.decode("utf-8", errors="surrogateescape"))
     return sorted(changed)
+
+
+def staged_paths(repo: str | Path) -> list[str]:
+    root = repository_root(repo)
+    completed = subprocess.run(["git", "diff", "--cached", "--name-only", "-z"], cwd=root, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise GitMutationError("GIT_STATUS_FAILED", _stderr(completed) or "Unable to inspect staged Git state.")
+    return sorted(raw.decode("utf-8", errors="surrogateescape") for raw in completed.stdout.split(b"\0") if raw)
 
 
 def assert_clean(repo: str | Path) -> None:
@@ -106,6 +115,17 @@ def validate_file_contents(
     return validated
 
 
+def workspace_file_sha256(repo: str | Path, raw_path: str) -> str:
+    root = repository_root(repo)
+    path = validate_relative_repo_path(raw_path)
+    target = (root / Path(*PurePosixPath(path).parts)).resolve()
+    if not _is_relative_to(target, root):
+        raise GitMutationError("INVALID_REPOSITORY_PATH", f"Path escapes repository: {path}")
+    if not target.is_file():
+        raise GitMutationError("WORKTREE_FILE_NOT_REGULAR", f"Workspace file is not a regular file: {path}")
+    return hashlib.sha256(target.read_bytes()).hexdigest()
+
+
 def capture_utf8_file_contents(
     repo: str | Path,
     paths: list[str],
@@ -135,6 +155,74 @@ def capture_utf8_file_contents(
             raise GitMutationError("CANDIDATE_FILE_READ_FAILED", f"Could not read candidate file {path}: {exc}") from exc
         captured.append({"path": path, "content": content})
     return captured
+
+
+def stage_paths(repo: str | Path, paths: list[str]) -> None:
+    root = repository_root(repo)
+    validated = [validate_relative_repo_path(path) for path in paths]
+    if not validated:
+        raise GitMutationError("NO_STAGE_PATHS", "No paths were supplied for staging.")
+    completed = subprocess.run(["git", "add", "--", *validated], cwd=root, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise GitMutationError("GIT_STAGE_FAILED", _stderr(completed) or "Unable to stage controlled commit paths.")
+
+
+def unstage_paths(repo: str | Path, paths: list[str]) -> None:
+    root = repository_root(repo)
+    validated = [validate_relative_repo_path(path) for path in paths]
+    if not validated:
+        return
+    completed = subprocess.run(["git", "restore", "--staged", "--", *validated], cwd=root, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise GitMutationError("GIT_UNSTAGE_FAILED", _stderr(completed) or "Unable to unstage controlled commit paths.")
+
+
+def staged_file_sha256(repo: str | Path, raw_path: str) -> str:
+    root = repository_root(repo)
+    path = validate_relative_repo_path(raw_path)
+    return hashlib.sha256(_git_bytes(root, ["show", f":{path}"])).hexdigest()
+
+
+def create_local_commit(repo: str | Path, message: str) -> str:
+    root = repository_root(repo)
+    completed = subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "commit", "--no-gpg-sign", "-m", message],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise GitMutationError("GIT_COMMIT_FAILED", completed.stderr.strip() or "Unable to create controlled local commit.")
+    return current_head(root)
+
+
+def commit_parent_shas(repo: str | Path, commit_sha: str) -> list[str]:
+    root = repository_root(repo)
+    line = _git(root, ["rev-list", "--parents", "-n", "1", commit_sha]).strip()
+    parts = line.split()
+    if not parts or parts[0] != commit_sha:
+        raise GitMutationError("COMMIT_PARENT_INSPECTION_FAILED", f"Could not inspect commit parents for {commit_sha}.")
+    return parts[1:]
+
+
+def commit_changed_paths(repo: str | Path, commit_sha: str) -> list[str]:
+    root = repository_root(repo)
+    completed = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commit_sha],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise GitMutationError("COMMIT_PATH_INSPECTION_FAILED", _stderr(completed) or "Could not inspect commit paths.")
+    return sorted(raw.decode("utf-8", errors="surrogateescape") for raw in completed.stdout.split(b"\0") if raw)
+
+
+def committed_file_sha256(repo: str | Path, commit_sha: str, raw_path: str) -> str:
+    root = repository_root(repo)
+    path = validate_relative_repo_path(raw_path)
+    return hashlib.sha256(_git_bytes(root, ["show", f"{commit_sha}:{path}"])).hexdigest()
 
 
 def write_validated_file_contents(files: list[ValidatedFileContent]) -> list[dict[str, object]]:
@@ -170,6 +258,13 @@ def _git(repo: Path, args: list[str]) -> str:
     completed = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         raise GitMutationError("GIT_COMMAND_FAILED", completed.stderr.strip() or "git command failed")
+    return completed.stdout
+
+
+def _git_bytes(repo: Path, args: list[str]) -> bytes:
+    completed = subprocess.run(["git", *args], cwd=repo, capture_output=True, check=False)
+    if completed.returncode != 0:
+        raise GitMutationError("GIT_COMMAND_FAILED", _stderr(completed) or "git command failed")
     return completed.stdout
 
 

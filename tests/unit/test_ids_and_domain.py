@@ -38,6 +38,7 @@ def test_canonical_id_formatting():
     assert format_public_id("pilot_learning", 1) == "LPLEARN_000001"
     assert format_public_id("pilot_record", 1) == "LPILOT_000001"
     assert format_public_id("queue_checkpoint", 1) == "LQCHK_000001"
+    assert format_public_id("controlled_commit", 1) == "LCOMMIT_000001"
 
 
 def test_required_enums_exist():

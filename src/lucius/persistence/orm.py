@@ -486,6 +486,34 @@ class PlanFreezeORM(Base):
     frozen_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class ControlledCommitORM(Base):
+    __tablename__ = "controlled_commits"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "plan_freeze_id", "status", name="uq_controlled_commit_workflow_freeze_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("persistent_workflows.id"), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("repository_registrations.id"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    plan_freeze_id: Mapped[str] = mapped_column(ForeignKey("plan_freezes.id"), nullable=False, index=True)
+    baseline_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    resulting_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    authorized_paths: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    actual_changed_paths: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    path_content_hashes: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    commit_message: Mapped[str] = mapped_column(Text, nullable=False)
+    deterministic_acceptance_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    authority_level: Mapped[str] = mapped_column(String(8), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    result: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class EngineeringPlanEvaluationORM(Base):
     __tablename__ = "engineering_plan_evaluations"
 
