@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -103,6 +104,8 @@ class OllamaExecutionProvider:
 
     def invoke(self, runtime_request: RuntimeExecutionRequest) -> RuntimeExecutionResult:
         started = time.monotonic()
+        workspace: Path | None = None
+        mutation_attempted = False
         try:
             workspace = self._validate_workspace(runtime_request)
             prompt = _build_prompt(runtime_request, workspace)
@@ -113,7 +116,10 @@ class OllamaExecutionProvider:
                     "prompt": prompt,
                     "stream": False,
                     "format": "json",
-                    "options": {"temperature": 0},
+                    "options": {
+                        "temperature": 0,
+                        "num_predict": 256,
+                    },
                 },
                 timeout_seconds=runtime_request.timeout_seconds or self.timeout_seconds,
             )
@@ -171,7 +177,66 @@ class OllamaExecutionProvider:
                         "read_only": True,
                     },
                 )
-            written_files = self._apply_file_changes(workspace, payload)
+            if not runtime_request.allowed_mutation_paths:
+                raise _ProviderBlocked(
+                    "MUTATION_SCOPE_VIOLATION",
+                    "Mutation request has no authorized frozen mutation paths.",
+                )
+
+            preexisting_changes = _git_changed_paths(workspace)
+            if preexisting_changes:
+                raise _ProviderBlocked(
+                    "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                    "Mutation workspace was not clean before execution: "
+                    + ", ".join(preexisting_changes),
+                )
+
+            mutation_attempted = True
+            written_files = self._apply_file_changes(
+                workspace,
+                payload,
+                runtime_request.allowed_mutation_paths,
+            )
+
+            actual_changed_paths = _git_changed_paths(workspace)
+            authorized = set(runtime_request.allowed_mutation_paths)
+            written_paths = {item["path"] for item in written_files}
+            actual_paths = set(actual_changed_paths)
+
+            unauthorized_actual = sorted(actual_paths - authorized)
+            missing_written = sorted(written_paths - actual_paths)
+
+            if unauthorized_actual or missing_written:
+                details = []
+                if unauthorized_actual:
+                    details.append(
+                        "unauthorized changed paths: " + ", ".join(unauthorized_actual)
+                    )
+                if missing_written:
+                    details.append(
+                        "provider-reported writes absent from git changes: "
+                        + ", ".join(missing_written)
+                    )
+                raise _ProviderBlocked(
+                    "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                    "; ".join(details),
+                )
+
+            deterministic_verification = {
+                "result": "PASS",
+                "type": "deterministic_mutation_scope",
+                "detail": "Git-observed mutation paths are within the frozen authorized scope.",
+                "allowed_paths": sorted(authorized),
+                "changed_paths": actual_changed_paths,
+                "written_paths": sorted(written_paths),
+            }
+
+            deterministic_acceptance_verification = _verify_deterministic_acceptance(
+                workspace,
+                runtime_request.deterministic_acceptance_checks,
+                authorized_paths=authorized,
+            )
+
             latency_ms = _latency_ms(response.body, started)
             prompt_tokens = _optional_int(response.body.get("prompt_eval_count"))
             output_tokens = _optional_int(response.body.get("eval_count"))
@@ -198,7 +263,11 @@ class OllamaExecutionProvider:
                         "files": written_files,
                     }
                 ],
-                verification=_verification(payload, written_files),
+                verification=[
+                    deterministic_verification,
+                    *deterministic_acceptance_verification,
+                    *_verification(payload, written_files),
+                ],
                 documentation=_dict_list(payload.get("documentation")),
                 active_execution_seconds=max(0.0, time.monotonic() - started),
                 latency_ms=latency_ms,
@@ -212,9 +281,31 @@ class OllamaExecutionProvider:
                     "provider": "ollama",
                     "endpoint": self.endpoint,
                     "model_response_captured": True,
+                    "deterministic_mutation_verification": True,
+                    "deterministic_acceptance_verification": bool(
+                        deterministic_acceptance_verification
+                    ),
+                    "allowed_mutation_paths": sorted(authorized),
+                    "actual_changed_paths": actual_changed_paths,
                 },
             )
         except _ProviderBlocked as blocked:
+            if mutation_attempted and workspace is not None:
+                try:
+                    _restore_clean_workspace(workspace)
+                except _ProviderBlocked as rollback_failure:
+                    return _failed_result(
+                        runtime_request,
+                        self,
+                        started,
+                        failure_class="DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                        message=(
+                            f"{blocked.message}; mutation rollback failed: "
+                            f"{rollback_failure.message}"
+                        ),
+                        retryability=RuntimeRetryability.NON_RETRYABLE,
+                    )
+
             return _failed_result(
                 runtime_request,
                 self,
@@ -280,34 +371,171 @@ class OllamaExecutionProvider:
             raise _ProviderBlocked("WORKSPACE_OUTSIDE_ALLOWED_ROOTS", f"Workspace is outside allowed roots: {workspace}")
         return workspace
 
-    def _apply_file_changes(self, workspace: Path, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _apply_file_changes(
+        self,
+        workspace: Path,
+        payload: dict[str, Any],
+        allowed_mutation_paths: list[str],
+    ) -> list[dict[str, Any]]:
         files = payload.get("files")
         if not isinstance(files, list) or not files:
             raise _ProviderBlocked("NO_FILE_CHANGES", "Ollama response did not contain file changes.")
         if len(files) > self.max_files:
             raise _ProviderBlocked("TOO_MANY_FILE_CHANGES", "Ollama response exceeded max file changes.")
-        written: list[dict[str, Any]] = []
+
+        authorized = set(allowed_mutation_paths)
+        if not authorized:
+            raise _ProviderBlocked(
+                "MUTATION_SCOPE_VIOLATION",
+                "Mutation request has no authorized frozen mutation paths.",
+            )
+
+        validated = []
+        seen = set()
+
         for item in files:
             if not isinstance(item, dict):
                 raise _ProviderBlocked("MALFORMED_FILE_CHANGE", "File change must be an object.")
+
             raw_path = item.get("path")
             content = item.get("content")
+
             if not isinstance(raw_path, str) or not raw_path.strip():
                 raise _ProviderBlocked("MALFORMED_FILE_CHANGE", "File change path is required.")
-            if raw_path.startswith("/") or ".." in Path(raw_path).parts:
+
+            raw_path = raw_path.strip()
+
+            if raw_path.startswith("/") or "\\" in raw_path or ".." in Path(raw_path).parts:
                 raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Unsafe file path: {raw_path}")
-            if not isinstance(content, str):
-                raise _ProviderBlocked("MALFORMED_FILE_CHANGE", "File change content must be a string.")
-            encoded = content.encode("utf-8")
-            if len(encoded) > self.max_file_bytes:
-                raise _ProviderBlocked("FILE_CHANGE_TOO_LARGE", f"File change too large: {raw_path}")
+
             target = (workspace / raw_path).resolve()
             if not _is_relative_to(target, workspace):
                 raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Unsafe file path: {raw_path}")
+
+            if raw_path in seen:
+                raise _ProviderBlocked(
+                    "MUTATION_SCOPE_VIOLATION",
+                    f"Duplicate proposed mutation path: {raw_path}",
+                )
+            seen.add(raw_path)
+
+            if raw_path not in authorized:
+                raise _ProviderBlocked(
+                    "MUTATION_SCOPE_VIOLATION",
+                    f"Unauthorized mutation path: {raw_path}",
+                )
+
+            if not isinstance(content, str):
+                raise _ProviderBlocked("MALFORMED_FILE_CHANGE", "File change content must be a string.")
+
+            encoded = content.encode("utf-8")
+            if len(encoded) > self.max_file_bytes:
+                raise _ProviderBlocked("FILE_CHANGE_TOO_LARGE", f"File change too large: {raw_path}")
+
+            validated.append((raw_path, target, content, len(encoded)))
+
+        written = []
+        for raw_path, target, content, byte_count in validated:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            written.append({"path": raw_path, "bytes": len(encoded)})
+            written.append({"path": raw_path, "bytes": byte_count})
+
         return written
+
+
+def _verify_deterministic_acceptance(
+    workspace: Path,
+    checks: list[dict[str, Any]],
+    *,
+    authorized_paths: set[str],
+) -> list[dict[str, Any]]:
+    verification: list[dict[str, Any]] = []
+
+    for index, check in enumerate(checks, start=1):
+        if not isinstance(check, dict):
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance check {index} is malformed.",
+            )
+
+        check_type = check.get("type")
+        raw_path = check.get("path")
+        expected_text = check.get("expected_text")
+
+        if check_type != "exact_file_content":
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Unsupported deterministic acceptance check type at index {index}.",
+            )
+
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance check {index} has no valid path.",
+            )
+
+        path = raw_path.strip()
+
+        if (
+            path.startswith("/")
+            or "\\" in path
+            or "." in Path(path).parts
+            or ".." in Path(path).parts
+            or path not in authorized_paths
+        ):
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance path is outside frozen authorization: {path}",
+            )
+
+        if not isinstance(expected_text, str):
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance expected_text is invalid for: {path}",
+            )
+
+        target = (workspace / path).resolve()
+        if not _is_relative_to(target, workspace):
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance path escapes workspace: {path}",
+            )
+
+        if not target.is_file():
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Deterministic acceptance target does not exist: {path}",
+            )
+
+        try:
+            actual_text = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                f"Could not read deterministic acceptance target {path}: {exc}",
+            ) from exc
+
+        if actual_text != expected_text:
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                (
+                    f"Exact file content acceptance failed for {path}: "
+                    f"expected {len(expected_text.encode('utf-8'))} bytes, "
+                    f"observed {len(actual_text.encode('utf-8'))} bytes."
+                ),
+            )
+
+        verification.append(
+            {
+                "result": "PASS",
+                "type": "deterministic_acceptance_exact_file_content",
+                "path": path,
+                "detail": "Workspace file content exactly matches the frozen acceptance value.",
+                "bytes": len(actual_text.encode("utf-8")),
+            }
+        )
+
+    return verification
 
 
 class _ProviderBlocked(Exception):
@@ -330,20 +558,40 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
         "Work only inside the supplied isolated workspace.",
         "Return strict JSON only, with no markdown.",
         "Schema:",
-        '{"summary":"...","completed_substeps":["..."],"files":[{"path":"relative/path","content":"..."}],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}'
+        '{"files":[{"path":"relative/path","content":"exact file contents"}]}'
         if not runtime_request.read_only
         else '{"summary":"...","completed_substeps":["..."],"files":[],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
         f"Execution id: {runtime_request.execution_id}",
         f"Task id: {runtime_request.task_id}",
         f"Plan id: {runtime_request.plan_id}",
         f"Plan freeze id: {runtime_request.plan_freeze_id}",
-        f"Allowed mutation scope: {runtime_request.allowed_mutation_scope}",
+        f"Authority scope metadata: {runtime_request.allowed_mutation_scope}",
+        "Authorized mutation paths: "
+        + (
+            ", ".join(runtime_request.allowed_mutation_paths)
+            if runtime_request.allowed_mutation_paths
+            else "<none>"
+        ),
+        "Frozen deterministic acceptance checks: "
+        + (
+            json.dumps(
+                runtime_request.deterministic_acceptance_checks,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if runtime_request.deterministic_acceptance_checks
+            else "<none>"
+        ),
         f"Workspace: {workspace}",
         f"Task intent: {runtime_request.task_intent}",
         "Keep the change tiny, deterministic, and automatically verifiable.",
         "This is a read-only request. Do not return file changes; files must be an empty array."
         if runtime_request.read_only
-        else "File changes are permitted only within the supplied isolated workspace.",
+        else (
+            "Return only the minimal JSON object required by the mutation schema. "
+            "Do not add summary, verification, documentation, commentary, alternative content, "
+            "or extra keys. File contents must satisfy the frozen deterministic acceptance checks exactly."
+        ),
         "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
         "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
     ]
@@ -454,6 +702,73 @@ def _verification(payload: dict[str, Any], written_files: list[dict[str, Any]]) 
         return verification
     return [{"result": "PASS", "detail": f"Provider wrote {len(written_files)} file(s) in isolated workspace."}]
 
+
+
+def _restore_clean_workspace(workspace: Path) -> None:
+    commands = [
+        ["git", "reset", "--hard", "HEAD"],
+        ["git", "clean", "-fd"],
+    ]
+
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            cwd=workspace,
+            capture_output=True,
+            check=False,
+        )
+
+        if completed.returncode != 0:
+            message = completed.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                "Unable to restore isolated workspace"
+                + (f": {message}" if message else "."),
+            )
+
+    remaining_changes = _git_changed_paths(workspace)
+    if remaining_changes:
+        raise _ProviderBlocked(
+            "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+            "Isolated workspace remained dirty after rollback: "
+            + ", ".join(remaining_changes),
+        )
+
+
+def _git_changed_paths(workspace: Path) -> list[str]:
+    commands = [
+        ["git", "diff", "--name-only", "-z"],
+        ["git", "diff", "--cached", "--name-only", "-z"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    ]
+
+    changed: set[str] = set()
+
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            cwd=workspace,
+            capture_output=True,
+            check=False,
+        )
+
+        if completed.returncode != 0:
+            message = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise _ProviderBlocked(
+                "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                "Unable to inspect Git mutation state"
+                + (f": {message}" if message else "."),
+            )
+
+        for raw_path in completed.stdout.split(b"\0"):
+            if not raw_path:
+                continue
+            changed.add(raw_path.decode("utf-8", errors="surrogateescape"))
+
+    return sorted(changed)
 
 def _failed_result(
     runtime_request: RuntimeExecutionRequest,

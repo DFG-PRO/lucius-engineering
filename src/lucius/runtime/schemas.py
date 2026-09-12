@@ -219,6 +219,8 @@ class RuntimeExecutionRequest(BaseModel):
     isolated_workspace: str
     task_intent: str
     allowed_mutation_scope: str
+    allowed_mutation_paths: list[str] = Field(default_factory=list)
+    deterministic_acceptance_checks: list[dict[str, Any]] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
     task_type: str | None = None
     task_complexity: str = "T1"

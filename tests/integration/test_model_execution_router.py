@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from lucius.persistence.orm import AuditEventORM, ModelExecutionORM
+from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, PlanFreezeORM
 from lucius.runtime.adapters import ScriptedExecutionAdapter
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
@@ -20,6 +20,158 @@ from lucius.runtime.schemas import (
     RuntimeProviderStatus,
     RuntimeRetryability,
 )
+
+
+
+def test_router_derives_allowed_mutation_paths_from_frozen_plan(session):
+    provider = SequencedProvider(
+        "provider-scope-derivation",
+        [{"status": "COMPLETED"}],
+    )
+
+    result = _router(session, [provider]).execute(_context())
+
+    assert result.outcome == "COMPLETED"
+    assert provider.calls == 1
+    assert provider.requests[0].allowed_mutation_paths == [
+        "provider-proof.txt",
+        "readiness.md",
+        "protocol.md",
+    ]
+
+
+def test_router_read_only_request_does_not_require_plan_freeze(session):
+    provider = SequencedProvider(
+        "provider-read-only-no-freeze",
+        [{"status": "COMPLETED"}],
+    )
+    provider.registration = provider.registration.model_copy(
+        update={
+            "capabilities": ["inspection_reasoning"],
+            "models": [
+                RuntimeProviderModel(
+                    model_id="scripted-runtime-model",
+                    capabilities=["inspection_reasoning"],
+                )
+            ],
+        }
+    )
+
+    router = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([provider]),
+    )
+
+    context = _context(
+        queue_item={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "engineering",
+        }
+    )
+    context = context.model_copy(
+        update={
+            "plan_freeze_id": "LFREEZE_DOES_NOT_EXIST",
+        }
+    )
+
+    result = router.execute(context)
+
+    assert result.outcome == "COMPLETED"
+    assert provider.calls == 1
+    assert provider.requests[0].allowed_mutation_paths == []
+
+
+@pytest.mark.parametrize(
+    ("freeze_setup", "expected_error"),
+    [
+        ("missing", "PLAN_FREEZE_NOT_FOUND"),
+        ("mismatch", "PLAN_FREEZE_PLAN_MISMATCH"),
+        ("empty", "EMPTY_FROZEN_MUTATION_SCOPE"),
+    ],
+)
+def test_router_rejects_invalid_mutation_scope_before_provider(
+    session,
+    freeze_setup,
+    expected_error,
+):
+    provider = SequencedProvider(
+        f"provider-scope-{freeze_setup}",
+        [{"status": "COMPLETED"}],
+    )
+
+    if freeze_setup == "missing":
+        freeze_id = "LFREEZE_MISSING"
+
+    elif freeze_setup == "mismatch":
+        freeze_id = "LFREEZE_MISMATCH"
+        session.add(
+            PlanFreezeORM(
+                id=freeze_id,
+                plan_id="LPLAN_OTHER",
+                task_id="LTASK_TEST",
+                project_id="PROJECT_A",
+                repository_state_id=None,
+                repository_snapshot_ids=[],
+                evidence_ids=[],
+                commit_sha=None,
+                planning_mode="CURRENT_STATE_PLANNING",
+                evaluation_version="phase-1.30-router-test",
+                plan_payload={
+                    "affected_files": [
+                        {"path": "provider-proof.txt"},
+                    ]
+                },
+                frozen_by="SYSTEM",
+            )
+        )
+        session.flush()
+
+    else:
+        freeze_id = "LFREEZE_EMPTY"
+        session.add(
+            PlanFreezeORM(
+                id=freeze_id,
+                plan_id="LPLAN_TEST",
+                task_id="LTASK_TEST",
+                project_id="PROJECT_A",
+                repository_state_id=None,
+                repository_snapshot_ids=[],
+                evidence_ids=[],
+                commit_sha=None,
+                planning_mode="CURRENT_STATE_PLANNING",
+                evaluation_version="phase-1.30-router-test",
+                plan_payload={"affected_files": []},
+                frozen_by="SYSTEM",
+            )
+        )
+        session.flush()
+
+    router = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([provider]),
+    )
+
+    context = _context().model_copy(
+        update={
+            "plan_freeze_id": freeze_id,
+        }
+    )
+
+    result = router.execute(context)
+
+    assert result.outcome == "FAILED"
+    assert result.failure_class == "MUTATION_SCOPE_VIOLATION"
+    assert result.blocker_category == "MUTATION_SCOPE_VIOLATION"
+    assert result.error == expected_error
+    assert result.routing_decision_id is None
+    assert provider.calls == 0
+    assert provider.requests == []
+    assert session.scalars(select(ModelExecutionORM)).all() == []
+
+    audit = _latest_audit(session, "MODEL_EXECUTION_MUTATION_SCOPE_REJECTED")
+    assert audit is not None
+    assert audit.event_metadata["mutation_scope_error"] == expected_error
 
 
 def test_router_selects_single_eligible_provider_and_records_identity(session):
@@ -968,12 +1120,49 @@ def test_router_records_success_failure_and_timeout_attempts_in_model_executions
 
 
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:
+    _ensure_default_plan_freeze(session)
     return ModelExecutionRouter(
         session,
         registry=RuntimeProviderRegistry(providers),
         max_provider_retries=max_provider_retries,
         max_failovers=max_failovers,
     )
+
+
+def _ensure_default_plan_freeze(session) -> None:
+    if session.get(PlanFreezeORM, "LFREEZE_TEST") is not None:
+        return
+
+    session.add(
+        PlanFreezeORM(
+            id="LFREEZE_TEST",
+            plan_id="LPLAN_TEST",
+            task_id="LTASK_TEST",
+            project_id="PROJECT_A",
+            repository_state_id=None,
+            repository_snapshot_ids=[],
+            evidence_ids=[],
+            commit_sha=None,
+            planning_mode="CURRENT_STATE_PLANNING",
+            evaluation_version="phase-1.30-router-test",
+            plan_payload={
+                "affected_files": [
+                    {"path": "provider-proof.txt"},
+                    {"path": "readiness.md"},
+                    {"path": "protocol.md"},
+                ],
+                "deterministic_acceptance_checks": [
+                    {
+                        "type": "exact_file_content",
+                        "path": "provider-proof.txt",
+                        "expected_text": "provider proof\n",
+                    }
+                ],
+            },
+            frozen_by="SYSTEM",
+        )
+    )
+    session.flush()
 
 
 def _tier1_profile(provider_id: str, model_id: str) -> ModelCapabilityProfile:

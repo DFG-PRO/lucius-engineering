@@ -346,6 +346,7 @@ class EngineeringPlanORM(Base):
     affected_files: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     acceptance_coverage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    deterministic_acceptance_checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     test_strategy: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     documentation_requirements: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     rollback_considerations: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

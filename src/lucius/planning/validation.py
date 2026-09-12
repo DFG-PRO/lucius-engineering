@@ -88,6 +88,7 @@ def validate_and_enrich_plan(
                 )
             )
     plan.affected_files = _classify_affected_files(session, context, plan)
+    blockers.extend(_validate_deterministic_acceptance_checks(plan))
     _classify_step_support(plan)
     deterministic_risk = _risk_floor(context, plan)
     if RISK_RANK[deterministic_risk] > RISK_RANK[plan.risk_level]:
@@ -121,6 +122,35 @@ def validate_and_enrich_plan(
             )
         )
     return plan, blockers, warnings
+
+
+def _validate_deterministic_acceptance_checks(
+    plan: ModelEngineeringPlanOutput,
+) -> list[PlanningBlocker]:
+    blockers: list[PlanningBlocker] = []
+    affected_paths = {item.path for item in plan.affected_files}
+
+    for index, check in enumerate(plan.deterministic_acceptance_checks, start=1):
+        if check.type != "exact_file_content":
+            blockers.append(
+                PlanningBlocker(
+                    code=PlanningBlockerCode.ENGINEERING_PLAN_INVALID,
+                    message="Plan contains an unsupported deterministic acceptance check.",
+                    metadata={"index": index, "type": check.type},
+                )
+            )
+            continue
+
+        if check.path not in affected_paths:
+            blockers.append(
+                PlanningBlocker(
+                    code=PlanningBlockerCode.ENGINEERING_PLAN_INVALID,
+                    message="Deterministic acceptance check references a file outside affected_files.",
+                    metadata={"index": index, "path": check.path},
+                )
+            )
+
+    return blockers
 
 
 def _validate_reference_scope(

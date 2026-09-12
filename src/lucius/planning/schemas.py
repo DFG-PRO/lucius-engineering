@@ -140,6 +140,27 @@ class AcceptanceCoverage(BaseModel):
     notes: str | None = None
 
 
+class DeterministicAcceptanceCheck(BaseModel):
+    type: str
+    path: str
+    expected_text: str
+
+    @field_validator("type")
+    @classmethod
+    def supported_type(cls, value: str) -> str:
+        if value != "exact_file_content":
+            raise ValueError("Unsupported deterministic acceptance check type.")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def nonempty_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Deterministic acceptance check path must be non-empty.")
+        return normalized
+
+
 class TestRecommendation(BaseModel):
     kind: TestStrategyKind
     description: str
@@ -184,6 +205,7 @@ class ModelEngineeringPlanOutput(BaseModel):
     affected_files: list[AffectedFilePlan] = Field(default_factory=list)
     steps: list[PlanStep] = Field(default_factory=list)
     acceptance_coverage: list[AcceptanceCoverage] = Field(default_factory=list)
+    deterministic_acceptance_checks: list[DeterministicAcceptanceCheck] = Field(default_factory=list)
     test_strategy: list[TestRecommendation] = Field(default_factory=list)
     documentation_requirements: list[DocumentationRequirement] = Field(default_factory=list)
     rollback_considerations: list[str] = Field(default_factory=list)

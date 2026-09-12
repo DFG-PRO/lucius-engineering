@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Protocol
 
 from sqlalchemy import select
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, AuthorityLevel
-from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, utc_now
+from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.runtime.provider_quality import evidence_sensitive_provider_quality_issues
 from lucius.runtime.schema_constraints import (
@@ -97,6 +98,43 @@ class ModelExecutionRouter:
             authority_level=AuthorityLevel.L1,
             metadata=request.model_dump(mode="json"),
         )
+        mutation_scope_error = request.metadata.get("mutation_scope_error")
+        if not request.read_only and mutation_scope_error:
+            message = (
+                "Mutation authorization rejected before provider routing: "
+                + str(mutation_scope_error)
+            )
+            self.audit.record(
+                event_type="MODEL_EXECUTION_MUTATION_SCOPE_REJECTED",
+                actor=self.actor.value,
+                project_id=context.project_id,
+                repository_id=context.repository_id,
+                task_id=context.workflow_task_id,
+                action="validate_frozen_mutation_scope",
+                result="FAILED_CLOSED",
+                authority_level=AuthorityLevel.L1,
+                metadata={
+                    "execution_id": request.execution_id,
+                    "plan_id": request.plan_id,
+                    "plan_freeze_id": request.plan_freeze_id,
+                    "mutation_scope_error": mutation_scope_error,
+                    "allowed_mutation_paths": request.allowed_mutation_paths,
+                },
+            )
+            return ExecutionAdapterResult(
+                outcome="FAILED",
+                execution_id=request.execution_id,
+                blocker_category="MUTATION_SCOPE_VIOLATION",
+                failure_class="MUTATION_SCOPE_VIOLATION",
+                blocking_reason=message,
+                resume_condition=(
+                    "Restore a valid frozen plan with explicit authorized mutation paths "
+                    "and rerun canonical readiness/release."
+                ),
+                error=str(mutation_scope_error),
+                retryability=RuntimeRetryability.NON_RETRYABLE,
+            )
+
         decision, provider_by_id = self._route(request, context)
         if decision.selected_provider_id is None:
             self.audit.record(
@@ -262,6 +300,17 @@ class ModelExecutionRouter:
         queue_item = context.queue_item or {}
         context_limits = dict(queue_item.get("context_limits", {}))
         read_only = _queue_item_is_read_only(queue_item)
+        unattended = bool(queue_item.get("unattended", queue_item.get("unattended_eligible", False)))
+        (
+            allowed_mutation_paths,
+            deterministic_acceptance_checks,
+            mutation_scope_error,
+        ) = _frozen_mutation_scope(
+            self.session,
+            context,
+            read_only=read_only,
+            require_deterministic_acceptance=unattended and not read_only,
+        )
         required_capabilities = queue_item.get("required_capabilities")
         if required_capabilities is None:
             required_capabilities = ["inspection_reasoning"] if read_only else ["code_modification"]
@@ -273,6 +322,9 @@ class ModelExecutionRouter:
             "task_risk_explicit": "task_risk" in queue_item or "risk" in queue_item,
             "isolation_mode_explicit": "isolation_mode" in queue_item,
             "deterministic_verification_explicit": "deterministic_verification" in context_limits,
+            "mutation_scope_source": "plan_freeze",
+            "deterministic_acceptance_source": "plan_freeze",
+            "mutation_scope_error": mutation_scope_error,
         }
         skeleton = schema_constrained_output_skeleton(context_limits)
         if skeleton:
@@ -296,11 +348,13 @@ class ModelExecutionRouter:
             isolated_workspace=context.worktree_path,
             task_intent=context.title or context.workflow_objective,
             allowed_mutation_scope=context.authority_tier,
+            allowed_mutation_paths=allowed_mutation_paths,
+            deterministic_acceptance_checks=deterministic_acceptance_checks,
             required_capabilities=[str(item) for item in required_capabilities],
             task_type=str(queue_item.get("task_type", "engineering")),
             task_complexity=str(queue_item.get("task_complexity", queue_item.get("complexity", "T1"))),
             task_risk=str(queue_item.get("task_risk", queue_item.get("risk", "LOW"))),
-            unattended=bool(queue_item.get("unattended", queue_item.get("unattended_eligible", False))),
+            unattended=unattended,
             read_only=read_only,
             execution_supervision=execution_supervision,
             tool_requirements=[str(item) for item in queue_item.get("tool_requirements", [])],
@@ -731,6 +785,117 @@ def _release_evidence_refs(session: Session, context: RuntimeExecutionContext) -
             refs.append(latest_ready.id)
     return refs
 
+
+
+def _frozen_mutation_scope(
+    session: Session,
+    context: RuntimeExecutionContext,
+    *,
+    read_only: bool,
+    require_deterministic_acceptance: bool,
+) -> tuple[list[str], list[dict[str, Any]], str | None]:
+    if read_only:
+        return [], [], None
+
+    freeze = session.get(PlanFreezeORM, context.plan_freeze_id)
+
+    if freeze is None:
+        return [], [], "PLAN_FREEZE_NOT_FOUND"
+
+    if freeze.plan_id != context.plan_id:
+        return [], [], "PLAN_FREEZE_PLAN_MISMATCH"
+
+    payload = freeze.plan_payload if isinstance(freeze.plan_payload, dict) else {}
+    affected_files = payload.get("affected_files")
+
+    if not isinstance(affected_files, list):
+        return [], [], "INVALID_FROZEN_AFFECTED_FILES"
+
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    for item in affected_files:
+        if not isinstance(item, dict):
+            return [], [], "INVALID_FROZEN_AFFECTED_FILES"
+
+        raw_path = item.get("path")
+        normalized = _normalize_frozen_mutation_path(raw_path)
+
+        if normalized is None:
+            return [], [], "INVALID_FROZEN_AFFECTED_FILES"
+
+        if normalized not in seen:
+            seen.add(normalized)
+            paths.append(normalized)
+
+    if not paths:
+        return [], [], "EMPTY_FROZEN_MUTATION_SCOPE"
+
+    raw_checks = payload.get("deterministic_acceptance_checks", [])
+
+    if not isinstance(raw_checks, list):
+        return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS"
+
+    checks: list[dict[str, Any]] = []
+    checked_paths: set[str] = set()
+
+    for item in raw_checks:
+        if not isinstance(item, dict):
+            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS"
+
+        check_type = item.get("type")
+        raw_path = item.get("path")
+        expected_text = item.get("expected_text")
+
+        if check_type != "exact_file_content":
+            return paths, [], "UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK"
+
+        normalized_path = _normalize_frozen_mutation_path(raw_path)
+        if normalized_path is None:
+            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH"
+
+        if normalized_path not in seen:
+            return paths, [], "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_MUTATION_SCOPE"
+
+        if normalized_path in checked_paths:
+            return paths, [], "DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH"
+
+        if not isinstance(expected_text, str):
+            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT"
+
+        checked_paths.add(normalized_path)
+        checks.append(
+            {
+                "type": "exact_file_content",
+                "path": normalized_path,
+                "expected_text": expected_text,
+            }
+        )
+
+    if require_deterministic_acceptance and not checks:
+        return paths, [], "MISSING_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK"
+
+    return paths, checks, None
+
+
+def _normalize_frozen_mutation_path(raw_path: object) -> str | None:
+    if not isinstance(raw_path, str):
+        return None
+
+    candidate = raw_path.strip()
+    if not candidate or "\\" in candidate:
+        return None
+
+    path = PurePosixPath(candidate)
+
+    if path.is_absolute() or ".." in path.parts:
+        return None
+
+    normalized = path.as_posix()
+    if normalized in {"", "."}:
+        return None
+
+    return normalized
 
 def _queue_item_is_read_only(queue_item: dict) -> bool:
     if queue_item.get("read_only") is True or queue_item.get("mutation_allowed") is False:

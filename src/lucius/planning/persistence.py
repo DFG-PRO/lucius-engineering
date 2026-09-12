@@ -53,6 +53,9 @@ class EngineeringPlanRepository:
             affected_files=[item.model_dump(mode="json") for item in model_plan.affected_files],
             steps=[item.model_dump(mode="json") for item in model_plan.steps],
             acceptance_coverage=[item.model_dump(mode="json") for item in model_plan.acceptance_coverage],
+            deterministic_acceptance_checks=[
+                item.model_dump(mode="json") for item in model_plan.deterministic_acceptance_checks
+            ],
             test_strategy=[item.model_dump(mode="json") for item in model_plan.test_strategy],
             documentation_requirements=canonicalize_documentation_requirements(
                 [item.model_dump(mode="json") for item in model_plan.documentation_requirements]
@@ -130,6 +133,7 @@ def plan_from_row(row: EngineeringPlanORM) -> EngineeringPlan:
         affected_files=row.affected_files,
         steps=row.steps,
         acceptance_coverage=row.acceptance_coverage,
+        deterministic_acceptance_checks=row.deterministic_acceptance_checks,
         test_strategy=row.test_strategy,
         documentation_requirements=canonicalize_documentation_requirements(row.documentation_requirements),
         rollback_considerations=row.rollback_considerations,

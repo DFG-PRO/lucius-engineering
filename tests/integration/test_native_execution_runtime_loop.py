@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import pytest
 import sys
 from pathlib import Path
 
@@ -761,6 +762,73 @@ def _item(
         "completed_substeps": [],
         "version": 0,
     }
+
+@pytest.mark.parametrize(
+    "failure_class",
+    [
+        "MUTATION_SCOPE_VIOLATION",
+        "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+    ],
+)
+def test_runtime_mutation_failure_is_task_local_and_continues_independent_work(
+    session,
+    failure_class,
+):
+    rejected = _item("DARWIN-MUTATION-FAIL", order=1)
+    independent = _item("DARWIN-INDEPENDENT-AFTER-MUTATION-FAIL", order=2)
+
+    dependent = _item("DARWIN-DEPENDENT-ON-MUTATION-FAIL", order=3)
+    dependent["dependencies"] = ["DARWIN-MUTATION-FAIL"]
+
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[rejected, independent, dependent],
+    )
+
+    provider = ScriptedExecutionAdapter(
+        {
+            "DARWIN-MUTATION-FAIL": ExecutionAdapterResult(
+                outcome="FAILED",
+                failure_class=failure_class,
+                blocker_category=failure_class,
+                error=f"controlled {failure_class}",
+            ),
+            "DARWIN-INDEPENDENT-AFTER-MUTATION-FAIL": ExecutionAdapterResult(
+                outcome="COMPLETED",
+                completed_substeps=["independent work completed"],
+                evidence=[{"artifact": "independent result"}],
+                verification=[{"result": "PASS"}],
+                documentation=[],
+            ),
+        }
+    )
+
+    result = _runtime(session, provider).run(
+        RuntimeLoopConfig(
+            workflow_ids=[workflow.id],
+            max_tasks=3,
+        )
+    )
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    states = {item["item_id"]: item["state"] for item in row.task_backlog}
+
+    assert result.selected_tasks == 2
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 1
+
+    assert states["DARWIN-MUTATION-FAIL"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert (
+        states["DARWIN-INDEPENDENT-AFTER-MUTATION-FAIL"]
+        == QueueWorkItemState.COMPLETED.value
+    )
+    assert (
+        states["DARWIN-DEPENDENT-ON-MUTATION-FAIL"]
+        == QueueWorkItemState.READY.value
+    )
+
+
 def test_runtime_no_eligible_provider_blocks_task_locally_and_continues_independent_work(session):
     rejected = _item("DARWIN-NO-PROVIDER", order=1)
     rejected["required_capabilities"] = ["documentation_update"]

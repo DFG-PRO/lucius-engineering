@@ -39,7 +39,8 @@ from lucius.models.schemas import ModelProfile, ModelProvider, ModelRequest
 from lucius.persistence.orm import AuditEventORM, EngineeringPlanORM, EvidenceReferenceORM, MemoryEntryORM
 from lucius.persistence.repositories import RepositorySnapshotService
 from lucius.planning.context import PlanningContextBuilder
-from lucius.planning.schemas import PlanningContextBudget, PlanningEvidenceItem
+from lucius.planning.persistence import EngineeringPlanRepository
+from lucius.planning.schemas import DeterministicAcceptanceCheck, PlanningContextBudget, PlanningEvidenceItem
 from lucius.planning.service import EngineeringPlannerService
 from lucius.planning.validation import validate_and_enrich_plan
 from lucius.projects.service import ProjectRegistryService
@@ -541,3 +542,102 @@ def test_alembic_0005_to_head_and_clean_db_to_head(tmp_path):
 
     clean_db = tmp_path / "clean.sqlite"
     command.upgrade(config_for(clean_db), "head")
+
+
+
+def test_phase130_deterministic_acceptance_validation_and_persistence(
+    session,
+    git_repo: Path,
+    workspace,
+):
+    fixture = _snapshot_task_fixture(session, git_repo, workspace)
+    result, _adapter = _create_plan(session, fixture, workspace)
+
+    assert result.plan is not None
+    assert result.context is not None
+    assert result.plan.affected_files
+
+    target_path = result.plan.affected_files[0].path
+    expected_text = "phase 1.30 deterministic acceptance\n"
+
+    valid_check = DeterministicAcceptanceCheck(
+        type="exact_file_content",
+        path=target_path,
+        expected_text=expected_text,
+    )
+
+    valid_candidate = result.plan.model_copy(
+        update={
+            "deterministic_acceptance_checks": [valid_check],
+        }
+    )
+
+    enriched, valid_blockers, warnings = validate_and_enrich_plan(
+        session,
+        context=result.context,
+        plan=valid_candidate,
+    )
+
+    invalid_validation_blockers = [
+        blocker
+        for blocker in valid_blockers
+        if blocker.code == PlanningBlockerCode.ENGINEERING_PLAN_INVALID
+    ]
+
+    assert invalid_validation_blockers == []
+    assert enriched.deterministic_acceptance_checks == [valid_check]
+
+    persisted = EngineeringPlanRepository(session).create(
+        context=result.context,
+        model_plan=enriched,
+        model_execution_ids=[],
+        blockers=[],
+        validation_warnings=warnings,
+        planner_version="phase-1.30-test",
+        created_by=Actor.CODEX.value,
+    )
+
+    row = session.get(EngineeringPlanORM, persisted.id)
+
+    assert row is not None
+    assert row.deterministic_acceptance_checks == [
+        {
+            "type": "exact_file_content",
+            "path": target_path,
+            "expected_text": expected_text,
+        }
+    ]
+
+    assert persisted.deterministic_acceptance_checks[0].type == "exact_file_content"
+    assert persisted.deterministic_acceptance_checks[0].path == target_path
+    assert persisted.deterministic_acceptance_checks[0].expected_text == expected_text
+
+    outside_check = DeterministicAcceptanceCheck(
+        type="exact_file_content",
+        path="outside-authorized-scope.txt",
+        expected_text="must never be accepted\n",
+    )
+
+    outside_candidate = result.plan.model_copy(
+        update={
+            "deterministic_acceptance_checks": [outside_check],
+        }
+    )
+
+    _outside_enriched, outside_blockers, _outside_warnings = validate_and_enrich_plan(
+        session,
+        context=result.context,
+        plan=outside_candidate,
+    )
+
+    deterministic_blockers = [
+        blocker
+        for blocker in outside_blockers
+        if blocker.code == PlanningBlockerCode.ENGINEERING_PLAN_INVALID
+        and "outside-authorized-scope.txt" in repr(blocker.model_dump(mode="json"))
+    ]
+
+    assert deterministic_blockers, [
+        blocker.model_dump(mode="json")
+        for blocker in outside_blockers
+    ]

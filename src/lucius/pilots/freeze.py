@@ -43,6 +43,24 @@ class PlanFreezeService:
         if plan is None:
             raise ValueError(f"Unknown EngineeringPlan: {plan_id}")
         payload = _plan_payload(plan)
+        deterministic_acceptance_issues = _deterministic_acceptance_check_issues(payload)
+        if deterministic_acceptance_issues:
+            self.audit.record(
+                event_type="ENGINEERING_PLAN_FREEZE_BLOCKED",
+                actor=actor.value,
+                project_id=plan.project_id,
+                task_id=plan.task_id,
+                action="freeze_engineering_plan",
+                result="INVALID_DETERMINISTIC_ACCEPTANCE_CHECK",
+                metadata={
+                    "plan_id": plan.id,
+                    "issues": deterministic_acceptance_issues,
+                },
+            )
+            raise PlanFreezeSemanticError(
+                f"INVALID_DETERMINISTIC_ACCEPTANCE_CHECK: {deterministic_acceptance_issues}"
+            )
+
         claim_issues = verified_plan_claim_issues(payload, session=self.session)
         if claim_issues:
             details = [issue.as_dict() for issue in claim_issues]
@@ -131,6 +149,7 @@ def _plan_payload(plan: EngineeringPlanORM) -> dict:
         "affected_files": plan.affected_files,
         "steps": plan.steps,
         "acceptance_coverage": plan.acceptance_coverage,
+        "deterministic_acceptance_checks": plan.deterministic_acceptance_checks,
         "test_strategy": plan.test_strategy,
         "documentation_requirements": canonicalize_documentation_requirements(plan.documentation_requirements),
         "rollback_considerations": plan.rollback_considerations,
@@ -143,6 +162,96 @@ def _plan_payload(plan: EngineeringPlanORM) -> dict:
         "blockers": plan.blockers,
         "planner_version": plan.planner_version,
     }
+
+
+def _deterministic_acceptance_check_issues(payload: dict) -> list[dict]:
+    issues: list[dict] = []
+
+    raw_affected_files = payload.get("affected_files", [])
+    if not isinstance(raw_affected_files, list):
+        return [
+            {
+                "code": "INVALID_AFFECTED_FILES",
+                "message": "affected_files must be a list.",
+            }
+        ]
+
+    affected_paths: set[str] = set()
+    for item in raw_affected_files:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            affected_paths.add(path)
+
+    checks = payload.get("deterministic_acceptance_checks", [])
+    if not isinstance(checks, list):
+        return [
+            {
+                "code": "INVALID_DETERMINISTIC_ACCEPTANCE_CHECKS",
+                "message": "deterministic_acceptance_checks must be a list.",
+            }
+        ]
+
+    for index, check in enumerate(checks, start=1):
+        if not isinstance(check, dict):
+            issues.append(
+                {
+                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK",
+                    "index": index,
+                    "message": "Check must be an object.",
+                }
+            )
+            continue
+
+        check_type = check.get("type")
+        path = check.get("path")
+        expected_text = check.get("expected_text")
+
+        if check_type != "exact_file_content":
+            issues.append(
+                {
+                    "code": "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK",
+                    "index": index,
+                    "type": check_type,
+                }
+            )
+
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.strip() != path
+            or "\\" in path
+            or path.startswith("/")
+            or "." in path.split("/")
+            or ".." in path.split("/")
+        ):
+            issues.append(
+                {
+                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_PATH",
+                    "index": index,
+                    "path": path,
+                }
+            )
+        elif path not in affected_paths:
+            issues.append(
+                {
+                    "code": "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES",
+                    "index": index,
+                    "path": path,
+                }
+            )
+
+        if not isinstance(expected_text, str):
+            issues.append(
+                {
+                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT",
+                    "index": index,
+                    "path": path,
+                }
+            )
+
+    return issues
 
 
 def _requires_orchestration_contract(payload: dict) -> bool:

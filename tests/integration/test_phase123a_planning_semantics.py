@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from lucius.domain.enums import PlanningEvidenceMode, RepositoryStateClassification
-from lucius.persistence.orm import EvidenceReferenceORM, utc_now
+from lucius.persistence.orm import AuditEventORM, EngineeringPlanORM, EvidenceReferenceORM, utc_now
 from lucius.persistence.repositories import next_id
 from lucius.pilots.claim_policy import UNSUPPORTED_VERIFIED_PLAN_CLAIM, verified_plan_claim_issues
 from lucius.pilots.dependency_policy import package_dependency_change_expected, validate_executable_dependencies
@@ -188,3 +188,86 @@ def _semantic_evidence(session, *, project_id: str, task_id: str, claim: str) ->
     session.add(row)
     session.flush()
     return row
+
+
+
+def test_phase130_freeze_enforces_deterministic_acceptance_scope(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+
+    row = session.get(EngineeringPlanORM, plan.id)
+
+    assert row is not None
+    assert row.affected_files
+
+    target_path = row.affected_files[0]["path"]
+    expected_text = "phase 1.30 frozen deterministic acceptance\n"
+
+    row.deterministic_acceptance_checks = [
+        {
+            "type": "exact_file_content",
+            "path": "outside-frozen-scope.txt",
+            "expected_text": "must fail closed\n",
+        }
+    ]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError) as error:
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK" in str(error.value)
+    assert "outside-frozen-scope.txt" in str(error.value)
+
+    blocked_audit = (
+        session.query(AuditEventORM)
+        .filter(
+            AuditEventORM.event_type == "ENGINEERING_PLAN_FREEZE_BLOCKED",
+            AuditEventORM.task_id == row.task_id,
+        )
+        .order_by(AuditEventORM.id.desc())
+        .first()
+    )
+
+    assert blocked_audit is not None
+    assert blocked_audit.result == "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK"
+
+    row.deterministic_acceptance_checks = [
+        {
+            "type": "exact_file_content",
+            "path": target_path,
+            "expected_text": expected_text,
+        }
+    ]
+    session.flush()
+
+    freeze = PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert freeze.plan_payload["deterministic_acceptance_checks"] == [
+        {
+            "type": "exact_file_content",
+            "path": target_path,
+            "expected_text": expected_text,
+        }
+    ]
+
+
+def test_phase130_freeze_rejects_malformed_deterministic_acceptance_check(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+
+    row = session.get(EngineeringPlanORM, plan.id)
+
+    assert row is not None
+    assert row.affected_files
+
+    row.deterministic_acceptance_checks = [
+        {
+            "type": "unsupported_runtime_check",
+            "path": row.affected_files[0]["path"],
+            "expected_text": "invalid\n",
+        }
+    ]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError) as error:
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK" in str(error.value)
