@@ -44,6 +44,7 @@ def test_required_enums_exist():
     assert ProjectStatus.ACTIVE.value == "ACTIVE"
     assert RepositoryAdapterType.LOCAL_GIT.value == "LOCAL_GIT"
     assert RepositoryAccessMode.READ_ONLY.value == "READ_ONLY"
+    assert RepositoryAccessMode.CANONICAL_INTEGRATION.value == "CANONICAL_INTEGRATION"
     assert AuthorityLevel.L3.value == "L3"
     assert TaskComplexity.T4.value == "T4"
     assert Environment.PRODUCTION.value == "PRODUCTION"

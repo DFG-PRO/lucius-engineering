@@ -19,6 +19,7 @@ class RepositoryAdapterType(StrEnum):
 
 class RepositoryAccessMode(StrEnum):
     READ_ONLY = "READ_ONLY"
+    CANONICAL_INTEGRATION = "CANONICAL_INTEGRATION"
 
 
 class AuthorityLevel(StrEnum):
