@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,26 @@ SUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK_TYPES = {
     "file_exists",
     "file_contains",
     "file_not_contains",
+    "command_succeeds",
 }
+
+MAX_COMMAND_TIMEOUT_SECONDS = 600
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
+MAX_COMMAND_OUTPUT_BYTES = 4_096
+_ALLOWED_COMMAND_EXECUTABLES = {".venv/bin/python", ".venv/bin/python3"}
+_ALLOWED_PYTEST_OPTIONS = {
+    "-q",
+    "-s",
+    "-x",
+    "--quiet",
+    "--verbose",
+    "--disable-warnings",
+    "--tb=short",
+    "--tb=auto",
+    "--tb=long",
+    "--maxfail=1",
+}
+_SHELL_METACHARS = set("|&;<>$`\\\n\r")
 
 
 class DeterministicAcceptanceError(RuntimeError):
@@ -35,6 +55,9 @@ def verify_deterministic_acceptance(
 
     for check in normalized_checks:
         check_type = check.get("type")
+        if check_type == "command_succeeds":
+            verification.append(_verify_command_succeeds(root, check))
+            continue
         path = str(check.get("path"))
         expected_text = check.get("expected_text")
 
@@ -120,18 +143,14 @@ def normalize_deterministic_acceptance_checks(
         )
 
     normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str | None]] = set()
+    seen: set[tuple[Any, ...]] = set()
     for index, check in enumerate(checks, start=1):
         normalized_check = normalize_deterministic_acceptance_check(
             check,
             index=index,
             authorized_paths=authorized_paths,
         )
-        signature = (
-            str(normalized_check["type"]),
-            str(normalized_check["path"]),
-            normalized_check.get("expected_text"),
-        )
+        signature = _check_signature(normalized_check)
         if signature in seen:
             raise DeterministicAcceptanceError(
                 "DUPLICATE_DETERMINISTIC_ACCEPTANCE_CHECK",
@@ -160,6 +179,9 @@ def normalize_deterministic_acceptance_check(
             "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK",
             f"Unsupported deterministic acceptance check type at index {index}.",
         )
+
+    if check_type == "command_succeeds":
+        return _normalize_command_succeeds_check(check, index=index)
 
     raw_path = check.get("path")
     try:
@@ -211,6 +233,8 @@ def verify_deterministic_acceptance_content(
     verification: list[dict[str, Any]] = []
     for check in normalized_checks:
         check_type = str(check["type"])
+        if check_type == "command_succeeds":
+            continue
         path = str(check["path"])
         if path not in content_by_path:
             raise DeterministicAcceptanceError(
@@ -250,7 +274,148 @@ def acceptance_check_paths(checks: list[dict[str, Any]], *, authorized_paths: se
         checks,
         authorized_paths=authorized_paths,
     )
-    return sorted({str(check["path"]) for check in normalized})
+    return sorted({str(check["path"]) for check in normalized if "path" in check})
+
+
+def _normalize_command_succeeds_check(check: dict[str, Any], *, index: int) -> dict[str, Any]:
+    if "path" in check or "expected_text" in check:
+        raise DeterministicAcceptanceError(
+            "INVALID_DETERMINISTIC_ACCEPTANCE_COMMAND",
+            f"command_succeeds check {index} must not provide path or expected_text.",
+        )
+    argv = check.get("argv")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not all(isinstance(item, str) and item for item in argv)
+    ):
+        raise DeterministicAcceptanceError(
+            "INVALID_DETERMINISTIC_ACCEPTANCE_COMMAND_ARGV",
+            f"command_succeeds check {index} argv must be a non-empty list of strings.",
+        )
+    timeout = check.get("timeout_seconds", DEFAULT_COMMAND_TIMEOUT_SECONDS)
+    if not isinstance(timeout, int) or timeout <= 0 or timeout > MAX_COMMAND_TIMEOUT_SECONDS:
+        raise DeterministicAcceptanceError(
+            "INVALID_DETERMINISTIC_ACCEPTANCE_COMMAND_TIMEOUT",
+            f"command_succeeds check {index} timeout_seconds must be 1..{MAX_COMMAND_TIMEOUT_SECONDS}.",
+        )
+    _validate_allowed_command_argv(argv, index=index)
+    return {"type": "command_succeeds", "argv": list(argv), "timeout_seconds": timeout}
+
+
+def _validate_allowed_command_argv(argv: list[str], *, index: int) -> None:
+    executable = argv[0]
+    if executable not in _ALLOWED_COMMAND_EXECUTABLES:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED",
+            f"command_succeeds check {index} executable is not allowlisted.",
+        )
+    if any(any(char in _SHELL_METACHARS for char in arg) for arg in argv):
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_SHELL_METACHARACTER",
+            f"command_succeeds check {index} contains a rejected shell metacharacter.",
+        )
+    if len(argv) < 3 or argv[1:3] != ["-m", "pytest"]:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED",
+            f"command_succeeds check {index} must invoke pytest via python -m pytest.",
+        )
+    for arg in argv[3:]:
+        if arg in _ALLOWED_PYTEST_OPTIONS:
+            continue
+        if arg.startswith("--maxfail="):
+            value = arg.split("=", 1)[1]
+            if value.isdigit() and 1 <= int(value) <= 10:
+                continue
+        if arg.startswith("-"):
+            raise DeterministicAcceptanceError(
+                "DETERMINISTIC_ACCEPTANCE_COMMAND_ARG_NOT_ALLOWED",
+                f"command_succeeds check {index} pytest option is not allowlisted: {arg}",
+            )
+        _validate_pytest_target_arg(arg, index=index)
+
+
+def _validate_pytest_target_arg(arg: str, *, index: int) -> None:
+    path_part = arg.split("::", 1)[0]
+    try:
+        path = validate_relative_repo_path(path_part)
+    except GitMutationError as exc:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_ARG_NOT_ALLOWED",
+            f"command_succeeds check {index} pytest target is invalid: {arg}",
+        ) from exc
+    if path != "tests" and not path.startswith("tests/"):
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_ARG_NOT_ALLOWED",
+            f"command_succeeds check {index} pytest target must be under tests/: {arg}",
+        )
+
+
+def _verify_command_succeeds(root: Path, check: dict[str, Any]) -> dict[str, Any]:
+    argv = list(check["argv"])
+    executable = root / argv[0]
+    if not executable.exists() or not executable.is_file():
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_EXECUTABLE_MISSING",
+            f"command_succeeds executable does not exist: {argv[0]}",
+        )
+    command = [str(executable), *argv[1:]]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=int(check["timeout_seconds"]),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_TIMEOUT",
+            f"command_succeeds timed out after {check['timeout_seconds']} seconds.",
+        ) from exc
+    except OSError as exc:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_EXECUTION_FAILED",
+            f"command_succeeds could not execute: {exc}",
+        ) from exc
+    if completed.returncode != 0:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_NONZERO_EXIT",
+            f"command_succeeds failed with exit code {completed.returncode}.",
+        )
+    return {
+        "result": "PASS",
+        "type": "deterministic_acceptance_command_succeeds",
+        "argv": argv,
+        "timeout_seconds": check["timeout_seconds"],
+        "exit_code": completed.returncode,
+        "stdout": _bounded_output(completed.stdout),
+        "stderr": _bounded_output(completed.stderr),
+    }
+
+
+def _bounded_output(value: str) -> str:
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= MAX_COMMAND_OUTPUT_BYTES:
+        return value
+    truncated = encoded[:MAX_COMMAND_OUTPUT_BYTES].decode("utf-8", errors="replace")
+    return truncated + "\n[truncated]"
+
+
+def _check_signature(check: dict[str, Any]) -> tuple[Any, ...]:
+    if check.get("type") == "command_succeeds":
+        return (
+            "command_succeeds",
+            tuple(check.get("argv", [])),
+            check.get("timeout_seconds"),
+        )
+    return (
+        str(check["type"]),
+        str(check["path"]),
+        check.get("expected_text"),
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

@@ -142,19 +142,23 @@ class AcceptanceCoverage(BaseModel):
 
 class DeterministicAcceptanceCheck(BaseModel):
     type: str
-    path: str
+    path: str | None = None
     expected_text: str | None = None
+    argv: list[str] | None = None
+    timeout_seconds: int | None = None
 
     @field_validator("type")
     @classmethod
     def supported_type(cls, value: str) -> str:
-        if value not in {"exact_file_content", "file_exists", "file_contains", "file_not_contains"}:
+        if value not in {"exact_file_content", "file_exists", "file_contains", "file_not_contains", "command_succeeds"}:
             raise ValueError("Unsupported deterministic acceptance check type.")
         return value
 
     @field_validator("path")
     @classmethod
-    def nonempty_path(cls, value: str) -> str:
+    def nonempty_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
             raise ValueError("Deterministic acceptance check path must be non-empty.")
@@ -162,6 +166,16 @@ class DeterministicAcceptanceCheck(BaseModel):
 
     @model_validator(mode="after")
     def type_specific_arguments(self):
+        if self.type == "command_succeeds":
+            if self.path is not None or self.expected_text is not None:
+                raise ValueError("command_succeeds checks must not provide path or expected_text.")
+            if not isinstance(self.argv, list) or not self.argv or not all(isinstance(item, str) and item for item in self.argv):
+                raise ValueError("command_succeeds checks require argv as a non-empty list of strings.")
+            return self
+        if self.argv is not None or self.timeout_seconds is not None:
+            raise ValueError(f"{self.type} checks must not provide argv or timeout_seconds.")
+        if self.path is None:
+            raise ValueError(f"{self.type} checks require path.")
         if self.type == "file_exists":
             if self.expected_text is not None:
                 raise ValueError("file_exists checks must not provide expected_text.")

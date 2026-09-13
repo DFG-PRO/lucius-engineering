@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from lucius.domain.enums import (
@@ -61,6 +62,50 @@ def test_integration_accepts_non_exact_deterministic_checks(session, tmp_path):
     assert result.status == "COMPLETED"
     assert result.actual_changed_paths == ["src/lucius/demo.py"]
     assert (fixture.canonical / "src" / "lucius" / "demo.py").read_text(encoding="utf-8") == "VALUE = 1\n# safe marker\n"
+
+
+def test_integration_candidate_command_failure_prevents_l1(session, tmp_path):
+    fixture = _fixture(
+        session,
+        tmp_path,
+        with_pytest_command_runtime=True,
+        acceptance_checks=[
+            {"type": "exact_file_content", "path": "src/lucius/demo.py", "expected_text": "VALUE = 1\n"},
+            {
+                "type": "command_succeeds",
+                "argv": [".venv/bin/python", "-m", "pytest", "tests/missing_profitability.py", "-q"],
+                "timeout_seconds": 10,
+            },
+        ],
+    )
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "FAILED"
+    assert "command_succeeds failed with exit code" in result.reason
+    assert run_git(fixture.canonical, "rev-parse", "HEAD") == fixture.baseline
+    assert run_git(fixture.canonical, "status", "--short") == ""
+
+
+def test_integration_command_success_alone_cannot_authorize_changed_file(session, tmp_path):
+    fixture = _fixture(
+        session,
+        tmp_path,
+        with_pytest_command_runtime=True,
+        acceptance_checks=[
+            {
+                "type": "command_succeeds",
+                "argv": [".venv/bin/python", "-m", "pytest", "tests/test_sample.py", "-q"],
+                "timeout_seconds": 10,
+            },
+        ],
+    )
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "FAILED"
+    assert result.reason == "CANDIDATE_CHANGE_MISSING_DETERMINISTIC_ACCEPTANCE_CHECK"
+    assert run_git(fixture.canonical, "status", "--short") == ""
 
 
 def test_integration_rejects_wrong_workflow_state(session, tmp_path):
@@ -295,8 +340,11 @@ def _fixture(
     affected_path: str | None = None,
     check_path: str | None = None,
     acceptance_checks: list[dict[str, str]] | None = None,
+    with_pytest_command_runtime: bool = False,
 ) -> _Fixture:
     canonical = make_git_repo(tmp_path / "canonical")
+    if with_pytest_command_runtime:
+        _add_tracked_python_runtime(canonical)
     baseline = run_git(canonical, "rev-parse", "HEAD")
     candidate = tmp_path / "candidate"
     run_git(tmp_path, "clone", str(canonical), str(candidate))
@@ -460,6 +508,12 @@ def _fixture(
     session.add_all([project, repository, ProjectRepositoryAttachmentORM(project_id=project.id, repository_id=repository.id, attached_by=Actor.LUCIUS.value), task, contract, plan, freeze, workflow])
     session.flush()
     return _Fixture(canonical, candidate, baseline, workflow.id, repository.id)
+
+
+def _add_tracked_python_runtime(repo: Path) -> None:
+    os.symlink(Path.cwd() / ".venv", repo / ".venv")
+    run_git(repo, "add", ".venv")
+    run_git(repo, "commit", "-m", "add pytest runtime")
 
 
 def _request(fixture: _Fixture, *, authority_level: AuthorityLevel = AuthorityLevel.L1) -> CanonicalIntegrationRequest:

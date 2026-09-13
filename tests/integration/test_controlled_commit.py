@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from alembic import command
@@ -87,6 +88,29 @@ def test_controlled_commit_accepts_non_exact_deterministic_checks(session, tmp_p
         "deterministic_acceptance_file_contains",
         "deterministic_acceptance_file_not_contains",
     ]
+
+
+def test_controlled_commit_canonical_command_failure_prevents_l2(session, tmp_path):
+    fixture = _fixture(
+        session,
+        tmp_path,
+        with_pytest_command_runtime=True,
+        acceptance_checks=[
+            {"type": "exact_file_content", "path": "src/lucius/demo.py", "expected_text": "VALUE = 1\n"},
+            {
+                "type": "command_succeeds",
+                "argv": [".venv/bin/python", "-m", "pytest", "tests/missing_profitability.py", "-q"],
+                "timeout_seconds": 10,
+            },
+        ],
+    )
+
+    result = ControlledCommitService(session).commit(_request(fixture))
+
+    assert result.status == "FAILED"
+    assert "command_succeeds failed with exit code" in result.reason
+    assert run_git(fixture.repo, "rev-parse", "HEAD") == fixture.baseline
+    assert run_git(fixture.repo, "status", "--short") == "?? src/"
 
 
 
@@ -459,8 +483,11 @@ def _fixture(
     extra_acceptance_checks: list[dict[str, str]] | None = None,
     acceptance_checks: list[dict[str, str]] | None = None,
     with_remote: bool = False,
+    with_pytest_command_runtime: bool = False,
 ) -> _Fixture:
     repo = make_git_repo(tmp_path / "canonical")
+    if with_pytest_command_runtime:
+        _add_tracked_python_runtime(repo)
     remote = None
     if with_remote:
         remote = tmp_path / "remote.git"
@@ -641,6 +668,12 @@ def _fixture(
     )
     session.flush()
     return _Fixture(repo, baseline, workflow.id, repository.id, remote)
+
+
+def _add_tracked_python_runtime(repo: Path) -> None:
+    os.symlink(Path.cwd() / ".venv", repo / ".venv")
+    run_git(repo, "add", ".venv")
+    run_git(repo, "commit", "-m", "add pytest runtime")
 
 
 def _request(fixture: _Fixture, *, authority_level: AuthorityLevel = AuthorityLevel.L2) -> ControlledCommitRequest:

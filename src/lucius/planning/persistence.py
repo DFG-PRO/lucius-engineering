@@ -54,7 +54,7 @@ class EngineeringPlanRepository:
             steps=[item.model_dump(mode="json") for item in model_plan.steps],
             acceptance_coverage=[item.model_dump(mode="json") for item in model_plan.acceptance_coverage],
             deterministic_acceptance_checks=[
-                item.model_dump(mode="json") for item in model_plan.deterministic_acceptance_checks
+                item.model_dump(mode="json", exclude_none=True) for item in model_plan.deterministic_acceptance_checks
             ],
             test_strategy=[item.model_dump(mode="json") for item in model_plan.test_strategy],
             documentation_requirements=canonicalize_documentation_requirements(

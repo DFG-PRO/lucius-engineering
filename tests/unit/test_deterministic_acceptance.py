@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from lucius.runtime.deterministic_acceptance import (
@@ -182,3 +185,139 @@ def test_exact_duplicate_check_rejected_deterministically():
         )
 
     assert exc.value.code == "DUPLICATE_DETERMINISTIC_ACCEPTANCE_CHECK"
+
+
+def test_command_succeeds_valid_pytest_command_passes(tmp_path):
+    _prepare_pytest_workspace(tmp_path, "def test_ok():\n    assert True\n")
+
+    result = verify_deterministic_acceptance(
+        tmp_path,
+        [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"])],
+        authorized_paths={"src/demo.py"},
+    )
+
+    assert result[0]["type"] == "deterministic_acceptance_command_succeeds"
+    assert result[0]["exit_code"] == 0
+
+
+def test_command_succeeds_nonzero_pytest_fails_closed(tmp_path):
+    _prepare_pytest_workspace(tmp_path, "def test_fail():\n    assert False\n")
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NONZERO_EXIT"
+
+
+def test_command_succeeds_timeout_fails_closed(tmp_path):
+    _prepare_pytest_workspace(
+        tmp_path,
+        "import time\n\ndef test_slow():\n    time.sleep(2)\n",
+    )
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"], timeout_seconds=1)],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_TIMEOUT"
+
+
+def test_command_succeeds_shell_metacharacters_are_rejected_not_interpreted(tmp_path):
+    _prepare_pytest_workspace(tmp_path, "def test_ok():\n    assert True\n")
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py;touch tests/pwned.txt", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_SHELL_METACHARACTER"
+    assert not (tmp_path / "tests" / "pwned.txt").exists()
+
+
+def test_command_succeeds_rejects_shell_executable():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": ["bash", "-lc", "pytest"], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED"
+
+
+def test_command_succeeds_rejects_arbitrary_executable():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": ["/usr/bin/python3", "-m", "pytest", "tests/test_profitability.py"], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED"
+
+
+def test_command_succeeds_rejects_python_dash_c():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": [".venv/bin/python", "-c", "print(1)"], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED"
+
+
+def test_command_succeeds_rejects_git():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": ["git", "status"], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NOT_ALLOWED"
+
+
+def test_command_succeeds_cannot_escape_workspace_assumptions():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": [".venv/bin/python", "-m", "pytest", "../tests/test_profitability.py"], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_ARG_NOT_ALLOWED"
+
+
+def test_command_succeeds_malformed_argv_rejected():
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        normalize_deterministic_acceptance_checks(
+            [{"type": "command_succeeds", "argv": [], "timeout_seconds": 10}],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "INVALID_DETERMINISTIC_ACCEPTANCE_COMMAND_ARGV"
+
+
+def test_command_success_alone_does_not_count_as_file_scoped_coverage():
+    from lucius.runtime.deterministic_acceptance import acceptance_check_paths
+
+    assert acceptance_check_paths(
+        [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"])],
+        authorized_paths={"src/demo.py"},
+    ) == []
+
+
+def _command_check(argv: list[str], *, timeout_seconds: int = 10) -> dict:
+    return {"type": "command_succeeds", "argv": argv, "timeout_seconds": timeout_seconds}
+
+
+def _prepare_pytest_workspace(tmp_path, test_source: str) -> None:
+    os.symlink(Path.cwd() / ".venv", tmp_path / ".venv")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_profitability.py").write_text(test_source, encoding="utf-8")

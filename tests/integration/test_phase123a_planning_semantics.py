@@ -271,3 +271,24 @@ def test_phase130_freeze_rejects_malformed_deterministic_acceptance_check(sessio
         PlanFreezeService(session).freeze(plan_id=plan.id)
 
     assert "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK" in str(error.value)
+
+
+def test_phase134a_freeze_rejects_malformed_command_acceptance_argv(session):
+    _project, _task, _contract, plan = _project_task_plan(session)
+
+    row = session.get(EngineeringPlanORM, plan.id)
+
+    assert row is not None
+    row.deterministic_acceptance_checks = [
+        {
+            "type": "command_succeeds",
+            "argv": [],
+            "timeout_seconds": 10,
+        }
+    ]
+    session.flush()
+
+    with pytest.raises(PlanFreezeSemanticError) as error:
+        PlanFreezeService(session).freeze(plan_id=plan.id)
+
+    assert "INVALID_DETERMINISTIC_ACCEPTANCE_COMMAND_ARGV" in str(error.value)
