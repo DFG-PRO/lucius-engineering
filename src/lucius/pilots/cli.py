@@ -98,6 +98,7 @@ def main() -> None:
     runtime_loop.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
     runtime_loop.add_argument("--ollama-model", default="qwen3:8b")
     runtime_loop.add_argument("--ollama-timeout-seconds", type=int, default=60)
+    runtime_loop.add_argument("--ollama-mutation-num-predict", type=int, default=256)
     runtime_loop.add_argument(
         "--ollama-allowed-workspace-root",
         action="append",
@@ -280,6 +281,7 @@ def _run_command(args: argparse.Namespace) -> None:
                     model=args.ollama_model,
                     timeout_seconds=args.ollama_timeout_seconds,
                     allowed_workspace_roots=_ollama_allowed_workspace_roots(args),
+                    mutation_num_predict=args.ollama_mutation_num_predict,
                 )
             else:
                 execution_provider = ScriptedExecutionAdapter(provider_id=args.provider_id or "scripted-execution-adapter")

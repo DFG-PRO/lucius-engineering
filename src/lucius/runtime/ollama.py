@@ -13,6 +13,7 @@ from lucius.repositories.git_mutation import (
     GitMutationError,
     changed_paths,
     restore_to_baseline,
+    validate_relative_repo_path,
     validate_file_contents,
     write_validated_file_contents,
 )
@@ -30,6 +31,12 @@ from lucius.runtime.schemas import (
     RuntimeRetryability,
 )
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
+
+DEFAULT_OLLAMA_NUM_PREDICT = 256
+DEFAULT_MUTATION_NUM_PREDICT = 256
+MAX_MUTATION_NUM_PREDICT = 4096
+DEFAULT_MAX_CONTEXT_FILE_BYTES = 20_000
+DEFAULT_MAX_CONTEXT_TOTAL_BYTES = 40_000
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,10 @@ class OllamaExecutionProvider:
         allowed_workspace_roots: list[str | Path] | None = None,
         max_files: int = 3,
         max_file_bytes: int = 20_000,
+        mutation_num_predict: int = DEFAULT_MUTATION_NUM_PREDICT,
+        max_mutation_num_predict: int = MAX_MUTATION_NUM_PREDICT,
+        max_context_file_bytes: int = DEFAULT_MAX_CONTEXT_FILE_BYTES,
+        max_context_total_bytes: int = DEFAULT_MAX_CONTEXT_TOTAL_BYTES,
     ):
         self.provider_id = provider_id
         self.provider_version = provider_version
@@ -63,6 +74,13 @@ class OllamaExecutionProvider:
         self.allowed_workspace_roots = [Path(root).resolve() for root in (allowed_workspace_roots or default_roots)]
         self.max_files = max_files
         self.max_file_bytes = max_file_bytes
+        self.max_mutation_num_predict = _positive_int(max_mutation_num_predict, "max_mutation_num_predict")
+        self.mutation_num_predict = _bounded_num_predict(
+            mutation_num_predict,
+            max_num_predict=self.max_mutation_num_predict,
+        )
+        self.max_context_file_bytes = _positive_int(max_context_file_bytes, "max_context_file_bytes")
+        self.max_context_total_bytes = _positive_int(max_context_total_bytes, "max_context_total_bytes")
         capability_profile = _ollama_model_capability_profile(
             provider_id=provider_id,
             model=model,
@@ -101,6 +119,10 @@ class OllamaExecutionProvider:
                 "allowed_workspace_roots": [str(root) for root in self.allowed_workspace_roots],
                 "explicit_allowed_workspace_roots": explicit_allowed_roots,
                 "model_capability_status": capability_profile.status.value,
+                "mutation_num_predict": self.mutation_num_predict,
+                "max_mutation_num_predict": self.max_mutation_num_predict,
+                "max_context_file_bytes": self.max_context_file_bytes,
+                "max_context_total_bytes": self.max_context_total_bytes,
             },
         )
 
@@ -118,7 +140,33 @@ class OllamaExecutionProvider:
         mutation_attempted = False
         try:
             workspace = self._validate_workspace(runtime_request)
-            prompt = _build_prompt(runtime_request, workspace)
+            if not runtime_request.read_only:
+                if not runtime_request.allowed_mutation_paths:
+                    raise _ProviderBlocked(
+                        "MUTATION_SCOPE_VIOLATION",
+                        "Mutation request has no authorized frozen mutation paths.",
+                    )
+                preexisting_changes = _git_changed_paths(workspace)
+                if preexisting_changes:
+                    raise _ProviderBlocked(
+                        "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+                        "Mutation workspace was not clean before execution: "
+                        + ", ".join(preexisting_changes),
+                    )
+            mutation_context = (
+                self._mutation_file_context(
+                    workspace,
+                    runtime_request.allowed_mutation_paths,
+                )
+                if not runtime_request.read_only
+                else []
+            )
+            num_predict = (
+                DEFAULT_OLLAMA_NUM_PREDICT
+                if runtime_request.read_only
+                else self.mutation_num_predict
+            )
+            prompt = _build_prompt(runtime_request, workspace, mutation_context=mutation_context)
             response = self._post(
                 "/api/generate",
                 {
@@ -128,7 +176,7 @@ class OllamaExecutionProvider:
                     "format": "json",
                     "options": {
                         "temperature": 0,
-                        "num_predict": 256,
+                        "num_predict": num_predict,
                     },
                 },
                 timeout_seconds=runtime_request.timeout_seconds or self.timeout_seconds,
@@ -168,6 +216,7 @@ class OllamaExecutionProvider:
                             "provider_id": self.provider_id,
                             "model": str(response.body.get("model") or self.model),
                             "workspace": str(workspace),
+                            "num_predict": num_predict,
                         }
                     ],
                     verification=_verification(payload, []),
@@ -185,20 +234,8 @@ class OllamaExecutionProvider:
                         "endpoint": self.endpoint,
                         "model_response_captured": True,
                         "read_only": True,
+                        "num_predict": num_predict,
                     },
-                )
-            if not runtime_request.allowed_mutation_paths:
-                raise _ProviderBlocked(
-                    "MUTATION_SCOPE_VIOLATION",
-                    "Mutation request has no authorized frozen mutation paths.",
-                )
-
-            preexisting_changes = _git_changed_paths(workspace)
-            if preexisting_changes:
-                raise _ProviderBlocked(
-                    "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
-                    "Mutation workspace was not clean before execution: "
-                    + ", ".join(preexisting_changes),
                 )
 
             mutation_attempted = True
@@ -271,6 +308,11 @@ class OllamaExecutionProvider:
                         "model": str(response.body.get("model") or self.model),
                         "workspace": str(workspace),
                         "files": written_files,
+                        "mutation_context_files": [
+                            {"path": item["path"], "state": item["state"], "bytes": item["bytes"]}
+                            for item in mutation_context
+                        ],
+                        "num_predict": num_predict,
                     }
                 ],
                 verification=[
@@ -297,6 +339,11 @@ class OllamaExecutionProvider:
                     ),
                     "allowed_mutation_paths": sorted(authorized),
                     "actual_changed_paths": actual_changed_paths,
+                    "num_predict": num_predict,
+                    "mutation_context_files": [
+                        {"path": item["path"], "state": item["state"], "bytes": item["bytes"]}
+                        for item in mutation_context
+                    ],
                 },
             )
         except _ProviderBlocked as blocked:
@@ -419,6 +466,68 @@ class OllamaExecutionProvider:
 
         return write_validated_file_contents(validated)
 
+    def _mutation_file_context(
+        self,
+        workspace: Path,
+        allowed_mutation_paths: list[str],
+    ) -> list[dict[str, Any]]:
+        if len(allowed_mutation_paths) > self.max_files:
+            raise _ProviderBlocked(
+                "MUTATION_CONTEXT_TOO_MANY_FILES",
+                f"Mutation context exceeds max authorized files: {len(allowed_mutation_paths)} > {self.max_files}.",
+            )
+        root = workspace.resolve()
+        items: list[dict[str, Any]] = []
+        total_bytes = 0
+        seen: set[str] = set()
+        for raw_path in allowed_mutation_paths:
+            try:
+                path = validate_relative_repo_path(raw_path)
+            except GitMutationError as exc:
+                raise _ProviderBlocked("UNSAFE_FILE_PATH", exc.message) from exc
+            if path in seen:
+                raise _ProviderBlocked("MUTATION_SCOPE_VIOLATION", f"Duplicate mutation context path: {path}")
+            seen.add(path)
+            relative = Path(*Path(path).parts)
+            lexical_target = root / relative
+            if _path_contains_symlink(root, path):
+                raise _ProviderBlocked(
+                    "MUTATION_CONTEXT_SYMLINK_REJECTED",
+                    f"Authorized mutation path contains a symlink: {path}",
+                )
+            target = lexical_target.resolve(strict=False)
+            if not _is_relative_to(target, root):
+                raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Path escapes workspace: {path}")
+            if not lexical_target.exists():
+                items.append({"path": path, "state": "NEW_FILE", "content": "", "bytes": 0})
+                continue
+            if not lexical_target.is_file():
+                raise _ProviderBlocked(
+                    "MUTATION_CONTEXT_FILE_NOT_REGULAR",
+                    f"Authorized mutation path is not a regular file: {path}",
+                )
+            data = lexical_target.read_bytes()
+            if len(data) > self.max_context_file_bytes:
+                raise _ProviderBlocked(
+                    "MUTATION_CONTEXT_FILE_TOO_LARGE",
+                    f"Authorized mutation context file too large: {path}",
+                )
+            total_bytes += len(data)
+            if total_bytes > self.max_context_total_bytes:
+                raise _ProviderBlocked(
+                    "MUTATION_CONTEXT_TOTAL_TOO_LARGE",
+                    "Authorized mutation context total size exceeds configured limit.",
+                )
+            try:
+                content = data.decode("utf-8")
+            except UnicodeError as exc:
+                raise _ProviderBlocked(
+                    "MUTATION_CONTEXT_FILE_NOT_UTF8",
+                    f"Authorized mutation path is not valid UTF-8: {path}",
+                ) from exc
+            items.append({"path": path, "state": "EXISTING_FILE", "content": content, "bytes": len(data)})
+        return items
+
 
 def _verify_deterministic_acceptance(
     workspace: Path,
@@ -449,7 +558,12 @@ class _ProviderBlocked(Exception):
         self.retryability = retryability
 
 
-def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> str:
+def _build_prompt(
+    runtime_request: RuntimeExecutionRequest,
+    workspace: Path,
+    *,
+    mutation_context: list[dict[str, Any]] | None = None,
+) -> str:
     lines = [
         "You are a bounded local execution provider for Lucius.",
         "Lucius retains scheduling, lifecycle, repository selection, release, and authorization authority.",
@@ -493,6 +607,23 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
         "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
         "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
     ]
+    if not runtime_request.read_only:
+        lines.extend(
+            [
+                "Authorized current file context follows. This is the authoritative current workspace state for the frozen mutation scope only.",
+                "Modify only authorized files. Preserve unrelated behavior and content. Return complete resulting contents for changed files only.",
+                "Do not return unchanged files unnecessarily.",
+                "command_succeeds acceptance checks are Lucius verification commands; do not execute, edit, or reinterpret those commands.",
+            ]
+        )
+        for item in mutation_context or []:
+            lines.extend(
+                [
+                    f"--- BEGIN AUTHORIZED FILE: {item['path']} ---",
+                    "<NEW FILE>" if item["state"] == "NEW_FILE" else item["content"],
+                    f"--- END AUTHORIZED FILE: {item['path']} ---",
+                ]
+            )
     skeleton = runtime_request.metadata.get(SKELETON_METADATA_KEY)
     if isinstance(skeleton, str) and skeleton.strip():
         lines.extend(
@@ -594,6 +725,20 @@ def _parse_model_payload(body: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _positive_int(value: int, name: str) -> int:
+    if not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _bounded_num_predict(value: Any, *, max_num_predict: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError("mutation_num_predict must be a positive integer")
+    if value > max_num_predict:
+        raise ValueError("mutation_num_predict exceeds hard maximum")
+    return value
+
+
 def _verification(payload: dict[str, Any], written_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     verification = _dict_list(payload.get("verification"))
     if verification:
@@ -681,3 +826,14 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _path_contains_symlink(root: Path, relative_path: str) -> bool:
+    current = root
+    for part in Path(relative_path).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+        if not current.exists():
+            return False
+    return False

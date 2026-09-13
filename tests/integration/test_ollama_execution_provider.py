@@ -5,6 +5,7 @@ from argparse import Namespace
 import subprocess
 from urllib import error
 
+import pytest
 from sqlalchemy import select
 
 from lucius.persistence.orm import ModelExecutionORM, PlanFreezeORM
@@ -396,6 +397,201 @@ def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
     assert provider.last_payload["options"]["num_predict"] == 256
 
 
+def test_ollama_mutation_prompt_includes_existing_authorized_file_content(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "CURRENT = 'old'\n")
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload is not None
+    prompt = provider.last_payload["prompt"]
+    assert "--- BEGIN AUTHORIZED FILE: provider-proof.txt ---" in prompt
+    assert "CURRENT = 'old'\n" in prompt
+    assert "--- END AUTHORIZED FILE: provider-proof.txt ---" in prompt
+    assert "supplied file contents are authoritative" not in prompt
+    assert "authoritative current workspace state" in prompt
+
+
+def test_ollama_mutation_prompt_represents_new_authorized_file_safely(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload is not None
+    prompt = provider.last_payload["prompt"]
+    assert "--- BEGIN AUTHORIZED FILE: provider-proof.txt ---\n<NEW FILE>\n--- END AUTHORIZED FILE: provider-proof.txt ---" in prompt
+
+
+def test_ollama_mutation_prompt_does_not_include_unauthorized_repo_files(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "authorized current text\n")
+    _write_and_commit(tmp_path, ".env", "SECRET_TOKEN=must-not-leak\n")
+    _write_and_commit(tmp_path, "notes/private.txt", "private unrelated text\n")
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload is not None
+    prompt = provider.last_payload["prompt"]
+    assert "authorized current text" in prompt
+    assert "SECRET_TOKEN=must-not-leak" not in prompt
+    assert "private unrelated text" not in prompt
+    assert ".git" not in prompt
+
+
+def test_ollama_mutation_prompt_multiple_authorized_files_stay_bounded(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "first authorized file\n")
+    _write_and_commit(tmp_path, "readiness.md", "second authorized file\n")
+    _write_and_commit(tmp_path, "protocol.md", "third authorized file\n")
+    provider = FakeOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(
+        update={
+            "allowed_mutation_paths": ["provider-proof.txt", "readiness.md", "protocol.md"],
+            "deterministic_acceptance_checks": [],
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "COMPLETED"
+    prompt = provider.last_payload["prompt"]
+    assert "first authorized file" in prompt
+    assert "second authorized file" in prompt
+    assert "third authorized file" in prompt
+
+
+def test_ollama_mutation_context_rejects_oversized_individual_file(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "0123456789\n")
+    provider = FakeOllamaProvider(tmp_path, max_context_file_bytes=5)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MUTATION_CONTEXT_FILE_TOO_LARGE"
+    assert provider.generate_called is False
+
+
+def test_ollama_mutation_context_rejects_oversized_aggregate(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "12345")
+    _write_and_commit(tmp_path, "readiness.md", "67890")
+    provider = FakeOllamaProvider(tmp_path, max_context_total_bytes=8)
+    request = _request(tmp_path).model_copy(
+        update={
+            "allowed_mutation_paths": ["provider-proof.txt", "readiness.md"],
+            "deterministic_acceptance_checks": [],
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MUTATION_CONTEXT_TOTAL_TOO_LARGE"
+    assert provider.generate_called is False
+
+
+def test_ollama_mutation_context_rejects_symlink_escape(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("outside secret\n", encoding="utf-8")
+    (tmp_path / "provider-proof.txt").symlink_to(outside)
+    _git(tmp_path, ["add", "provider-proof.txt"])
+    _git(tmp_path, ["commit", "-m", "add authorized symlink"])
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MUTATION_CONTEXT_SYMLINK_REJECTED"
+    assert provider.generate_called is False
+
+
+def test_ollama_mutation_context_rejects_non_utf8_authorized_file(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    (tmp_path / "provider-proof.txt").write_bytes(b"\xff\xfe\x00")
+    _git(tmp_path, ["add", "provider-proof.txt"])
+    _git(tmp_path, ["commit", "-m", "add binary authorized file"])
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MUTATION_CONTEXT_FILE_NOT_UTF8"
+    assert provider.generate_called is False
+
+
+def test_ollama_mutation_prompt_does_not_leak_analysis_or_output(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _write_and_commit(tmp_path, "provider-proof.txt", "authorized only\n")
+    _write_and_commit(tmp_path, "analysis/secret.txt", "analysis secret must not leak\n")
+    _write_and_commit(tmp_path, "output/unattended/secret.log", "output secret must not leak\n")
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    prompt = provider.last_payload["prompt"]
+    assert "authorized only" in prompt
+    assert "analysis secret must not leak" not in prompt
+    assert "output secret must not leak" not in prompt
+
+
+def test_ollama_configured_mutation_output_budget_reaches_request(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path, mutation_num_predict=2048)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload["options"]["num_predict"] == 2048
+    assert result.evidence[0]["num_predict"] == 2048
+    assert result.verification_handoff_metadata["num_predict"] == 2048
+
+
+def test_ollama_model_response_cannot_choose_token_budget(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = BudgetChoosingOllamaProvider(tmp_path, mutation_num_predict=1024)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload["options"]["num_predict"] == 1024
+    assert result.verification_handoff_metadata["num_predict"] == 1024
+
+
+def test_ollama_mutation_output_budget_hard_maximum_enforced(tmp_path):
+    with pytest.raises(ValueError, match="hard maximum"):
+        FakeOllamaProvider(tmp_path, mutation_num_predict=4097)
+
+
+def test_ollama_default_mutation_output_budget_remains_256(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    assert provider.last_payload["options"]["num_predict"] == 256
+
+
+def test_ollama_malformed_json_protection_remains(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = MalformedJsonOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MALFORMED_OLLAMA_JSON"
+    assert provider.generate_called is True
+
+
 def test_ollama_read_only_request_rejects_file_changes_without_writing(tmp_path):
     provider = FakeOllamaProvider(tmp_path)
     request = _request(tmp_path).model_copy(update={"read_only": True, "required_capabilities": ["inspection_reasoning"]})
@@ -410,6 +606,7 @@ def test_ollama_read_only_request_rejects_file_changes_without_writing(tmp_path)
 
 
 def test_ollama_timeout_has_distinct_failure_class(tmp_path):
+    _prepare_git_workspace(tmp_path)
     provider = TimeoutOllamaProvider(tmp_path)
 
     result = provider.invoke(_request(tmp_path))
@@ -464,8 +661,17 @@ class FakeOllamaProvider(OllamaExecutionProvider):
         *,
         provider_id: str = "ollama-local",
         files: list[dict] | None = None,
+        mutation_num_predict: int = 256,
+        max_context_file_bytes: int = 20_000,
+        max_context_total_bytes: int = 40_000,
     ):
-        super().__init__(provider_id=provider_id, allowed_workspace_roots=[workspace])
+        super().__init__(
+            provider_id=provider_id,
+            allowed_workspace_roots=[workspace],
+            mutation_num_predict=mutation_num_predict,
+            max_context_file_bytes=max_context_file_bytes,
+            max_context_total_bytes=max_context_total_bytes,
+        )
         self.files = files or [{"path": "provider-proof.txt", "content": "created by local ollama\n"}]
         self.generate_called = False
         self.last_payload: dict | None = None
@@ -493,6 +699,30 @@ class FakeOllamaProvider(OllamaExecutionProvider):
                 "total_duration": 21_000_000,
                 "prompt_eval_count": 12,
                 "eval_count": 18,
+            },
+        )
+
+
+class BudgetChoosingOllamaProvider(FakeOllamaProvider):
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        response = super()._post(path, payload, timeout_seconds=timeout_seconds)
+        response.body["response"] = (
+            '{"files":[{"path":"provider-proof.txt","content":"created by local ollama\\n"}],"num_predict":999999}'
+        )
+        return response
+
+
+class MalformedJsonOllamaProvider(FakeOllamaProvider):
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        assert path == "/api/generate"
+        self.generate_called = True
+        self.last_payload = payload
+        return OllamaHttpResponse(
+            status=200,
+            body={
+                "model": "qwen3:8b",
+                "done": True,
+                "response": "not-json",
             },
         )
 
@@ -557,6 +787,25 @@ def _prepare_git_workspace(workspace: Path) -> None:
             check=False,
         )
         assert result.returncode == 0, result.stderr
+
+
+def _git(workspace: Path, args: list[str]) -> None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _write_and_commit(workspace: Path, path: str, content: str) -> None:
+    target = workspace / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(workspace, ["add", path])
+    _git(workspace, ["commit", "-m", f"add {path}"])
 
 
 def _install_plan_freeze(session) -> None:
