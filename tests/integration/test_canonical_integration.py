@@ -55,14 +55,39 @@ def test_integration_rejects_wrong_workflow_state(session, tmp_path):
     assert run_git(fixture.canonical, "status", "--short") == ""
 
 
-def test_integration_rejects_dirty_canonical_before_start(session, tmp_path):
+def test_integration_allows_and_preserves_preexisting_untracked_state(session, tmp_path):
     fixture = _fixture(session, tmp_path)
-    (fixture.canonical / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    protected = fixture.canonical / "dirty.txt"
+    protected.write_text("human-owned\n", encoding="utf-8")
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "COMPLETED"
+    assert protected.read_text(encoding="utf-8") == "human-owned\n"
+    assert "dirty.txt" in result.protected_untracked_hashes
+    assert "dirty.txt" not in result.actual_changed_paths
+
+
+def test_integration_rejects_preexisting_tracked_change(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    (fixture.canonical / "README.md").write_text("# Human edit\n", encoding="utf-8")
 
     result = CanonicalIntegrationService(session).integrate(_request(fixture))
 
     assert result.status == "FAILED"
-    assert "Repository is not clean" in result.reason
+    assert result.reason == "PREEXISTING_TRACKED_CHANGES"
+    assert session.get(PersistentWorkflowORM, fixture.workflow_id).workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
+
+
+def test_integration_rejects_preexisting_staged_change(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    (fixture.canonical / "staged.txt").write_text("human staged\n", encoding="utf-8")
+    run_git(fixture.canonical, "add", "staged.txt")
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "FAILED"
+    assert result.reason == "PREEXISTING_STAGED_CHANGES"
     assert session.get(PersistentWorkflowORM, fixture.workflow_id).workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
 
 
@@ -172,6 +197,28 @@ def test_integration_acceptance_failure_after_new_file_write_rolls_back_untracke
     assert run_git(fixture.canonical, "status", "--short") == ""
     assert session.get(PersistentWorkflowORM, fixture.workflow_id).workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
 
+
+
+def test_integration_rollback_preserves_preexisting_protected_untracked_state(session, tmp_path, monkeypatch):
+    fixture = _fixture(session, tmp_path, path="src/new_file.py", expected="CREATED = True\n")
+
+    protected = fixture.canonical / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("human-owned\n", encoding="utf-8")
+    protected_before = protected.read_bytes()
+
+    _force_canonical_acceptance_failure(monkeypatch)
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "FAILED"
+    assert result.rollback_attempted is True
+    assert result.rollback_succeeded is True
+    assert not (fixture.canonical / "src" / "new_file.py").exists()
+    assert protected.exists()
+    assert protected.read_bytes() == protected_before
+    assert run_git(fixture.canonical, "status", "--short") == "?? analysis/"
+    assert session.get(PersistentWorkflowORM, fixture.workflow_id).workflow_state == PersistentWorkflowState.COMPLETED_PENDING_INTEGRATION.value
 
 def test_integration_acceptance_failure_after_tracked_file_write_rolls_back_modified(session, tmp_path, monkeypatch):
     fixture = _fixture(session, tmp_path, path="README.md", expected="# Integrated\n")

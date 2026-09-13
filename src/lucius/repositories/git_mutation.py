@@ -50,6 +50,156 @@ def changed_paths(repo: str | Path) -> list[str]:
     return sorted(changed)
 
 
+
+def untracked_paths(repo: str | Path) -> list[str]:
+    root = repository_root(repo)
+    completed = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise GitMutationError(
+            "GIT_STATUS_FAILED",
+            _stderr(completed) or "Unable to inspect untracked Git state.",
+        )
+    return sorted(
+        raw.decode("utf-8", errors="surrogateescape")
+        for raw in completed.stdout.split(b"\0")
+        if raw
+    )
+
+
+def tracked_worktree_paths(repo: str | Path) -> list[str]:
+    root = repository_root(repo)
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise GitMutationError(
+            "GIT_STATUS_FAILED",
+            _stderr(completed) or "Unable to inspect tracked Git state.",
+        )
+    return sorted(
+        raw.decode("utf-8", errors="surrogateescape")
+        for raw in completed.stdout.split(b"\0")
+        if raw
+    )
+
+
+def capture_untracked_file_hashes(repo: str | Path) -> dict[str, str]:
+    root = repository_root(repo)
+    return {
+        path: workspace_file_sha256(root, path)
+        for path in untracked_paths(root)
+    }
+
+
+def verify_untracked_file_hashes(
+    repo: str | Path,
+    expected_hashes: dict[str, str],
+) -> list[str]:
+    root = repository_root(repo)
+    current = set(untracked_paths(root))
+    expected = set(expected_hashes)
+
+    missing = sorted(expected - current)
+    if missing:
+        raise GitMutationError(
+            "PROTECTED_UNTRACKED_STATE_DRIFT",
+            "Protected untracked paths disappeared: " + ", ".join(missing),
+        )
+
+    changed: list[str] = []
+    for path, expected_hash in expected_hashes.items():
+        try:
+            observed_hash = workspace_file_sha256(root, path)
+        except GitMutationError as exc:
+            raise GitMutationError(
+                "PROTECTED_UNTRACKED_STATE_DRIFT",
+                f"Protected untracked path is no longer a regular file: {path}",
+            ) from exc
+        if observed_hash != expected_hash:
+            changed.append(path)
+
+    if changed:
+        raise GitMutationError(
+            "PROTECTED_UNTRACKED_STATE_DRIFT",
+            "Protected untracked paths changed: " + ", ".join(sorted(changed)),
+        )
+
+    return sorted(current)
+
+
+def restore_authorized_paths_to_baseline(
+    repo: str | Path,
+    baseline_commit: str,
+    paths: list[str],
+) -> None:
+    root = repository_root(repo)
+    resolved = _git(root, ["rev-parse", f"{baseline_commit}^{{commit}}"]).strip()
+    if resolved != baseline_commit:
+        raise GitMutationError(
+            "BASELINE_COMMIT_AMBIGUOUS",
+            "Baseline commit must be an exact full commit SHA.",
+        )
+
+    validated = sorted({validate_relative_repo_path(path) for path in paths})
+    for path in validated:
+        tracked_at_baseline = subprocess.run(
+            ["git", "cat-file", "-e", f"{baseline_commit}:{path}"],
+            cwd=root,
+            capture_output=True,
+            check=False,
+        ).returncode == 0
+
+        if tracked_at_baseline:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "restore",
+                    "--source",
+                    baseline_commit,
+                    "--staged",
+                    "--worktree",
+                    "--",
+                    path,
+                ],
+                cwd=root,
+                capture_output=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise GitMutationError(
+                    "RESTORE_FAILED",
+                    _stderr(completed) or f"Unable to restore authorized path: {path}",
+                )
+            continue
+
+        target = (root / Path(*PurePosixPath(path).parts)).resolve()
+        if not _is_relative_to(target, root):
+            raise GitMutationError(
+                "INVALID_REPOSITORY_PATH",
+                f"Path escapes repository: {path}",
+            )
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            raise GitMutationError(
+                "RESTORE_FAILED",
+                f"Authorized path is not a removable file: {path}",
+            )
+
+    if current_head(root) != baseline_commit:
+        raise GitMutationError(
+            "RESTORE_HEAD_MISMATCH",
+            "Scoped rollback unexpectedly changed repository HEAD.",
+        )
+
 def staged_paths(repo: str | Path) -> list[str]:
     root = repository_root(repo)
     completed = subprocess.run(["git", "diff", "--cached", "--name-only", "-z"], cwd=root, capture_output=True, check=False)

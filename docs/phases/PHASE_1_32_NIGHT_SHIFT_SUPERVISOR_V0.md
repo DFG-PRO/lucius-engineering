@@ -117,6 +117,53 @@ instead of attempting to infer task-local safety. Later workflows rely on their
 own frozen baseline state; Night Shift does not mutate old freezes to fit a new
 commit.
 
+
+## Preexisting Canonical State Hardening
+
+Post-closure operational hardening allows Night Shift promotion to coexist with
+preexisting human-owned untracked canonical state without weakening mutation
+scope enforcement.
+
+Before L1 integration, Lucius now:
+
+- rejects any preexisting tracked working-tree modification;
+- rejects any preexisting staged change;
+- snapshots every preexisting untracked regular file by relative path and
+  SHA-256;
+- rejects overlap between protected untracked paths and frozen authorized
+  mutation paths.
+
+After L1 mutation, protected untracked state must still exist and match its
+exact pre-integration hash. Any disappearance, content drift, or newly introduced
+unauthorized changed path fails closed.
+
+L1 rollback is scope-bounded to the frozen authorized mutation paths. Canonical
+rollback no longer relies on repository-wide reset/clean behavior that could
+remove unrelated human-owned untracked files.
+
+The exact protected snapshot produced by successful L1 integration is passed
+synchronously to L2 controlled commit promotion. L2 verifies the snapshot
+instead of resnapshotting it, stages and commits only authorized Lucius paths,
+and permits only the verified protected untracked set to remain afterward.
+Standalone L2 promotion without that snapshot continues to fail closed when
+unaccounted-for untracked state is present.
+
+Hardening validation:
+
+- canonical integration focused suite: 17 PASS;
+- controlled local commit focused suite: 24 PASS;
+- protected untracked survival through successful L1/L2 promotion: PASS;
+- protected modified or removed state rejection: PASS;
+- new unauthorized untracked state rejection: PASS;
+- protected/authorized path-overlap rejection: PASS;
+- scope-bounded rollback preserving protected bytes: PASS;
+- full Lucius suite after implementation: 480 PASS;
+- `git diff --check`: PASS.
+
+This hardening does not add authority, push, deploy, merge, remote mutation, or
+multi-worker capability.
+
+
 ## Empirical Validation And Closure Evidence
 
 Phase 1.32 completed bounded empirical validation using temporary Git repositories only.

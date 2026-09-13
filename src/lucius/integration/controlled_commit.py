@@ -37,6 +37,7 @@ from lucius.repositories.git_mutation import (
     staged_paths,
     unstage_paths,
     validate_relative_repo_path,
+    verify_untracked_file_hashes,
     workspace_file_sha256,
 )
 from lucius.runtime.deterministic_acceptance import DeterministicAcceptanceError, verify_deterministic_acceptance
@@ -50,6 +51,7 @@ class ControlledCommitRequest:
     authority_level: AuthorityLevel = AuthorityLevel.L2
     actor: Actor = Actor.LUCIUS
     commit_message: str | None = None
+    protected_untracked_hashes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -304,12 +306,33 @@ class ControlledCommitService:
         if preexisting_staged:
             raise _CommitBlocked("PREEXISTING_STAGED_CHANGES", {"staged_paths": preexisting_staged})
 
-        actual_changed = changed_paths(canonical_root)
+        protected_untracked_hashes = dict(request.protected_untracked_hashes)
+        protected_overlap = sorted(
+            set(protected_untracked_hashes) & set(authorized_paths)
+        )
+        if protected_overlap:
+            raise _CommitBlocked(
+                "PROTECTED_UNTRACKED_PATH_AUTHORIZED_FOR_MUTATION",
+                {"paths": protected_overlap},
+            )
+
+        verify_untracked_file_hashes(
+            canonical_root,
+            protected_untracked_hashes,
+        )
+
+        observed_changed = changed_paths(canonical_root)
+        actual_changed = sorted(
+            set(observed_changed) - set(protected_untracked_hashes)
+        )
         if not actual_changed:
             raise _CommitBlocked("CANONICAL_HAS_NO_CHANGES", {})
         unexpected = sorted(set(actual_changed) - set(authorized_paths))
         if unexpected:
-            raise _CommitBlocked("CANONICAL_HAS_UNAUTHORIZED_CHANGES", {"unexpected_paths": unexpected})
+            raise _CommitBlocked(
+                "CANONICAL_HAS_UNAUTHORIZED_CHANGES",
+                {"unexpected_paths": unexpected},
+            )
 
         deterministic_acceptance = verify_deterministic_acceptance(
             canonical_root,
@@ -330,6 +353,7 @@ class ControlledCommitService:
             "authorized_paths": authorized_paths,
             "actual_changed_paths": actual_changed,
             "path_content_hashes": path_hashes,
+            "protected_untracked_hashes": protected_untracked_hashes,
             "deterministic_acceptance": deterministic_acceptance,
             "commit_message": commit_message,
         }
@@ -344,6 +368,7 @@ class ControlledCommitService:
             authorized_paths=authorized_paths,
             acceptance_checks=acceptance_checks,
             deterministic_acceptance=deterministic_acceptance,
+            protected_untracked_hashes=protected_untracked_hashes,
             commit_message=commit_message,
             manifest=manifest,
             manifest_hash=_manifest_hash(manifest),
@@ -362,7 +387,15 @@ class ControlledCommitService:
             raise _CommitBlocked("CANONICAL_HEAD_DRIFT", {"expected": context.baseline_commit})
         if staged_paths(context.canonical_root):
             raise _CommitBlocked("PREEXISTING_STAGED_CHANGES", {})
-        if changed_paths(context.canonical_root) != context.manifest["actual_changed_paths"]:
+        verify_untracked_file_hashes(
+            context.canonical_root,
+            context.protected_untracked_hashes,
+        )
+        observed_changed = changed_paths(context.canonical_root)
+        actual_changed = sorted(
+            set(observed_changed) - set(context.protected_untracked_hashes)
+        )
+        if actual_changed != context.manifest["actual_changed_paths"]:
             raise _CommitBlocked("CANONICAL_CHANGED_PATHS_DRIFT", {})
         deterministic = verify_deterministic_acceptance(
             context.canonical_root,
@@ -376,6 +409,10 @@ class ControlledCommitService:
                 raise _CommitBlocked("CANONICAL_CONTENT_HASH_DRIFT", {"path": path})
 
     def _verify_staged_manifest(self, context: "_CommitContext") -> None:
+        verify_untracked_file_hashes(
+            context.canonical_root,
+            context.protected_untracked_hashes,
+        )
         intended = context.manifest["actual_changed_paths"]
         observed = staged_paths(context.canonical_root)
         if observed != intended:
@@ -408,9 +445,19 @@ class ControlledCommitService:
         )
         if deterministic != context.deterministic_acceptance:
             raise _CommitBlocked("POST_COMMIT_DETERMINISTIC_ACCEPTANCE_DRIFT", {})
+        verify_untracked_file_hashes(
+            context.canonical_root,
+            context.protected_untracked_hashes,
+        )
         remaining = changed_paths(context.canonical_root)
-        if remaining:
-            raise _CommitBlocked("CANONICAL_WORKTREE_NOT_CLEAN_AFTER_COMMIT", {"changed_paths": remaining})
+        unexpected_remaining = sorted(
+            set(remaining) - set(context.protected_untracked_hashes)
+        )
+        if unexpected_remaining:
+            raise _CommitBlocked(
+                "CANONICAL_WORKTREE_NOT_CLEAN_AFTER_COMMIT",
+                {"changed_paths": unexpected_remaining},
+            )
         if current_head(context.canonical_root) != resulting_commit:
             raise _CommitBlocked("CANONICAL_HEAD_CHANGED_AFTER_VERIFICATION", {"head": current_head(context.canonical_root)})
         return committed_paths
@@ -451,6 +498,7 @@ class _CommitContext:
     authorized_paths: list[str]
     acceptance_checks: list[dict[str, Any]]
     deterministic_acceptance: list[dict[str, Any]]
+    protected_untracked_hashes: dict[str, str]
     commit_message: str
     manifest: dict[str, Any]
     manifest_hash: str

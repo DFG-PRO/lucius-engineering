@@ -228,6 +228,9 @@ class NightShiftSupervisor:
                     expected_baseline_commit=context.expected_baseline_commit,
                     authority_level=AuthorityLevel.L2,
                     actor=self.actor,
+                    protected_untracked_hashes=dict(
+                        integration.protected_untracked_hashes
+                    ),
                 )
             )
             result.l2_commits_attempted += 1

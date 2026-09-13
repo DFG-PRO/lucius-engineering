@@ -65,6 +65,96 @@ def test_successful_controlled_local_commit_creates_one_verified_record(session,
     assert record.result == "SUCCESS"
 
 
+
+def test_controlled_commit_preserves_protected_untracked_state_and_commits_only_authorized_path(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    protected = fixture.repo / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("human-owned\n", encoding="utf-8")
+    protected_hash = __import__("hashlib").sha256(protected.read_bytes()).hexdigest()
+
+    request = _request(fixture)
+    request.protected_untracked_hashes["analysis/human.txt"] = protected_hash
+
+    result = ControlledCommitService(session).commit(request)
+
+    assert result.status == "COMPLETED"
+    assert protected.read_text(encoding="utf-8") == "human-owned\n"
+    assert _commit_paths(fixture.repo, result.resulting_commit) == ["src/lucius/demo.py"]
+    assert run_git(fixture.repo, "status", "--short") == "?? analysis/"
+
+
+def test_controlled_commit_rejects_modified_protected_untracked_state(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    protected = fixture.repo / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("original\n", encoding="utf-8")
+    protected_hash = __import__("hashlib").sha256(protected.read_bytes()).hexdigest()
+
+    request = _request(fixture)
+    request.protected_untracked_hashes["analysis/human.txt"] = protected_hash
+    protected.write_text("modified\n", encoding="utf-8")
+
+    result = ControlledCommitService(session).commit(request)
+
+    assert result.status == "FAILED"
+    assert "Protected untracked paths changed" in result.reason
+    assert run_git(fixture.repo, "rev-parse", "HEAD") == fixture.baseline
+
+
+def test_controlled_commit_rejects_missing_protected_untracked_state(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    protected = fixture.repo / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("original\n", encoding="utf-8")
+    protected_hash = __import__("hashlib").sha256(protected.read_bytes()).hexdigest()
+
+    request = _request(fixture)
+    request.protected_untracked_hashes["analysis/human.txt"] = protected_hash
+    protected.unlink()
+
+    result = ControlledCommitService(session).commit(request)
+
+    assert result.status == "FAILED"
+    assert "Protected untracked paths disappeared" in result.reason
+    assert run_git(fixture.repo, "rev-parse", "HEAD") == fixture.baseline
+
+
+def test_controlled_commit_rejects_new_untracked_state_not_in_protected_snapshot(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    protected = fixture.repo / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("original\n", encoding="utf-8")
+    protected_hash = __import__("hashlib").sha256(protected.read_bytes()).hexdigest()
+
+    request = _request(fixture)
+    request.protected_untracked_hashes["analysis/human.txt"] = protected_hash
+
+    unexpected = fixture.repo / "output" / "late.txt"
+    unexpected.parent.mkdir(parents=True, exist_ok=True)
+    unexpected.write_text("late arrival\n", encoding="utf-8")
+
+    result = ControlledCommitService(session).commit(request)
+
+    assert result.status == "FAILED"
+    assert result.reason == "CANONICAL_HAS_UNAUTHORIZED_CHANGES"
+    assert run_git(fixture.repo, "rev-parse", "HEAD") == fixture.baseline
+
+
+def test_controlled_commit_rejects_protected_path_overlapping_authorized_mutation(session, tmp_path):
+    fixture = _fixture(session, tmp_path)
+    target = fixture.repo / "src" / "lucius" / "demo.py"
+    target_hash = __import__("hashlib").sha256(target.read_bytes()).hexdigest()
+
+    request = _request(fixture)
+    request.protected_untracked_hashes["src/lucius/demo.py"] = target_hash
+
+    result = ControlledCommitService(session).commit(request)
+
+    assert result.status == "FAILED"
+    assert result.reason == "PROTECTED_UNTRACKED_PATH_AUTHORIZED_FOR_MUTATION"
+    assert run_git(fixture.repo, "rev-parse", "HEAD") == fixture.baseline
+
 def test_controlled_commit_rejects_l1_request(session, tmp_path):
     fixture = _fixture(session, tmp_path)
 

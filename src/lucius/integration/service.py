@@ -21,13 +21,16 @@ from lucius.persistence.orm import (
 )
 from lucius.repositories.git_mutation import (
     GitMutationError,
-    assert_clean,
+    capture_untracked_file_hashes,
     capture_utf8_file_contents,
     changed_paths,
     current_head,
-    restore_to_baseline,
+    restore_authorized_paths_to_baseline,
+    staged_paths,
+    tracked_worktree_paths,
     validate_file_contents,
     validate_relative_repo_path,
+    verify_untracked_file_hashes,
     write_validated_file_contents,
 )
 from lucius.runtime.deterministic_acceptance import DeterministicAcceptanceError, verify_deterministic_acceptance
@@ -55,6 +58,7 @@ class CanonicalIntegrationResult:
     candidate_changed_paths: list[str] = field(default_factory=list)
     applied_paths: list[str] = field(default_factory=list)
     actual_changed_paths: list[str] = field(default_factory=list)
+    protected_untracked_hashes: dict[str, str] = field(default_factory=dict)
     deterministic_acceptance: list[dict[str, Any]] = field(default_factory=list)
     rollback_attempted: bool = False
     rollback_succeeded: bool = False
@@ -117,8 +121,12 @@ class CanonicalIntegrationService:
 
             mutation_started = True
             written = write_validated_file_contents(validated_files)
-            actual_changed = changed_paths(context.canonical_root)
-            self._verify_post_apply(context, intended_paths, actual_changed)
+            observed_changed = changed_paths(context.canonical_root)
+            actual_changed = self._verify_post_apply(
+                context,
+                intended_paths,
+                observed_changed,
+            )
             deterministic = verify_deterministic_acceptance(
                 context.canonical_root,
                 context.acceptance_checks,
@@ -153,6 +161,7 @@ class CanonicalIntegrationService:
                 candidate_changed_paths=context.candidate_changed_paths,
                 applied_paths=[str(item["path"]) for item in written],
                 actual_changed_paths=actual_changed,
+                protected_untracked_hashes=dict(context.protected_untracked_hashes),
                 deterministic_acceptance=deterministic,
             )
         except (GitMutationError, DeterministicAcceptanceError, _IntegrationBlocked) as error:
@@ -167,7 +176,15 @@ class CanonicalIntegrationService:
                     {"reason": reason, "baseline_commit": context.baseline_commit},
                 )
                 try:
-                    restore_to_baseline(context.canonical_root, context.baseline_commit)
+                    restore_authorized_paths_to_baseline(
+                        context.canonical_root,
+                        context.baseline_commit,
+                        context.authorized_paths,
+                    )
+                    verify_untracked_file_hashes(
+                        context.canonical_root,
+                        context.protected_untracked_hashes,
+                    )
                     rollback_succeeded = True
                     self._audit(
                         "CANONICAL_INTEGRATION_ROLLBACK_COMPLETED",
@@ -278,9 +295,30 @@ class CanonicalIntegrationService:
         canonical_head = current_head(canonical_root)
         if canonical_head != request.expected_baseline_commit:
             raise _IntegrationBlocked("CANONICAL_HEAD_DRIFT", {"canonical_head": canonical_head, "expected": request.expected_baseline_commit})
-        assert_clean(canonical_root)
+
+        preexisting_staged = staged_paths(canonical_root)
+        if preexisting_staged:
+            raise _IntegrationBlocked(
+                "PREEXISTING_STAGED_CHANGES",
+                {"staged_paths": preexisting_staged},
+            )
+        preexisting_tracked = tracked_worktree_paths(canonical_root)
+        if preexisting_tracked:
+            raise _IntegrationBlocked(
+                "PREEXISTING_TRACKED_CHANGES",
+                {"tracked_paths": preexisting_tracked},
+            )
+        protected_untracked_hashes = capture_untracked_file_hashes(canonical_root)
 
         authorized_paths = _authorized_paths(freeze)
+        protected_overlap = sorted(
+            set(protected_untracked_hashes) & set(authorized_paths)
+        )
+        if protected_overlap:
+            raise _IntegrationBlocked(
+                "PROTECTED_UNTRACKED_PATH_AUTHORIZED_FOR_MUTATION",
+                {"paths": protected_overlap},
+            )
         acceptance_checks = _acceptance_checks(freeze, authorized_paths)
         candidate_head = current_head(candidate_root)
         if candidate_head != request.expected_baseline_commit:
@@ -329,23 +367,37 @@ class CanonicalIntegrationService:
             acceptance_checks=acceptance_checks,
             candidate_acceptance=candidate_acceptance,
             captured_file_contents=captured_file_contents,
+            protected_untracked_hashes=protected_untracked_hashes,
         )
 
     def _verify_post_apply(
         self,
         context: "_IntegrationContext",
         intended_paths: list[str],
-        actual_changed_paths: list[str],
-    ) -> None:
+        observed_changed_paths: list[str],
+    ) -> list[str]:
+        verify_untracked_file_hashes(
+            context.canonical_root,
+            context.protected_untracked_hashes,
+        )
         authorized = set(context.authorized_paths)
-        actual = set(actual_changed_paths)
+        protected = set(context.protected_untracked_hashes)
+        observed = set(observed_changed_paths)
+        actual = observed - protected
         intended = set(intended_paths)
         unauthorized = sorted(actual - authorized)
         missing = sorted(intended - actual)
         if unauthorized:
-            raise _IntegrationBlocked("CANONICAL_UNAUTHORIZED_CHANGED_PATHS", {"unexpected_paths": unauthorized})
+            raise _IntegrationBlocked(
+                "CANONICAL_UNAUTHORIZED_CHANGED_PATHS",
+                {"unexpected_paths": unauthorized},
+            )
         if missing:
-            raise _IntegrationBlocked("CANONICAL_INTENDED_WRITES_NOT_OBSERVED", {"missing_paths": missing})
+            raise _IntegrationBlocked(
+                "CANONICAL_INTENDED_WRITES_NOT_OBSERVED",
+                {"missing_paths": missing},
+            )
+        return sorted(actual)
 
     def _audit(
         self,
@@ -384,6 +436,7 @@ class _IntegrationContext:
     acceptance_checks: list[dict[str, Any]]
     candidate_acceptance: list[dict[str, Any]]
     captured_file_contents: list[dict[str, str]]
+    protected_untracked_hashes: dict[str, str]
 
 
 class _IntegrationBlocked(RuntimeError):
