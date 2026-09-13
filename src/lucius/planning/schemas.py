@@ -143,12 +143,12 @@ class AcceptanceCoverage(BaseModel):
 class DeterministicAcceptanceCheck(BaseModel):
     type: str
     path: str
-    expected_text: str
+    expected_text: str | None = None
 
     @field_validator("type")
     @classmethod
     def supported_type(cls, value: str) -> str:
-        if value != "exact_file_content":
+        if value not in {"exact_file_content", "file_exists", "file_contains", "file_not_contains"}:
             raise ValueError("Unsupported deterministic acceptance check type.")
         return value
 
@@ -159,6 +159,16 @@ class DeterministicAcceptanceCheck(BaseModel):
         if not normalized:
             raise ValueError("Deterministic acceptance check path must be non-empty.")
         return normalized
+
+    @model_validator(mode="after")
+    def type_specific_arguments(self):
+        if self.type == "file_exists":
+            if self.expected_text is not None:
+                raise ValueError("file_exists checks must not provide expected_text.")
+            return self
+        if not isinstance(self.expected_text, str):
+            raise ValueError(f"{self.type} checks require expected_text.")
+        return self
 
 
 class TestRecommendation(BaseModel):

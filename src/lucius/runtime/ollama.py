@@ -488,7 +488,7 @@ def _build_prompt(runtime_request: RuntimeExecutionRequest, workspace: Path) -> 
         else (
             "Return only the minimal JSON object required by the mutation schema. "
             "Do not add summary, verification, documentation, commentary, alternative content, "
-            "or extra keys. File contents must satisfy the frozen deterministic acceptance checks exactly."
+            "or extra keys. File contents must satisfy every frozen deterministic acceptance check."
         ),
         "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
         "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",

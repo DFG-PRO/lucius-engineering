@@ -16,6 +16,10 @@ from lucius.pilots.hardening import (
     validate_uncertainty_fields,
 )
 from lucius.pilots.schemas import PlanFreeze
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    normalize_deterministic_acceptance_checks,
+)
 
 
 class PlanFreezeSemanticError(ValueError):
@@ -193,63 +197,18 @@ def _deterministic_acceptance_check_issues(payload: dict) -> list[dict]:
             }
         ]
 
-    for index, check in enumerate(checks, start=1):
-        if not isinstance(check, dict):
-            issues.append(
-                {
-                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK",
-                    "index": index,
-                    "message": "Check must be an object.",
-                }
-            )
-            continue
-
-        check_type = check.get("type")
-        path = check.get("path")
-        expected_text = check.get("expected_text")
-
-        if check_type != "exact_file_content":
-            issues.append(
-                {
-                    "code": "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK",
-                    "index": index,
-                    "type": check_type,
-                }
-            )
-
-        if (
-            not isinstance(path, str)
-            or not path
-            or path.strip() != path
-            or "\\" in path
-            or path.startswith("/")
-            or "." in path.split("/")
-            or ".." in path.split("/")
-        ):
-            issues.append(
-                {
-                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_PATH",
-                    "index": index,
-                    "path": path,
-                }
-            )
-        elif path not in affected_paths:
-            issues.append(
-                {
-                    "code": "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES",
-                    "index": index,
-                    "path": path,
-                }
-            )
-
-        if not isinstance(expected_text, str):
-            issues.append(
-                {
-                    "code": "INVALID_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT",
-                    "index": index,
-                    "path": path,
-                }
-            )
+    try:
+        normalize_deterministic_acceptance_checks(
+            checks,
+            authorized_paths=affected_paths,
+        )
+    except DeterministicAcceptanceError as error:
+        issues.append(
+            {
+                "code": error.code,
+                "message": error.message,
+            }
+        )
 
     return issues
 

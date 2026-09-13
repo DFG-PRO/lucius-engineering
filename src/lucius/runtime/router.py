@@ -10,6 +10,10 @@ from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, AuthorityLevel
 from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, PlanFreezeORM, utc_now
 from lucius.persistence.repositories import next_id
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    normalize_deterministic_acceptance_checks,
+)
 from lucius.runtime.provider_quality import evidence_sensitive_provider_quality_issues
 from lucius.runtime.schema_constraints import (
     SKELETON_METADATA_KEY,
@@ -836,46 +840,30 @@ def _frozen_mutation_scope(
     if not isinstance(raw_checks, list):
         return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS"
 
-    checks: list[dict[str, Any]] = []
-    checked_paths: set[str] = set()
-
-    for item in raw_checks:
-        if not isinstance(item, dict):
-            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS"
-
-        check_type = item.get("type")
-        raw_path = item.get("path")
-        expected_text = item.get("expected_text")
-
-        if check_type != "exact_file_content":
-            return paths, [], "UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK"
-
-        normalized_path = _normalize_frozen_mutation_path(raw_path)
-        if normalized_path is None:
-            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH"
-
-        if normalized_path not in seen:
-            return paths, [], "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_MUTATION_SCOPE"
-
-        if normalized_path in checked_paths:
-            return paths, [], "DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH"
-
-        if not isinstance(expected_text, str):
-            return paths, [], "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT"
-
-        checked_paths.add(normalized_path)
-        checks.append(
-            {
-                "type": "exact_file_content",
-                "path": normalized_path,
-                "expected_text": expected_text,
-            }
+    try:
+        checks = normalize_deterministic_acceptance_checks(
+            raw_checks,
+            authorized_paths=set(paths),
         )
+    except DeterministicAcceptanceError as error:
+        return paths, [], _frozen_acceptance_error_code(error)
 
     if require_deterministic_acceptance and not checks:
         return paths, [], "MISSING_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK"
 
     return paths, checks, None
+
+
+def _frozen_acceptance_error_code(error: DeterministicAcceptanceError) -> str:
+    return {
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECKS": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK": "UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_PATH": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH",
+        "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_SCOPE": "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_MUTATION_SCOPE",
+        "DUPLICATE_DETERMINISTIC_ACCEPTANCE_CHECK": "DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT",
+    }.get(error.code, error.code)
 
 
 def _normalize_frozen_mutation_path(raw_path: object) -> str | None:

@@ -33,7 +33,13 @@ from lucius.repositories.git_mutation import (
     verify_untracked_file_hashes,
     write_validated_file_contents,
 )
-from lucius.runtime.deterministic_acceptance import DeterministicAcceptanceError, verify_deterministic_acceptance
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    acceptance_check_paths,
+    normalize_deterministic_acceptance_checks,
+    verify_deterministic_acceptance,
+    verify_deterministic_acceptance_content,
+)
 
 
 @dataclass(frozen=True)
@@ -338,19 +344,22 @@ class CanonicalIntegrationService:
             acceptance_checks,
             authorized_paths=set(authorized_paths),
         )
-        exact_content_paths = [check["path"] for check in acceptance_checks if check.get("type") == "exact_file_content"]
-        missing_candidate_checks = sorted(set(candidate_changed) - set(exact_content_paths))
+        checked_paths = acceptance_check_paths(
+            acceptance_checks,
+            authorized_paths=set(authorized_paths),
+        )
+        missing_candidate_checks = sorted(set(candidate_changed) - set(checked_paths))
         if missing_candidate_checks:
             raise _IntegrationBlocked(
-                "CANDIDATE_CHANGE_MISSING_EXACT_CONTENT_CHECK",
+                "CANDIDATE_CHANGE_MISSING_DETERMINISTIC_ACCEPTANCE_CHECK",
                 {"paths": missing_candidate_checks},
             )
         captured_file_contents = capture_utf8_file_contents(
             candidate_root,
-            exact_content_paths,
+            candidate_changed,
             authorized_paths=set(authorized_paths),
         )
-        _verify_captured_content_matches_acceptance(captured_file_contents, acceptance_checks)
+        _verify_captured_content_matches_acceptance(captured_file_contents, acceptance_checks, authorized_paths=set(authorized_paths))
 
         return _IntegrationContext(
             workflow=workflow,
@@ -473,39 +482,38 @@ def _acceptance_checks(freeze: PlanFreezeORM, authorized_paths: list[str]) -> li
     raw = payload.get("deterministic_acceptance_checks")
     if not isinstance(raw, list) or not raw:
         raise _IntegrationBlocked("FROZEN_DETERMINISTIC_ACCEPTANCE_REQUIRED", {})
-    authorized = set(authorized_paths)
-    checks: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            raise _IntegrationBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK", {})
-        if item.get("type") != "exact_file_content":
-            raise _IntegrationBlocked("UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK", {"type": item.get("type")})
-        try:
-            path = validate_relative_repo_path(item.get("path"))
-        except GitMutationError as exc:
-            raise _IntegrationBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH", {"message": exc.message}) from exc
-        if path not in authorized:
-            raise _IntegrationBlocked("DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES", {"path": path})
-        if path in seen:
-            raise _IntegrationBlocked("DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH", {"path": path})
-        expected_text = item.get("expected_text")
-        if not isinstance(expected_text, str):
-            raise _IntegrationBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT", {"path": path})
-        seen.add(path)
-        checks.append({"type": "exact_file_content", "path": path, "expected_text": expected_text})
-    return checks
+    try:
+        return normalize_deterministic_acceptance_checks(raw, authorized_paths=set(authorized_paths))
+    except DeterministicAcceptanceError as exc:
+        raise _IntegrationBlocked(_frozen_acceptance_error_code(exc), {"message": exc.message}) from exc
 
 
 def _verify_captured_content_matches_acceptance(
     captured_file_contents: list[dict[str, str]],
     acceptance_checks: list[dict[str, Any]],
+    *,
+    authorized_paths: set[str],
 ) -> None:
-    expected_by_path = {str(check["path"]): check["expected_text"] for check in acceptance_checks}
-    for item in captured_file_contents:
-        path = item["path"]
-        if item["content"] != expected_by_path[path]:
-            raise _IntegrationBlocked("CANDIDATE_CAPTURED_CONTENT_MISMATCH", {"path": path})
+    try:
+        verify_deterministic_acceptance_content(
+            captured_file_contents,
+            acceptance_checks,
+            authorized_paths=authorized_paths,
+        )
+    except DeterministicAcceptanceError as exc:
+        raise _IntegrationBlocked("CANDIDATE_CAPTURED_CONTENT_MISMATCH", {"message": exc.message}) from exc
+
+
+def _frozen_acceptance_error_code(error: DeterministicAcceptanceError) -> str:
+    return {
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECKS": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK": "UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_PATH": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH",
+        "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_SCOPE": "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES",
+        "DUPLICATE_DETERMINISTIC_ACCEPTANCE_CHECK": "DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT",
+    }.get(error.code, error.code)
 
 
 def _authority_rank(value: str) -> int:

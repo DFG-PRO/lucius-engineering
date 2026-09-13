@@ -43,6 +43,26 @@ def test_successful_controlled_canonical_integration_closes_workflow_without_com
     assert (fixture.canonical / "src" / "lucius" / "demo.py").read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_integration_accepts_non_exact_deterministic_checks(session, tmp_path):
+    fixture = _fixture(
+        session,
+        tmp_path,
+        path="src/lucius/demo.py",
+        expected="VALUE = 1\n# safe marker\n",
+        acceptance_checks=[
+            {"type": "file_exists", "path": "src/lucius/demo.py"},
+            {"type": "file_contains", "path": "src/lucius/demo.py", "expected_text": "safe marker"},
+            {"type": "file_not_contains", "path": "src/lucius/demo.py", "expected_text": "forbidden marker"},
+        ],
+    )
+
+    result = CanonicalIntegrationService(session).integrate(_request(fixture))
+
+    assert result.status == "COMPLETED"
+    assert result.actual_changed_paths == ["src/lucius/demo.py"]
+    assert (fixture.canonical / "src" / "lucius" / "demo.py").read_text(encoding="utf-8") == "VALUE = 1\n# safe marker\n"
+
+
 def test_integration_rejects_wrong_workflow_state(session, tmp_path):
     fixture = _fixture(session, tmp_path)
     session.get(PersistentWorkflowORM, fixture.workflow_id).workflow_state = PersistentWorkflowState.PLAN_READY.value
@@ -274,6 +294,7 @@ def _fixture(
     expected: str = "VALUE = 1\n",
     affected_path: str | None = None,
     check_path: str | None = None,
+    acceptance_checks: list[dict[str, str]] | None = None,
 ) -> _Fixture:
     canonical = make_git_repo(tmp_path / "canonical")
     baseline = run_git(canonical, "rev-parse", "HEAD")
@@ -337,6 +358,9 @@ def _fixture(
         created_at=utc_now(),
         updated_at=utc_now(),
     )
+    checks = acceptance_checks or [
+        {"type": "exact_file_content", "path": check_path or path, "expected_text": expected}
+    ]
     plan = EngineeringPlanORM(
         id="LPLAN_INT",
         task_id=task.id,
@@ -361,9 +385,7 @@ def _fixture(
         affected_files=[{"path": affected_path or path}],
         steps=[],
         acceptance_coverage=[],
-        deterministic_acceptance_checks=[
-            {"type": "exact_file_content", "path": check_path or path, "expected_text": expected}
-        ],
+        deterministic_acceptance_checks=checks,
         test_strategy=[],
         documentation_requirements=[],
         rollback_considerations=[],

@@ -65,6 +65,30 @@ def test_successful_controlled_local_commit_creates_one_verified_record(session,
     assert record.result == "SUCCESS"
 
 
+def test_controlled_commit_accepts_non_exact_deterministic_checks(session, tmp_path):
+    fixture = _fixture(
+        session,
+        tmp_path,
+        expected="VALUE = 1\n# safe marker\n",
+        acceptance_checks=[
+            {"type": "file_exists", "path": "src/lucius/demo.py"},
+            {"type": "file_contains", "path": "src/lucius/demo.py", "expected_text": "safe marker"},
+            {"type": "file_not_contains", "path": "src/lucius/demo.py", "expected_text": "forbidden marker"},
+        ],
+    )
+
+    result = ControlledCommitService(session).commit(_request(fixture))
+
+    assert result.status == "COMPLETED"
+    assert result.committed_paths == ["src/lucius/demo.py"]
+    record = session.get(ControlledCommitORM, result.record_id)
+    assert [item["type"] for item in record.deterministic_acceptance_evidence] == [
+        "deterministic_acceptance_file_exists",
+        "deterministic_acceptance_file_contains",
+        "deterministic_acceptance_file_not_contains",
+    ]
+
+
 
 def test_controlled_commit_preserves_protected_untracked_state_and_commits_only_authorized_path(session, tmp_path):
     fixture = _fixture(session, tmp_path)
@@ -433,6 +457,7 @@ def _fixture(
     allowed_actions: list[str] | None = None,
     extra_affected_files: list[dict[str, str]] | None = None,
     extra_acceptance_checks: list[dict[str, str]] | None = None,
+    acceptance_checks: list[dict[str, str]] | None = None,
     with_remote: bool = False,
 ) -> _Fixture:
     repo = make_git_repo(tmp_path / "canonical")
@@ -502,7 +527,7 @@ def _fixture(
         updated_at=utc_now(),
     )
     affected_files = [{"path": affected_path or path}, *(extra_affected_files or [])]
-    acceptance_checks = [
+    checks = acceptance_checks or [
         {"type": "exact_file_content", "path": check_path or path, "expected_text": expected},
         *(extra_acceptance_checks or []),
     ]
@@ -530,7 +555,7 @@ def _fixture(
         affected_files=affected_files,
         steps=[],
         acceptance_coverage=[],
-        deterministic_acceptance_checks=acceptance_checks,
+        deterministic_acceptance_checks=checks,
         test_strategy=[],
         documentation_requirements=[],
         rollback_considerations=[],
@@ -567,7 +592,7 @@ def _fixture(
             "task_contract_version": contract.version,
             "required_authority_level": plan.required_authority_level,
             "affected_files": affected_files,
-            "deterministic_acceptance_checks": acceptance_checks,
+            "deterministic_acceptance_checks": checks,
         },
         frozen_at=utc_now(),
         frozen_by=Actor.LUCIUS.value,

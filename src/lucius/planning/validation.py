@@ -19,6 +19,10 @@ from lucius.planning.schemas import (
     PlanningBlocker,
     PlanningContext,
 )
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    normalize_deterministic_acceptance_checks,
+)
 from lucius.tasks.policy import AUTHORITY_RANK
 
 RISK_RANK = {
@@ -130,25 +134,22 @@ def _validate_deterministic_acceptance_checks(
     blockers: list[PlanningBlocker] = []
     affected_paths = {item.path for item in plan.affected_files}
 
-    for index, check in enumerate(plan.deterministic_acceptance_checks, start=1):
-        if check.type != "exact_file_content":
-            blockers.append(
-                PlanningBlocker(
-                    code=PlanningBlockerCode.ENGINEERING_PLAN_INVALID,
-                    message="Plan contains an unsupported deterministic acceptance check.",
-                    metadata={"index": index, "type": check.type},
-                )
+    try:
+        normalize_deterministic_acceptance_checks(
+            [
+                check.model_dump(mode="json", exclude_none=True)
+                for check in plan.deterministic_acceptance_checks
+            ],
+            authorized_paths=affected_paths,
+        )
+    except DeterministicAcceptanceError as error:
+        blockers.append(
+            PlanningBlocker(
+                code=PlanningBlockerCode.ENGINEERING_PLAN_INVALID,
+                message=error.message,
+                metadata={"code": error.code},
             )
-            continue
-
-        if check.path not in affected_paths:
-            blockers.append(
-                PlanningBlocker(
-                    code=PlanningBlockerCode.ENGINEERING_PLAN_INVALID,
-                    message="Deterministic acceptance check references a file outside affected_files.",
-                    metadata={"index": index, "path": check.path},
-                )
-            )
+        )
 
     return blockers
 

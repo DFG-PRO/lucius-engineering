@@ -40,7 +40,12 @@ from lucius.repositories.git_mutation import (
     verify_untracked_file_hashes,
     workspace_file_sha256,
 )
-from lucius.runtime.deterministic_acceptance import DeterministicAcceptanceError, verify_deterministic_acceptance
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    acceptance_check_paths,
+    normalize_deterministic_acceptance_checks,
+    verify_deterministic_acceptance,
+)
 
 
 @dataclass(frozen=True)
@@ -339,10 +344,13 @@ class ControlledCommitService:
             acceptance_checks,
             authorized_paths=set(authorized_paths),
         )
-        exact_content_paths = [check["path"] for check in acceptance_checks if check.get("type") == "exact_file_content"]
-        missing_checks = sorted(set(actual_changed) - set(exact_content_paths))
+        checked_paths = acceptance_check_paths(
+            acceptance_checks,
+            authorized_paths=set(authorized_paths),
+        )
+        missing_checks = sorted(set(actual_changed) - set(checked_paths))
         if missing_checks:
-            raise _CommitBlocked("CANONICAL_CHANGE_MISSING_EXACT_CONTENT_CHECK", {"paths": missing_checks})
+            raise _CommitBlocked("CANONICAL_CHANGE_MISSING_DETERMINISTIC_ACCEPTANCE_CHECK", {"paths": missing_checks})
 
         commit_message = _commit_message(request.commit_message, task.id)
         path_hashes = {path: workspace_file_sha256(canonical_root, path) for path in actual_changed}
@@ -544,28 +552,10 @@ def _acceptance_checks(freeze: PlanFreezeORM, authorized_paths: list[str]) -> li
     raw = payload.get("deterministic_acceptance_checks")
     if not isinstance(raw, list) or not raw:
         raise _CommitBlocked("FROZEN_DETERMINISTIC_ACCEPTANCE_REQUIRED", {})
-    authorized = set(authorized_paths)
-    checks: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            raise _CommitBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK", {})
-        if item.get("type") != "exact_file_content":
-            raise _CommitBlocked("UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK", {"type": item.get("type")})
-        try:
-            path = validate_relative_repo_path(item.get("path"))
-        except GitMutationError as exc:
-            raise _CommitBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH", {"message": exc.message}) from exc
-        if path not in authorized:
-            raise _CommitBlocked("DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES", {"path": path})
-        if path in seen:
-            raise _CommitBlocked("DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH", {"path": path})
-        expected_text = item.get("expected_text")
-        if not isinstance(expected_text, str):
-            raise _CommitBlocked("INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT", {"path": path})
-        seen.add(path)
-        checks.append({"type": "exact_file_content", "path": path, "expected_text": expected_text})
-    return checks
+    try:
+        return normalize_deterministic_acceptance_checks(raw, authorized_paths=set(authorized_paths))
+    except DeterministicAcceptanceError as exc:
+        raise _CommitBlocked(_frozen_acceptance_error_code(exc), {"message": exc.message}) from exc
 
 
 def _commit_message(message: str | None, task_id: str) -> str:
@@ -600,3 +590,15 @@ def _safe_current_head(root: Path) -> str | None:
         return current_head(root)
     except GitMutationError:
         return None
+
+
+def _frozen_acceptance_error_code(error: DeterministicAcceptanceError) -> str:
+    return {
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECKS": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECKS",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_CHECK": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "UNSUPPORTED_DETERMINISTIC_ACCEPTANCE_CHECK": "UNSUPPORTED_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_PATH": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_PATH",
+        "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_SCOPE": "DETERMINISTIC_ACCEPTANCE_PATH_OUTSIDE_AFFECTED_FILES",
+        "DUPLICATE_DETERMINISTIC_ACCEPTANCE_CHECK": "DUPLICATE_FROZEN_DETERMINISTIC_ACCEPTANCE_CHECK",
+        "INVALID_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT": "INVALID_FROZEN_DETERMINISTIC_ACCEPTANCE_EXPECTED_TEXT",
+    }.get(error.code, error.code)

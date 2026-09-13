@@ -12,7 +12,7 @@ from lucius.pilots.cli import _ollama_allowed_workspace_roots
 from lucius.runtime.ollama import OllamaExecutionProvider, OllamaHttpResponse
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
-from lucius.runtime.schemas import RuntimeExecutionContext, RuntimeExecutionRequest
+from lucius.runtime.schemas import RuntimeExecutionContext, RuntimeExecutionRequest, RuntimeRetryability
 
 
 def test_ollama_provider_applies_model_generated_file_change_in_isolated_workspace(tmp_path):
@@ -189,6 +189,7 @@ def test_ollama_provider_rejects_wrong_content_even_when_model_claims_pass(tmp_p
 
     assert result.status == "FAILED"
     assert result.failure_class == "DETERMINISTIC_MUTATION_VERIFICATION_FAILED"
+    assert result.retryability == RuntimeRetryability.NON_RETRYABLE
     assert "Exact file content acceptance failed" in result.provider_error_metadata["message"]
 
     # The fake model explicitly claimed PASS, but Lucius-owned verification wins.

@@ -19,6 +19,17 @@ from lucius.persistence.orm import (
     RepositoryRegistrationORM,
     TaskContractORM,
     TaskORM,
+    utc_now,
+)
+from lucius.persistence.json_fields import set_json_field
+from lucius.repositories.git_mutation import (
+    GitMutationError,
+    capture_untracked_file_hashes,
+    changed_paths,
+    current_head,
+    staged_paths,
+    tracked_worktree_paths,
+    verify_untracked_file_hashes,
 )
 from lucius.runtime.schemas import RuntimeExecutionOutcome, RuntimeLoopConfig, RuntimeLoopStatus
 
@@ -67,6 +78,9 @@ class NightShiftCycleRecord:
     commit_reason: str | None = None
     resulting_commit_sha: str | None = None
     manual_reconciliation_required: bool = False
+    containment_status: str | None = None
+    containment_reason: str | None = None
+    candidate_quarantined: bool = False
     hard_stop_reason: str | None = None
 
 
@@ -79,6 +93,8 @@ class NightShiftResult:
     tasks_completed: int = 0
     tasks_blocked: int = 0
     tasks_escalated: int = 0
+    contained_task_local_failures: int = 0
+    hard_stop_failures: int = 0
     workflows_processed: list[str] = field(default_factory=list)
     provider_ids: list[str] = field(default_factory=list)
     l1_integrations_attempted: int = 0
@@ -149,6 +165,7 @@ class NightShiftSupervisor:
             result.cycles.append(cycle)
             result.cycles_attempted += 1
             self._audit("NIGHT_SHIFT_CYCLE_STARTED", "STARTED", {"cycle_number": cycle.cycle_number})
+            containment_snapshots = self._capture_containment_snapshots(config.workflow_ids)
 
             runtime_result = self.runtime_service.run(
                 RuntimeLoopConfig(
@@ -174,10 +191,12 @@ class NightShiftSupervisor:
 
             if runtime_result.escalations or runtime_result.status == RuntimeLoopStatus.ESCALATED:
                 cycle.hard_stop_reason = "RUNTIME_ESCALATION"
+                result.hard_stop_failures += 1
                 return self._hard_stop(result, started, "RUNTIME_ESCALATION", cycle)
 
             if not runtime_result.task_records:
                 cycle.hard_stop_reason = runtime_result.stopped_reason or "RUNTIME_RESULT_WITHOUT_TASK_RECORD"
+                result.hard_stop_failures += 1
                 return self._hard_stop(result, started, cycle.hard_stop_reason, cycle)
 
             record = runtime_result.task_records[-1]
@@ -189,12 +208,23 @@ class NightShiftSupervisor:
             _extend_unique(result.workflows_processed, [record.workflow_id])
 
             if record.outcome != RuntimeExecutionOutcome.COMPLETED:
+                containment = self._prove_contained_failure(record.workflow_id, containment_snapshots.get(record.workflow_id))
+                cycle.containment_status = containment.status
+                cycle.containment_reason = containment.reason
+                cycle.candidate_quarantined = containment.candidate_quarantined
+                if containment.status != "CONTAINED":
+                    reason = containment.reason or "TASK_FAILURE_CONTAINMENT_NOT_PROVEN"
+                    cycle.hard_stop_reason = reason
+                    result.hard_stop_failures += 1
+                    return self._hard_stop(result, started, reason, cycle)
+                result.contained_task_local_failures += 1
                 self._audit_cycle(cycle, "TASK_LOCAL_NON_COMPLETION")
                 continue
 
             context = self._promotion_context(record.workflow_id, config)
             if isinstance(context, str):
                 cycle.hard_stop_reason = context
+                result.hard_stop_failures += 1
                 return self._hard_stop(result, started, context, cycle)
 
             integration = self.integration_service.integrate(
@@ -213,12 +243,14 @@ class NightShiftSupervisor:
                 result.l1_integrations_failed += 1
                 reason = _integration_stop_reason(integration)
                 cycle.hard_stop_reason = reason
+                result.hard_stop_failures += 1
                 return self._hard_stop(result, started, reason, cycle)
             result.l1_integrations_succeeded += 1
 
             if not context.create_commit_authorized:
                 reason = "CREATE_COMMIT_NOT_AUTHORIZED"
                 cycle.hard_stop_reason = reason
+                result.hard_stop_failures += 1
                 return self._hard_stop(result, started, reason, cycle)
 
             commit = self.commit_service.commit(
@@ -258,7 +290,98 @@ class NightShiftSupervisor:
             else:
                 reason = "CONTROLLED_COMMIT_FAILED"
             cycle.hard_stop_reason = reason
+            result.hard_stop_failures += 1
             return self._hard_stop(result, started, reason, cycle)
+
+    def _capture_containment_snapshots(self, workflow_ids: list[str] | None) -> dict[str, "_ContainmentSnapshot"]:
+        snapshots: dict[str, _ContainmentSnapshot] = {}
+        rows = self.session.query(PersistentWorkflowORM).order_by(PersistentWorkflowORM.id).all()
+        allowed = set(workflow_ids or [])
+        for workflow in rows:
+            if allowed and workflow.id not in allowed:
+                continue
+            freeze = self.session.get(PlanFreezeORM, workflow.plan_freeze_id) if workflow.plan_freeze_id else None
+            repository = self.session.get(RepositoryRegistrationORM, workflow.repository_id) if workflow.repository_id else None
+            if freeze is None or repository is None or not workflow.worktree_path:
+                continue
+            try:
+                canonical = Path(repository.location).resolve()
+                candidate = Path(workflow.worktree_path).resolve()
+                snapshots[workflow.id] = _ContainmentSnapshot(
+                    workflow_id=workflow.id,
+                    canonical_repository_path=canonical,
+                    candidate_workspace_path=candidate,
+                    baseline_commit=freeze.commit_sha,
+                    canonical_head=current_head(canonical),
+                    canonical_tracked_paths=tracked_worktree_paths(canonical),
+                    canonical_staged_paths=staged_paths(canonical),
+                    protected_untracked_hashes=capture_untracked_file_hashes(canonical),
+                    candidate_head=current_head(candidate),
+                    candidate_changed_paths=changed_paths(candidate),
+                )
+            except GitMutationError:
+                continue
+        return snapshots
+
+    def _prove_contained_failure(
+        self,
+        workflow_id: str,
+        snapshot: "_ContainmentSnapshot | None",
+    ) -> "_ContainmentResult":
+        if snapshot is None:
+            return _ContainmentResult("NOT_CONTAINED", "CONTAINMENT_SNAPSHOT_MISSING")
+        if not snapshot.baseline_commit:
+            return _ContainmentResult("NOT_CONTAINED", "FROZEN_BASELINE_COMMIT_REQUIRED")
+        if snapshot.canonical_head != snapshot.baseline_commit:
+            return _ContainmentResult("NOT_CONTAINED", "CANONICAL_HEAD_UNSAFE_BEFORE_FAILURE")
+        if snapshot.canonical_tracked_paths or snapshot.canonical_staged_paths:
+            return _ContainmentResult("NOT_CONTAINED", "CANONICAL_DIRTY_BEFORE_FAILURE")
+        if snapshot.candidate_head != snapshot.baseline_commit or snapshot.candidate_changed_paths:
+            return _ContainmentResult("NOT_CONTAINED", "CANDIDATE_UNSAFE_BEFORE_FAILURE")
+
+        try:
+            if current_head(snapshot.canonical_repository_path) != snapshot.baseline_commit:
+                return _ContainmentResult("NOT_CONTAINED", "FAILED_TASK_ADVANCED_CANONICAL_HEAD")
+            if staged_paths(snapshot.canonical_repository_path):
+                return _ContainmentResult("NOT_CONTAINED", "FAILED_TASK_LEFT_CANONICAL_STAGED_CHANGES")
+            tracked = tracked_worktree_paths(snapshot.canonical_repository_path)
+            if tracked:
+                return _ContainmentResult("NOT_CONTAINED", "FAILED_TASK_LEFT_CANONICAL_TRACKED_CHANGES")
+            verify_untracked_file_hashes(snapshot.canonical_repository_path, snapshot.protected_untracked_hashes)
+            observed = changed_paths(snapshot.canonical_repository_path)
+            unexpected = sorted(set(observed) - set(snapshot.protected_untracked_hashes))
+            if unexpected:
+                return _ContainmentResult("NOT_CONTAINED", "FAILED_TASK_LEFT_UNAUTHORIZED_CANONICAL_CHANGES")
+            candidate_head = current_head(snapshot.candidate_workspace_path)
+            candidate_changes = changed_paths(snapshot.candidate_workspace_path)
+        except GitMutationError as error:
+            return _ContainmentResult("NOT_CONTAINED", f"CONTAINMENT_GIT_CHECK_FAILED:{error.code}")
+
+        if candidate_head != snapshot.candidate_head:
+            self._quarantine_failed_candidate(workflow_id, "FAILED_TASK_CHANGED_CANDIDATE_HEAD")
+            return _ContainmentResult("CONTAINED", "FAILED_CANDIDATE_QUARANTINED", candidate_quarantined=True)
+        if candidate_changes:
+            self._quarantine_failed_candidate(workflow_id, "FAILED_TASK_LEFT_CANDIDATE_CHANGES")
+            return _ContainmentResult("CONTAINED", "FAILED_CANDIDATE_QUARANTINED", candidate_quarantined=True)
+        return _ContainmentResult("CONTAINED", "TASK_LOCAL_FAILURE_CONTAINED")
+
+    def _quarantine_failed_candidate(self, workflow_id: str, reason: str) -> None:
+        workflow = self.session.get(PersistentWorkflowORM, workflow_id)
+        if workflow is None:
+            return
+        history = list(workflow.checkpoint_history or [])
+        history.append(
+            {
+                "event": "FAILED_CANDIDATE_QUARANTINED",
+                "reason": reason,
+                "timestamp": utc_now().isoformat(),
+            }
+        )
+        workflow.workflow_state = PersistentWorkflowState.BLOCKED.value
+        workflow.active_task_id = None
+        set_json_field(workflow, "checkpoint_history", history)
+        workflow.updated_at = utc_now()
+        self.session.flush()
 
     def _promotion_context(self, workflow_id: str, config: NightShiftConfig) -> "_PromotionContext | str":
         workflow = self.session.get(PersistentWorkflowORM, workflow_id)
@@ -334,6 +457,27 @@ class _PromotionContext:
     candidate_workspace_path: Path
     expected_baseline_commit: str
     create_commit_authorized: bool
+
+
+@dataclass(frozen=True)
+class _ContainmentSnapshot:
+    workflow_id: str
+    canonical_repository_path: Path
+    candidate_workspace_path: Path
+    baseline_commit: str | None
+    canonical_head: str
+    canonical_tracked_paths: list[str]
+    canonical_staged_paths: list[str]
+    protected_untracked_hashes: dict[str, str]
+    candidate_head: str
+    candidate_changed_paths: list[str]
+
+
+@dataclass(frozen=True)
+class _ContainmentResult:
+    status: str
+    reason: str | None = None
+    candidate_quarantined: bool = False
 
 
 def _create_commit_authorized(session: Session, task: TaskORM, plan: EngineeringPlanORM) -> bool:

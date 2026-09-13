@@ -121,9 +121,10 @@ def test_night_shift_max_wall_clock_bound_uses_clock(session):
 
 
 def test_night_shift_task_local_failure_continues_to_independent_work(session, tmp_path):
+    failed = _empirical_fixture(session, tmp_path, suffix="FAILED", expected="VALUE = 'FAILED'\n", apply_candidate_mutation=False)
     fixture = _fixture(session, tmp_path)
     runtime = _RuntimeDouble([
-        _runtime_result("LWORK_FAILED", "FAIL", completed=False),
+        _runtime_result(failed.workflow_id, "FAIL", completed=False, project_id=failed.project_id),
         _runtime_result(fixture.workflow_id, "OK", completed=True),
         ExecutionRuntimeLoopResult(status=RuntimeLoopStatus.IDLE, stopped_reason="NO_ELIGIBLE_MULTI_PROJECT_WORK"),
     ])
@@ -137,7 +138,68 @@ def test_night_shift_task_local_failure_continues_to_independent_work(session, t
 
     assert result.status == NightShiftStatus.CLEAN_TERMINATION
     assert result.tasks_blocked == 1
+    assert result.contained_task_local_failures == 1
     assert result.l1_integrations_attempted == 1
+    assert run_git(failed.canonical, "rev-parse", "HEAD") == failed.baseline
+    assert run_git(failed.canonical, "status", "--short") == ""
+
+
+def test_night_shift_contained_failure_preserves_protected_untracked_state(session, tmp_path):
+    failed = _empirical_fixture(session, tmp_path, suffix="FAILED", expected="VALUE = 'FAILED'\n", apply_candidate_mutation=False)
+    protected = failed.canonical / "analysis" / "human.txt"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text("human-owned\n", encoding="utf-8")
+    protected_before = protected.read_bytes()
+    fixture = _fixture(session, tmp_path, suffix="OK")
+    runtime = _RuntimeDouble([
+        _runtime_result(failed.workflow_id, "FAIL", completed=False, project_id=failed.project_id),
+        _runtime_result(fixture.workflow_id, "OK", completed=True),
+        ExecutionRuntimeLoopResult(status=RuntimeLoopStatus.IDLE, stopped_reason="NO_ELIGIBLE_MULTI_PROJECT_WORK"),
+    ])
+
+    result = NightShiftSupervisor(
+        session,
+        runtime_service=runtime,
+        integration_service=_IntegrationDouble([CanonicalIntegrationResult(status="COMPLETED", workflow_id=fixture.workflow_id)]),
+        commit_service=_CommitDouble([ControlledCommitResult(status="COMPLETED", workflow_id=fixture.workflow_id, resulting_commit="1" * 40)]),
+    ).run(NightShiftConfig(max_tasks=5, max_commits=5))
+
+    assert result.status == NightShiftStatus.CLEAN_TERMINATION
+    assert result.contained_task_local_failures == 1
+    assert protected.read_bytes() == protected_before
+    assert run_git(failed.canonical, "rev-parse", "HEAD") == failed.baseline
+    assert run_git(failed.canonical, "status", "--short") == "?? analysis/"
+
+
+def test_night_shift_uncontained_canonical_mutation_hard_stops(session, tmp_path):
+    failed = _empirical_fixture(session, tmp_path, suffix="FAILED", expected="VALUE = 'FAILED'\n", apply_candidate_mutation=False)
+    fixture = _fixture(session, tmp_path, suffix="OK")
+
+    def mutate_canonical_before_failure():
+        (failed.canonical / "surprise.txt").write_text("unsafe\n", encoding="utf-8")
+
+    runtime = _RuntimeDouble(
+        [
+            _runtime_result(failed.workflow_id, "FAIL", completed=False, project_id=failed.project_id),
+            _runtime_result(fixture.workflow_id, "OK", completed=True),
+        ],
+        side_effects=[mutate_canonical_before_failure, None],
+    )
+
+    result = NightShiftSupervisor(
+        session,
+        runtime_service=runtime,
+        integration_service=_IntegrationDouble([]),
+        commit_service=_CommitDouble([]),
+    ).run(NightShiftConfig(max_tasks=5, max_commits=5))
+
+    assert result.status == NightShiftStatus.HARD_STOP
+    assert result.stop_reason == "FAILED_TASK_LEFT_UNAUTHORIZED_CANONICAL_CHANGES"
+    assert result.contained_task_local_failures == 0
+    assert result.hard_stop_failures == 1
+    assert len(runtime.configs) == 1
+    assert run_git(failed.canonical, "rev-parse", "HEAD") == failed.baseline
+    assert run_git(failed.canonical, "status", "--short") == "?? surprise.txt"
 
 
 def test_night_shift_runtime_escalation_hard_stops(session):
@@ -391,14 +453,19 @@ def test_night_shift_empirical_hard_stop_after_second_cycle_prevents_third_runti
 
 
 class _RuntimeDouble:
-    def __init__(self, results):
+    def __init__(self, results, *, side_effects=None):
         self.results = list(results)
+        self.side_effects = list(side_effects or [])
         self.configs = []
 
     def run(self, config):
         self.configs.append(config)
         if not self.results:
             raise AssertionError("Runtime double exhausted")
+        if self.side_effects:
+            side_effect = self.side_effects.pop(0)
+            if side_effect is not None:
+                side_effect()
         return self.results.pop(0)
 
 
@@ -643,6 +710,7 @@ def _empirical_fixture(
     suffix: str,
     expected: str,
     with_remote: bool = True,
+    apply_candidate_mutation: bool = True,
 ) -> _EmpiricalFixture:
     project_id = f"LPROJ_NS_EMP_{suffix}"
     repo_id = f"LREPO_NS_EMP_{suffix}"
@@ -665,9 +733,10 @@ def _empirical_fixture(
 
     candidate = tmp_path / f"empirical-candidate-{suffix}"
     run_git(tmp_path, "clone", str(canonical), str(candidate))
-    target = candidate / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(expected, encoding="utf-8")
+    if apply_candidate_mutation:
+        target = candidate / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(expected, encoding="utf-8")
 
     project = ProjectORM(
         id=project_id,
