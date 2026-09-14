@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +28,11 @@ from lucius.planning.schemas import (
     PlanningContext,
     PlanStep,
     TestRecommendation,
+)
+from lucius.repositories.git_mutation import GitMutationError, validate_relative_repo_path
+from lucius.runtime.deterministic_acceptance import (
+    DeterministicAcceptanceError,
+    normalize_deterministic_acceptance_checks,
 )
 from lucius.runtime.schemas import (
     ExecutionAdapterResult,
@@ -312,7 +317,18 @@ def _default_model_plan(
     contract: TaskContractORM | None = None,
 ) -> ModelEngineeringPlanOutput:
     task_id = workflow.task_id or workflow.id
-    affected_files = _runtime_affected_files(workflow, contract)
+    queue_items = _runtime_queue_items(workflow)
+    read_only = _runtime_workflow_is_read_only(queue_items)
+    affected_files = _runtime_affected_files(queue_items)
+    affected_paths = {item.path for item in affected_files}
+    deterministic_checks = _runtime_deterministic_acceptance_checks(
+        queue_items,
+        authorized_paths=affected_paths,
+    )
+    if not read_only and not affected_files:
+        raise ValueError("Runtime mutation planning requires explicit allowed_mutation_paths or affected_files.")
+    if _runtime_workflow_is_unattended(queue_items) and not read_only and not deterministic_checks:
+        raise ValueError("Unattended runtime mutation planning requires explicit deterministic_acceptance_checks.")
     return ModelEngineeringPlanOutput(
         summary=f"Runtime plan for {task_id}",
         objective=workflow.objective,
@@ -320,6 +336,7 @@ def _default_model_plan(
         required_authority_level=AuthorityLevel.L1,
         affected_components=["native_execution_runtime_loop"],
         affected_files=affected_files,
+        deterministic_acceptance_checks=deterministic_checks,
         steps=[
             PlanStep(
                 step_id="STEP-1",
@@ -368,23 +385,87 @@ def _workflow_title(workflow: PersistentWorkflowORM) -> str:
     return workflow.objective
 
 
-def _runtime_affected_files(
-    workflow: PersistentWorkflowORM,
-    contract: TaskContractORM | None,
-) -> list[AffectedFilePlan]:
-    paths = list(contract.documentation_targets or []) if contract else []
-    if not paths:
-        paths = [
-            str(item.get("path"))
-            for item in workflow.task_backlog or []
-            if isinstance(item, dict) and item.get("path")
-        ]
-    if not paths:
-        paths = ["docs/runtime.md"]
+def _runtime_queue_items(workflow: PersistentWorkflowORM) -> list[dict[str, Any]]:
+    return [dict(item) for item in workflow.task_backlog or [] if isinstance(item, dict)]
+
+
+def _runtime_affected_files(queue_items: list[dict[str, Any]]) -> list[AffectedFilePlan]:
+    paths: list[str] = []
+    for item in queue_items:
+        paths.extend(_explicit_mutation_paths_from_item(item))
     return [
         AffectedFilePlan(path=path, status=AffectedFileStatus.NEW_PROPOSED)
         for path in dict.fromkeys(paths)
     ]
+
+
+def _explicit_mutation_paths_from_item(item: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for key in ("allowed_mutation_paths", "affected_files"):
+        if key not in item or item[key] is None:
+            continue
+        value = item[key]
+        if not isinstance(value, list):
+            raise ValueError(f"Runtime queue item {key} must be a list.")
+        for entry in value:
+            raw_path = entry.get("path") if isinstance(entry, dict) else entry
+            try:
+                path = validate_relative_repo_path(raw_path)
+            except GitMutationError as exc:
+                raise ValueError(f"Runtime queue item contains invalid mutation path: {raw_path!r}") from exc
+            paths.append(path)
+    return paths
+
+
+def _runtime_deterministic_acceptance_checks(
+    queue_items: list[dict[str, Any]],
+    *,
+    authorized_paths: set[str],
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for item in queue_items:
+        raw_checks = item.get("deterministic_acceptance_checks", [])
+        if raw_checks in (None, []):
+            continue
+        if not isinstance(raw_checks, list):
+            raise ValueError("Runtime queue item deterministic_acceptance_checks must be a list.")
+        for raw_check in raw_checks:
+            if not isinstance(raw_check, dict):
+                raise ValueError("Runtime queue item deterministic_acceptance_checks entries must be objects.")
+            checks.append(_normalize_queue_acceptance_check_input(raw_check))
+    try:
+        return normalize_deterministic_acceptance_checks(checks, authorized_paths=authorized_paths)
+    except DeterministicAcceptanceError as exc:
+        raise ValueError(f"Runtime queue item deterministic_acceptance_checks are invalid: {exc.code}") from exc
+
+
+def _normalize_queue_acceptance_check_input(check: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(check)
+    if "expected_text" not in normalized and "text" in normalized:
+        normalized["expected_text"] = normalized.pop("text")
+    return normalized
+
+
+def _runtime_workflow_is_unattended(queue_items: list[dict[str, Any]]) -> bool:
+    return any(
+        item.get("unattended") is True
+        or item.get("unattended_execution") is True
+        or item.get("unattended_eligible") is True
+        for item in queue_items
+    )
+
+
+def _runtime_workflow_is_read_only(queue_items: list[dict[str, Any]]) -> bool:
+    return bool(queue_items) and all(_runtime_item_is_read_only(item) for item in queue_items)
+
+
+def _runtime_item_is_read_only(item: dict[str, Any]) -> bool:
+    if item.get("read_only") is True or item.get("mutation_allowed") is False:
+        return True
+    task_type = str(item.get("task_type") or item.get("execution_mode") or "").strip().lower()
+    if task_type in {"inspection", "inspection_reasoning", "reasoning", "read_only", "read-only"}:
+        return True
+    return False
 
 
 def _active_contract(session: Session, task_id: str) -> TaskContractORM | None:

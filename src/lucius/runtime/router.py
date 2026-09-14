@@ -695,6 +695,8 @@ def _unattended_ineligibility_reasons(
         missing_model_capabilities = sorted(set(request.required_capabilities) - set(profile.supported_capabilities))
         if missing_model_capabilities:
             reasons.append("MODEL_LACKS_REQUIRED_CAPABILITY")
+        if _requires_mutation(request) and not profile.unattended_mutation_eligible:
+            reasons.append("MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION")
         if _requires_mutation(request) and not profile.supports_mutation:
             reasons.append("MODEL_LACKS_REQUIRED_CAPABILITY")
         if _complexity_rank(request.task_complexity) > _complexity_rank(profile.max_task_complexity):
@@ -705,8 +707,11 @@ def _unattended_ineligibility_reasons(
             reasons.append("TASK_RISK_EXCEEDS_UNATTENDED_POLICY")
         if profile.deterministic_verification_required and not request.context_limits.get("deterministic_verification"):
             reasons.append("DETERMINISTIC_VERIFICATION_REQUIRED")
-        if _is_evidence_sensitive_request(request) and not request.context_limits.get("evidence_reference_validation_required"):
-            reasons.append("EVIDENCE_VALIDATION_REQUIRED")
+        if _is_evidence_sensitive_request(request):
+            if not profile.evidence_sensitive_suitable:
+                reasons.append("MODEL_NOT_QUALIFIED_FOR_EVIDENCE_SENSITIVE_WORK")
+            elif not request.context_limits.get("evidence_reference_validation_required"):
+                reasons.append("EVIDENCE_VALIDATION_REQUIRED")
         timeout = request.timeout_seconds or profile.default_timeout_seconds
         if profile.max_timeout_seconds is not None and timeout is not None and timeout > profile.max_timeout_seconds:
             reasons.append("TIMEOUT_BUDGET_EXCEEDS_MODEL_PROFILE")

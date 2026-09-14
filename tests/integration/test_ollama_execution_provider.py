@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from argparse import Namespace
+import os
 import subprocess
 from urllib import error
 
 import pytest
 from sqlalchemy import select
 
-from lucius.persistence.orm import ModelExecutionORM, PlanFreezeORM
+from lucius.persistence.orm import AuditEventORM, ModelExecutionORM, PlanFreezeORM
 from lucius.pilots.cli import _ollama_allowed_workspace_roots
 from lucius.runtime.ollama import OllamaExecutionProvider, OllamaHttpResponse
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
@@ -209,6 +210,60 @@ def test_ollama_provider_rejects_wrong_content_even_when_model_claims_pass(tmp_p
     assert completed.stdout == ""
 
 
+def test_ollama_provider_preserves_command_failure_diagnostics_and_rolls_back(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    _add_tracked_python_runtime(tmp_path)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_profitability.py").write_text(
+        (
+            "import sys\n\n"
+            "def test_command_diagnostic_failure():\n"
+            "    print('COMMAND_STDOUT_MARKER')\n"
+            "    print('COMMAND_STDERR_MARKER', file=sys.stderr)\n"
+            "    assert False\n"
+        ),
+        encoding="utf-8",
+    )
+    _git(tmp_path, ["add", "tests/test_profitability.py"])
+    _git(tmp_path, ["commit", "-m", "add failing command verifier"])
+    provider = FakeOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(
+        update={
+            "deterministic_acceptance_checks": [
+                {
+                    "type": "command_succeeds",
+                    "argv": [".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-s", "-q"],
+                    "timeout_seconds": 10,
+                }
+            ]
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "DETERMINISTIC_MUTATION_VERIFICATION_FAILED"
+    assert result.verification
+    diagnostic = result.provider_error_metadata["deterministic_acceptance_diagnostic"]
+    assert diagnostic["type"] == "deterministic_acceptance_command_succeeds"
+    assert diagnostic["argv"] == [".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-s", "-q"]
+    assert diagnostic["exit_code"] == 1
+    assert "COMMAND_STDOUT_MARKER" in diagnostic["stdout"]
+    assert "COMMAND_STDERR_MARKER" in diagnostic["stderr"]
+    assert result.verification[0] == diagnostic
+    assert not (tmp_path / "provider-proof.txt").exists()
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+
+
 def test_ollama_provider_fails_when_post_write_git_state_contains_unexpected_path(tmp_path):
     _prepare_git_workspace(tmp_path)
     provider = UnexpectedSideEffectOllamaProvider(tmp_path)
@@ -356,7 +411,7 @@ def test_router_rejects_unattended_mutation_without_frozen_acceptance_before_pro
     assert rows == []
 
 
-def test_router_allows_unattended_ollama_with_explicit_allowed_root(session, tmp_path):
+def test_router_rejects_qwen3_8b_unattended_mutation_even_with_explicit_allowed_root(session, tmp_path):
     _prepare_git_workspace(tmp_path)
     _install_plan_freeze(session)
     provider = FakeOllamaProvider(tmp_path)
@@ -365,9 +420,16 @@ def test_router_allows_unattended_ollama_with_explicit_allowed_root(session, tmp
         _unattended_context(tmp_path)
     )
 
-    assert result.outcome == "COMPLETED"
-    assert provider.generate_called is True
-    assert (tmp_path / "provider-proof.txt").exists()
+    assert result.outcome == "FAILED"
+    assert result.blocker_category == "NO_ELIGIBLE_PROVIDER"
+    assert provider.generate_called is False
+    candidates = session.scalars(
+        select(AuditEventORM)
+        .where(AuditEventORM.event_type == "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED")
+        .order_by(AuditEventORM.id.desc())
+    ).first()
+    assert candidates is not None
+    assert "MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION" in candidates.event_metadata["candidates"][0]["reasons"]
 
 
 def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
@@ -391,10 +453,11 @@ def test_ollama_prompt_includes_schema_constrained_skeleton(tmp_path):
     assert provider.last_payload is not None
     assert "Schema-constrained output skeleton follows" in provider.last_payload["prompt"]
     assert "DERIVED_VALUE: NOT_ESTABLISHED" in provider.last_payload["prompt"]
-    assert '"files":[{"path":"relative/path","content":"exact file contents"}]' in provider.last_payload["prompt"]
+    assert '"edits":[{"path":"relative/path","old":"exact existing fragment","new":"replacement fragment"}]' in provider.last_payload["prompt"]
     assert "Frozen deterministic acceptance checks:" in provider.last_payload["prompt"]
     assert '"expected_text":"created by local ollama\\n"' in provider.last_payload["prompt"]
     assert provider.last_payload["options"]["num_predict"] == 256
+    assert provider.last_payload["think"] is False
 
 
 def test_ollama_mutation_prompt_includes_existing_authorized_file_content(tmp_path):
@@ -654,6 +717,21 @@ def test_ollama_qwen3_coder_profile_is_supervised_only(tmp_path):
     assert profile.schema_constrained_required is True
 
 
+def test_ollama_qwen3_8b_profile_disallows_unattended_mutation_but_keeps_read_only_support(tmp_path):
+    provider = OllamaExecutionProvider(model="qwen3:8b", allowed_workspace_roots=[tmp_path])
+
+    profile = provider.registration.models[0].capability_profile
+    assert profile is not None
+    assert profile.execution_tier == "LOCAL_TIER_1"
+    assert profile.status == "QUALIFIED_WITH_CONSTRAINTS"
+    assert profile.unattended_eligible is True
+    assert profile.unattended_mutation_eligible is False
+    assert "inspection_reasoning" in profile.supported_capabilities
+    assert provider.registration.available is True
+    assert "LWORK_000147" in " ".join(profile.policy_notes)
+    assert "LWORK_000148" in " ".join(profile.policy_notes)
+
+
 class FakeOllamaProvider(OllamaExecutionProvider):
     def __init__(
         self,
@@ -808,6 +886,12 @@ def _write_and_commit(workspace: Path, path: str, content: str) -> None:
     _git(workspace, ["commit", "-m", f"add {path}"])
 
 
+def _add_tracked_python_runtime(workspace: Path) -> None:
+    os.symlink(Path.cwd() / ".venv", workspace / ".venv")
+    _git(workspace, ["add", ".venv"])
+    _git(workspace, ["commit", "-m", "add local python runtime"])
+
+
 def _install_plan_freeze(session) -> None:
     session.add(
         PlanFreezeORM(
@@ -898,3 +982,215 @@ def _unattended_context(workspace: Path) -> RuntimeExecutionContext:
         "context_limits": {"deterministic_verification": True},
     }
     return context.model_copy(update={"queue_item": queue_item})
+
+def test_ollama_mutation_request_uses_structured_json_schema(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "COMPLETED"
+    schema = provider.last_payload["format"]
+    assert isinstance(schema, dict)
+    assert schema["type"] == "object"
+    assert schema["required"] == ["edits"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["edits"]["type"] == "array"
+    item_schema = schema["properties"]["edits"]["items"]
+    assert item_schema["required"] == ["path", "old", "new"]
+    assert item_schema["additionalProperties"] is False
+
+
+
+def test_ollama_compact_edit_replaces_unique_authorized_fragment(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    target = tmp_path / "provider-proof.txt"
+    target.write_text("alpha\nold value\nomega\n", encoding="utf-8")
+    _git(tmp_path, ["add", "provider-proof.txt"])
+    _git(tmp_path, ["commit", "-m", "compact edit baseline"])
+
+    provider = FakeOllamaProvider(tmp_path)
+    written = provider._apply_file_changes(
+        tmp_path,
+        {
+            "edits": [
+                {
+                    "path": "provider-proof.txt",
+                    "old": "old value",
+                    "new": "new value",
+                }
+            ]
+        },
+        ["provider-proof.txt"],
+    )
+
+    assert target.read_text(encoding="utf-8") == "alpha\nnew value\nomega\n"
+    assert written[0]["path"] == "provider-proof.txt"
+
+
+def test_ollama_compact_edit_rejects_no_effect_change(tmp_path):
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    target = workspace / "example.txt"
+    target.write_text("alpha\nbeta\n")
+
+    provider = OllamaExecutionProvider()
+
+    try:
+        provider._materialize_compact_edits(
+            workspace,
+            [
+                {
+                    "path": "example.txt",
+                    "old": "beta",
+                    "new": "beta",
+                }
+            ],
+            ["example.txt"],
+        )
+    except Exception as exc:
+        assert getattr(exc, "failure_class", None) == "NO_EFFECT_COMPACT_EDIT"
+    else:
+        raise AssertionError("Expected NO_EFFECT_COMPACT_EDIT")
+
+
+def test_ollama_compact_edit_rejects_non_unique_fragment(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    target = tmp_path / "provider-proof.txt"
+    target.write_text("same\nsame\n", encoding="utf-8")
+    _git(tmp_path, ["add", "provider-proof.txt"])
+    _git(tmp_path, ["commit", "-m", "ambiguous compact edit baseline"])
+
+    provider = FakeOllamaProvider(tmp_path)
+    result = provider.invoke(
+        _request(tmp_path).model_copy(
+            update={
+                "metadata": {
+                    **_request(tmp_path).metadata,
+                }
+            }
+        )
+    )
+    assert result.status == "COMPLETED"
+
+    try:
+        provider._apply_file_changes(
+            tmp_path,
+            {
+                "edits": [
+                    {
+                        "path": "provider-proof.txt",
+                        "old": "same",
+                        "new": "different",
+                    }
+                ]
+            },
+            ["provider-proof.txt"],
+        )
+    except Exception as exc:
+        assert getattr(exc, "failure_class", None) == "COMPACT_EDIT_TARGET_MISMATCH"
+    else:
+        raise AssertionError("ambiguous compact edit should fail closed")
+
+
+def test_ollama_compact_edit_rejects_unauthorized_path(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path)
+
+    try:
+        provider._apply_file_changes(
+            tmp_path,
+            {
+                "edits": [
+                    {
+                        "path": "unauthorized.txt",
+                        "old": "",
+                        "new": "should never be written\n",
+                    }
+                ]
+            },
+            ["provider-proof.txt"],
+        )
+    except Exception as exc:
+        assert getattr(exc, "failure_class", None) == "MUTATION_SCOPE_VIOLATION"
+    else:
+        raise AssertionError("unauthorized compact edit should fail closed")
+
+    assert not (tmp_path / "unauthorized.txt").exists()
+
+
+def test_ollama_compact_edit_supports_new_authorized_file(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = FakeOllamaProvider(tmp_path)
+
+    written = provider._apply_file_changes(
+        tmp_path,
+        {
+            "edits": [
+                {
+                    "path": "new-file.txt",
+                    "old": "",
+                    "new": "created compactly\n",
+                }
+            ]
+        },
+        ["new-file.txt"],
+    )
+
+    assert (tmp_path / "new-file.txt").read_text(encoding="utf-8") == "created compactly\n"
+    assert written[0]["path"] == "new-file.txt"
+
+
+class TruncatedJsonOllamaProvider(FakeOllamaProvider):
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        assert path == "/api/generate"
+        self.generate_called = True
+        self.last_payload = payload
+        return OllamaHttpResponse(
+            status=200,
+            body={
+                "model": "qwen3:8b",
+                "done": False,
+                "done_reason": "length",
+                "eval_count": payload["options"]["num_predict"],
+                "response": '{"files":[{"path":"provider-proof.txt","content":"unfinished',
+            },
+        )
+
+
+def test_ollama_truncated_json_has_distinct_failure_class(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = TruncatedJsonOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "OLLAMA_OUTPUT_TRUNCATED"
+    assert result.retryability.value == "RETRYABLE_OR_FAILOVERABLE"
+    assert "eval_count=256" in result.mutation_summary
+    assert "num_predict=256" in result.mutation_summary
+
+
+class BrokenBraceJsonOllamaProvider(FakeOllamaProvider):
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        self.generate_called = True
+        self.last_payload = payload
+        return OllamaHttpResponse(
+            status=200,
+            body={
+                "model": "qwen3:8b",
+                "done": True,
+                "eval_count": 20,
+                "response": 'prefix {"files":[}',
+            },
+        )
+
+
+def test_ollama_broken_brace_json_remains_fail_closed(tmp_path):
+    _prepare_git_workspace(tmp_path)
+    provider = BrokenBraceJsonOllamaProvider(tmp_path)
+
+    result = provider.invoke(_request(tmp_path))
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MALFORMED_OLLAMA_JSON"

@@ -21,7 +21,6 @@ from lucius.persistence.orm import (
     TaskORM,
     utc_now,
 )
-from lucius.persistence.json_fields import set_json_field
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.tasks.service import TaskService
 from lucius.runtime.adapters import RuntimePlanningAdapter
@@ -297,24 +296,19 @@ class ExecutionRuntimeLoopService:
         if evaluation is None:
             return
         candidate = evaluation.candidate
-        workflow = self.session.get(PersistentWorkflowORM, candidate.workflow_id)
-        if workflow is None:
-            return
-        items = [dict(item) for item in workflow.task_backlog]
-        try:
-            item = _queue_item(items, candidate.item_id)
-        except ExecutionRuntimeLoopError:
-            return
-        item["state"] = QueueWorkItemState.WAITING_HUMAN.value
-        item["version"] = int(item.get("version", 0)) + 1
-        item["updated_at"] = utc_now().isoformat()
-        item["blocking_reason"] = reason
-        item["blocker_category"] = BlockerCode.AUTHORITY_INSUFFICIENT.value
-        item["resume_condition"] = "Run canonical readiness/release validation successfully before retrying dispatch."
-        workflow.active_task_id = None
-        set_json_field(workflow, "task_backlog", items)
-        workflow.updated_at = utc_now()
-        self.session.flush()
+        self.queue.block_dispatch_selected_item(
+            candidate.workflow_id,
+            candidate.item_id,
+            expected_state=candidate.state,
+            expected_item_version=candidate.item_version,
+            blocking_state=QueueWorkItemState.WAITING_HUMAN,
+            blocking_reason=reason,
+            blocker_category=BlockerCode.AUTHORITY_INSUFFICIENT.value,
+            resume_condition="Run canonical readiness/release validation successfully before retrying dispatch.",
+            work_completed=[],
+            relevant_artifacts=[],
+            actor=self.actor,
+        )
         self.audit.record(
             event_type="NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED",
             actor=self.actor.value,
@@ -422,6 +416,7 @@ class ExecutionRuntimeLoopService:
                 "retries": adapter_result.retries,
                 "escalations": adapter_result.escalations,
                 "fallback_used": adapter_result.fallback_used,
+                "provider_error_metadata": adapter_result.provider_error_metadata,
             },
         )
 

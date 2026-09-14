@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -31,13 +32,19 @@ _ALLOWED_PYTEST_OPTIONS = {
     "--maxfail=1",
 }
 _SHELL_METACHARS = set("|&;<>$`\\\n\r")
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b([A-Za-z0-9_.-]*(?:secret|token|api[_-]?key|apikey|password|credential)[A-Za-z0-9_.-]*)(\s*[:=]\s*)([^\s'\"`]+)"
+)
+_BEARER_TOKEN_PATTERN = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/\-]+=*")
+_SECRET_ARG_MARKERS = ("secret", "token", "api_key", "api-key", "apikey", "password", "credential")
 
 
 class DeterministicAcceptanceError(RuntimeError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, diagnostics: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.diagnostics = diagnostics or {}
 
 
 def verify_deterministic_acceptance(
@@ -371,9 +378,19 @@ def _verify_command_succeeds(root: Path, check: dict[str, Any]) -> dict[str, Any
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
+        diagnostics = _command_diagnostics(
+            argv=argv,
+            timeout_seconds=int(check["timeout_seconds"]),
+            exit_code=None,
+            stdout=_timeout_output(exc.stdout),
+            stderr=_timeout_output(exc.stderr),
+            result="FAIL",
+            timed_out=True,
+        )
         raise DeterministicAcceptanceError(
             "DETERMINISTIC_ACCEPTANCE_COMMAND_TIMEOUT",
             f"command_succeeds timed out after {check['timeout_seconds']} seconds.",
+            diagnostics=diagnostics,
         ) from exc
     except OSError as exc:
         raise DeterministicAcceptanceError(
@@ -381,27 +398,124 @@ def _verify_command_succeeds(root: Path, check: dict[str, Any]) -> dict[str, Any
             f"command_succeeds could not execute: {exc}",
         ) from exc
     if completed.returncode != 0:
+        diagnostics = _command_diagnostics(
+            argv=argv,
+            timeout_seconds=int(check["timeout_seconds"]),
+            exit_code=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            result="FAIL",
+            timed_out=False,
+        )
         raise DeterministicAcceptanceError(
             "DETERMINISTIC_ACCEPTANCE_COMMAND_NONZERO_EXIT",
             f"command_succeeds failed with exit code {completed.returncode}.",
+            diagnostics=diagnostics,
         )
+    return _command_diagnostics(
+        argv=argv,
+        timeout_seconds=int(check["timeout_seconds"]),
+        exit_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        result="PASS",
+        timed_out=False,
+    )
+
+
+def _command_diagnostics(
+    *,
+    argv: list[str],
+    timeout_seconds: int,
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+    result: str,
+    timed_out: bool,
+) -> dict[str, Any]:
+    stdout_capture = _bounded_output(stdout)
+    stderr_capture = _bounded_output(stderr)
+    safe_argv, argv_redacted = _redacted_diagnostic_argv(argv)
     return {
-        "result": "PASS",
+        "result": result,
         "type": "deterministic_acceptance_command_succeeds",
-        "argv": argv,
-        "timeout_seconds": check["timeout_seconds"],
-        "exit_code": completed.returncode,
-        "stdout": _bounded_output(completed.stdout),
-        "stderr": _bounded_output(completed.stderr),
+        "argv": safe_argv,
+        "argv_redacted": argv_redacted,
+        "timeout_seconds": timeout_seconds,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "stdout": stdout_capture["text"],
+        "stderr": stderr_capture["text"],
+        "stdout_bytes": stdout_capture["original_bytes"],
+        "stderr_bytes": stderr_capture["original_bytes"],
+        "stdout_truncated": stdout_capture["truncated"],
+        "stderr_truncated": stderr_capture["truncated"],
+        "stdout_redacted": stdout_capture["redacted"],
+        "stderr_redacted": stderr_capture["redacted"],
+        "output_limit_bytes": MAX_COMMAND_OUTPUT_BYTES,
     }
 
 
-def _bounded_output(value: str) -> str:
-    encoded = value.encode("utf-8", errors="replace")
-    if len(encoded) <= MAX_COMMAND_OUTPUT_BYTES:
-        return value
-    truncated = encoded[:MAX_COMMAND_OUTPUT_BYTES].decode("utf-8", errors="replace")
-    return truncated + "\n[truncated]"
+def _timeout_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _bounded_output(value: str) -> dict[str, Any]:
+    redacted_value, redacted = _redact_command_output(value)
+    encoded = redacted_value.encode("utf-8", errors="replace")
+    truncated = len(encoded) > MAX_COMMAND_OUTPUT_BYTES
+    text = redacted_value
+    if truncated:
+        text = encoded[:MAX_COMMAND_OUTPUT_BYTES].decode("utf-8", errors="replace")
+        text += "\n[truncated]"
+    return {
+        "text": text,
+        "original_bytes": len(value.encode("utf-8", errors="replace")),
+        "stored_bytes": len(text.encode("utf-8", errors="replace")),
+        "truncated": truncated,
+        "redacted": redacted,
+    }
+
+
+def _redact_command_output(value: str) -> tuple[str, bool]:
+    redacted = value
+    redacted = _SECRET_ASSIGNMENT_PATTERN.sub(r"\1\2<REDACTED>", redacted)
+    redacted = _BEARER_TOKEN_PATTERN.sub(r"\1<REDACTED>", redacted)
+    return redacted, redacted != value
+
+
+def _redacted_diagnostic_argv(argv: list[str]) -> tuple[list[str], bool]:
+    safe: list[str] = []
+    redacted = False
+    redact_next = False
+    for arg in argv:
+        if redact_next and not arg.startswith("-"):
+            safe.append("<REDACTED>")
+            redacted = True
+            redact_next = False
+            continue
+
+        cleaned, item_redacted = _redact_command_output(arg)
+        if item_redacted:
+            safe.append(cleaned)
+            redacted = True
+            redact_next = False
+            continue
+
+        safe.append(arg)
+        redact_next = _argument_expects_secret_value(arg)
+    return safe, redacted
+
+
+def _argument_expects_secret_value(arg: str) -> bool:
+    if "=" in arg or ":" in arg:
+        return False
+    normalized = arg.lstrip("-").lower().replace("_", "-")
+    return any(marker.replace("_", "-") in normalized for marker in _SECRET_ARG_MARKERS)
 
 
 def _check_signature(check: dict[str, Any]) -> tuple[Any, ...]:

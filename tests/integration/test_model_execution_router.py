@@ -874,7 +874,7 @@ def test_router_mutation_task_still_requires_mutation_capable_provider(session):
 
 
 def test_router_allows_small_unattended_tier1_task_with_strict_constraints(session):
-    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qwen3:8b"))
+    provider = _profiled_provider("provider-tier1", _tier1_profile("provider-tier1", "qualified-small-model"))
 
     result = _router(session, [provider]).execute(
         _context(
@@ -891,6 +891,73 @@ def test_router_allows_small_unattended_tier1_task_with_strict_constraints(sessi
 
     assert result.outcome == "COMPLETED"
     assert provider.requests[0].timeout_seconds == 60
+
+
+def test_router_allows_qwen3_8b_read_only_when_other_unattended_metadata_is_valid(session):
+    profile = _qwen3_8b_support_profile("ollama-local")
+    provider = _profiled_provider("ollama-local", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "read_only": True,
+                "required_capabilities": ["inspection_reasoning"],
+                "task_type": "inspection",
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.calls == 1
+    assert provider.requests[0].read_only is True
+    assert provider.requests[0].required_capabilities == ["inspection_reasoning"]
+
+
+def test_router_rejects_qwen3_8b_unattended_mutation_before_provider_invocation(session):
+    profile = _qwen3_8b_support_profile("ollama-local")
+    provider = _profiled_provider("ollama-local", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert provider.calls == 0
+    candidates = _latest_audit(session, "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED").event_metadata["candidates"]
+    assert "MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION" in candidates[0]["reasons"]
+    assert _audit_count(session, "MODEL_EXECUTION_PROVIDER_INVOCATION_STARTED") == 0
+
+
+def test_router_still_allows_other_unattended_mutation_qualified_provider(session):
+    provider = _profiled_provider("provider-qualified-mutation", _tier1_profile("provider-qualified-mutation", "qualified-small-model"))
+
+    result = _router(session, [provider]).execute(
+        _context(
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {"deterministic_verification": True},
+            }
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.calls == 1
 
 
 def test_router_rejects_unattended_tier1_when_complexity_is_missing(session):
@@ -1097,6 +1164,97 @@ def test_router_rejects_unprofiled_model_for_unattended(session):
     assert "MODEL_NOT_QUALIFIED_FOR_UNATTENDED" in candidates[0]["reasons"]
 
 
+
+def test_router_rejects_evidence_sensitive_unattended_task_for_model_not_evidence_suitable(session):
+    provider = _profiled_provider(
+        "provider-tier1",
+        _tier1_profile("provider-tier1", "qwen3:8b"),
+    )
+
+    result = _router(session, [provider]).execute(
+        _context(
+            title="Inspect backtest evidence",
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {
+                    "deterministic_verification": True,
+                    "evidence_sensitive": True,
+                    "evidence_reference_validation_required": True,
+                },
+            },
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert provider.calls == 0
+    candidates = _latest_audit(
+        session,
+        "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED",
+    ).event_metadata["candidates"]
+    assert "MODEL_NOT_QUALIFIED_FOR_EVIDENCE_SENSITIVE_WORK" in candidates[0]["reasons"]
+
+
+def test_router_requires_evidence_validation_for_evidence_capable_unattended_model(session):
+    profile = _tier1_profile("provider-evidence", "evidence-model").model_copy(
+        update={"evidence_sensitive_suitable": True}
+    )
+    provider = _profiled_provider("provider-evidence", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(
+            title="Inspect backtest evidence",
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {
+                    "deterministic_verification": True,
+                    "evidence_sensitive": True,
+                },
+            },
+        )
+    )
+
+    assert result.outcome == "FAILED"
+    assert provider.calls == 0
+    candidates = _latest_audit(
+        session,
+        "MODEL_EXECUTION_PROVIDER_CANDIDATES_EVALUATED",
+    ).event_metadata["candidates"]
+    assert "EVIDENCE_VALIDATION_REQUIRED" in candidates[0]["reasons"]
+
+
+def test_router_allows_evidence_capable_unattended_model_with_validation(session):
+    profile = _tier1_profile("provider-evidence", "evidence-model").model_copy(
+        update={"evidence_sensitive_suitable": True}
+    )
+    provider = _profiled_provider("provider-evidence", profile)
+
+    result = _router(session, [provider]).execute(
+        _context(
+            title="Inspect backtest evidence",
+            queue_item={
+                "unattended": True,
+                "task_complexity": "T1",
+                "task_risk": "LOW",
+                "isolation_mode": "ISOLATED_WORKTREE",
+                "context_limits": {
+                    "deterministic_verification": True,
+                    "evidence_sensitive": True,
+                    "evidence_reference_validation_required": True,
+                },
+            },
+        )
+    )
+
+    assert result.outcome == "COMPLETED"
+    assert provider.calls == 1
+
+
 def test_router_records_success_failure_and_timeout_attempts_in_model_executions(session):
     provider = SequencedProvider(
         "provider-observable",
@@ -1179,10 +1337,24 @@ def _tier1_profile(provider_id: str, model_id: str) -> ModelCapabilityProfile:
         deterministic_verification_required=True,
         supervision_required=False,
         unattended_eligible=True,
+        unattended_mutation_eligible=True,
         max_task_complexity="T1",
         default_timeout_seconds=60,
         max_timeout_seconds=120,
         status=ModelQualificationStatus.QUALIFIED_WITH_CONSTRAINTS,
+    )
+
+
+def _qwen3_8b_support_profile(provider_id: str) -> ModelCapabilityProfile:
+    return _tier1_profile(provider_id, "qwen3:8b").model_copy(
+        update={
+            "supported_task_classes": ["engineering", "inspection", "reasoning"],
+            "unattended_mutation_eligible": False,
+            "policy_notes": [
+                "Useful local Tier-1 support model.",
+                "Not qualified for unattended code mutation.",
+            ],
+        }
     )
 
 
@@ -1196,6 +1368,7 @@ def _profiled_provider(
     provider.registration = provider.registration.model_copy(
         update={
             "capabilities": profile.supported_capabilities,
+            "supported_task_classes": profile.supported_task_classes,
             "supports_code_modification": profile.supports_mutation,
             "metadata": {"explicit_allowed_workspace_roots": explicit_allowed_workspace_roots},
             "models": [

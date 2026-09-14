@@ -90,7 +90,7 @@ class OllamaExecutionProvider:
             provider_id=provider_id,
             provider_version=provider_version,
             capabilities=capability_profile.supported_capabilities,
-            supported_task_classes=["engineering"],
+            supported_task_classes=capability_profile.supported_task_classes,
             supports_code_modification=True,
             supported_workspace_kinds=["local_git_worktree", "local_workspace"],
             supported_isolation_modes=["ISOLATED_WORKTREE"],
@@ -173,7 +173,62 @@ class OllamaExecutionProvider:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                    "format": "json",
+                    "think": False,
+                    "format": (
+                        {
+                            "type": "object",
+                            "properties": {
+                                "edits": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": self.max_files * 8,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "path": {"type": "string"},
+                                            "old": {"type": "string"},
+                                            "new": {"type": "string"},
+                                        },
+                                        "required": ["path", "old", "new"],
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            },
+                            "required": ["edits"],
+                            "additionalProperties": False,
+                        }
+                        if not runtime_request.read_only
+                        else {
+                            "type": "object",
+                            "properties": {
+                                "summary": {"type": "string"},
+                                "completed_substeps": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "files": {
+                                    "type": "array",
+                                    "maxItems": 0,
+                                },
+                                "verification": {
+                                    "type": "array",
+                                    "items": {"type": "object"},
+                                },
+                                "documentation": {
+                                    "type": "array",
+                                    "items": {"type": "object"},
+                                },
+                            },
+                            "required": [
+                                "summary",
+                                "completed_substeps",
+                                "files",
+                                "verification",
+                                "documentation",
+                            ],
+                            "additionalProperties": False,
+                        }
+                    ),
                     "options": {
                         "temperature": 0,
                         "num_predict": num_predict,
@@ -181,7 +236,7 @@ class OllamaExecutionProvider:
                 },
                 timeout_seconds=runtime_request.timeout_seconds or self.timeout_seconds,
             )
-            payload = _parse_model_payload(response.body)
+            payload = _parse_model_payload(response.body, num_predict=num_predict)
             if runtime_request.read_only:
                 files = payload.get("files")
                 if isinstance(files, list) and files:
@@ -361,6 +416,8 @@ class OllamaExecutionProvider:
                             f"{rollback_failure.message}"
                         ),
                         retryability=RuntimeRetryability.NON_RETRYABLE,
+                        provider_error_metadata=blocked.provider_error_metadata,
+                        verification=blocked.verification,
                     )
 
             return _failed_result(
@@ -370,6 +427,8 @@ class OllamaExecutionProvider:
                 failure_class=blocked.failure_class,
                 message=blocked.message,
                 retryability=blocked.retryability,
+                provider_error_metadata=blocked.provider_error_metadata,
+                verification=blocked.verification,
             )
         except TimeoutError as exc:
             return _failed_result(
@@ -434,7 +493,21 @@ class OllamaExecutionProvider:
         payload: dict[str, Any],
         allowed_mutation_paths: list[str],
     ) -> list[dict[str, Any]]:
+        edits = payload.get("edits")
         files = payload.get("files")
+
+        if edits is not None:
+            if files not in (None, []):
+                raise _ProviderBlocked(
+                    "MALFORMED_FILE_CHANGE",
+                    "Ollama response must not mix compact edits with full-file changes.",
+                )
+            files = self._materialize_compact_edits(
+                workspace,
+                edits,
+                allowed_mutation_paths,
+            )
+
         if not isinstance(files, list) or not files:
             raise _ProviderBlocked("NO_FILE_CHANGES", "Ollama response did not contain file changes.")
         if len(files) > self.max_files:
@@ -465,6 +538,163 @@ class OllamaExecutionProvider:
             raise _ProviderBlocked(failure_class, exc.message) from exc
 
         return write_validated_file_contents(validated)
+
+    def _materialize_compact_edits(
+        self,
+        workspace: Path,
+        edits: Any,
+        allowed_mutation_paths: list[str],
+    ) -> list[dict[str, Any]]:
+        if not isinstance(edits, list) or not edits:
+            raise _ProviderBlocked(
+                "NO_FILE_CHANGES",
+                "Ollama response did not contain compact edits.",
+            )
+        if len(edits) > self.max_files * 8:
+            raise _ProviderBlocked(
+                "TOO_MANY_FILE_CHANGES",
+                "Ollama response exceeded max compact edits.",
+            )
+
+        authorized = set(allowed_mutation_paths)
+        if not authorized:
+            raise _ProviderBlocked(
+                "MUTATION_SCOPE_VIOLATION",
+                "Mutation request has no authorized frozen mutation paths.",
+            )
+
+        root = workspace.resolve()
+        working: dict[str, str] = {}
+        original: dict[str, str] = {}
+        existed: dict[str, bool] = {}
+        ordered_paths: list[str] = []
+
+        for edit in edits:
+            if not isinstance(edit, dict) or set(edit) != {"path", "old", "new"}:
+                raise _ProviderBlocked(
+                    "MALFORMED_FILE_CHANGE",
+                    "Each compact edit must contain exactly path, old, and new.",
+                )
+
+            raw_path = edit.get("path")
+            old = edit.get("old")
+            new = edit.get("new")
+            if not isinstance(raw_path, str) or not isinstance(old, str) or not isinstance(new, str):
+                raise _ProviderBlocked(
+                    "MALFORMED_FILE_CHANGE",
+                    "Compact edit path, old, and new values must be strings.",
+                )
+
+            try:
+                relative_path = validate_relative_repo_path(raw_path)
+            except GitMutationError as exc:
+                raise _ProviderBlocked("UNSAFE_FILE_PATH", exc.message) from exc
+
+            if relative_path not in authorized:
+                raise _ProviderBlocked(
+                    "MUTATION_SCOPE_VIOLATION",
+                    f"Compact edit path is outside authorized mutation scope: {relative_path}",
+                )
+
+            if relative_path not in working:
+                if len(ordered_paths) >= self.max_files:
+                    raise _ProviderBlocked(
+                        "TOO_MANY_FILE_CHANGES",
+                        "Compact edits exceeded max distinct changed files.",
+                    )
+
+                relative = Path(*Path(relative_path).parts)
+                lexical_target = root / relative
+
+                if _path_contains_symlink(root, relative_path):
+                    raise _ProviderBlocked(
+                        "MUTATION_CONTEXT_SYMLINK_REJECTED",
+                        f"Authorized mutation path contains a symlink: {relative_path}",
+                    )
+
+                target = lexical_target.resolve(strict=False)
+                if not _is_relative_to(target, root):
+                    raise _ProviderBlocked(
+                        "UNSAFE_FILE_PATH",
+                        f"Path escapes workspace: {relative_path}",
+                    )
+
+                if lexical_target.exists():
+                    if not lexical_target.is_file():
+                        raise _ProviderBlocked(
+                            "MUTATION_CONTEXT_FILE_NOT_REGULAR",
+                            f"Authorized mutation path is not a regular file: {relative_path}",
+                        )
+                    data = lexical_target.read_bytes()
+                    if len(data) > self.max_context_file_bytes:
+                        raise _ProviderBlocked(
+                            "MUTATION_CONTEXT_FILE_TOO_LARGE",
+                            f"Authorized mutation context file too large: {relative_path}",
+                        )
+                    try:
+                        working[relative_path] = data.decode("utf-8")
+                        original[relative_path] = working[relative_path]
+                    except UnicodeError as exc:
+                        raise _ProviderBlocked(
+                            "MUTATION_CONTEXT_FILE_NOT_UTF8",
+                            f"Authorized mutation path is not valid UTF-8: {relative_path}",
+                        ) from exc
+                    existed[relative_path] = True
+                else:
+                    working[relative_path] = ""
+                    original[relative_path] = ""
+                    existed[relative_path] = False
+
+                ordered_paths.append(relative_path)
+
+            current = working[relative_path]
+
+            if not existed[relative_path]:
+                if old != "":
+                    raise _ProviderBlocked(
+                        "COMPACT_EDIT_TARGET_MISMATCH",
+                        f"New file compact edit requires empty old content: {relative_path}",
+                    )
+                working[relative_path] = new
+                existed[relative_path] = True
+                continue
+
+            if old == "":
+                raise _ProviderBlocked(
+                    "COMPACT_EDIT_TARGET_MISMATCH",
+                    f"Existing file compact edit requires non-empty old content: {relative_path}",
+                )
+
+            if old == new:
+                raise _ProviderBlocked(
+                    "NO_EFFECT_COMPACT_EDIT",
+                    f"Compact edit would not change file content: {relative_path}",
+                )
+
+            occurrences = current.count(old)
+            if occurrences != 1:
+                raise _ProviderBlocked(
+                    "COMPACT_EDIT_TARGET_MISMATCH",
+                    f"Compact edit old content must match exactly once in {relative_path}; matched {occurrences} times.",
+                )
+
+            working[relative_path] = current.replace(old, new, 1)
+
+        changed_paths = [
+            relative_path
+            for relative_path in ordered_paths
+            if working[relative_path] != original[relative_path]
+        ]
+        if not changed_paths:
+            raise _ProviderBlocked(
+                "NO_EFFECT_COMPACT_EDIT",
+                "Compact edits produced no effective file changes.",
+            )
+
+        return [
+            {"path": relative_path, "content": working[relative_path]}
+            for relative_path in changed_paths
+        ]
 
     def _mutation_file_context(
         self,
@@ -542,7 +772,20 @@ def _verify_deterministic_acceptance(
             authorized_paths=authorized_paths,
         )
     except DeterministicAcceptanceError as exc:
-        raise _ProviderBlocked("DETERMINISTIC_MUTATION_VERIFICATION_FAILED", exc.message) from exc
+        diagnostic = exc.diagnostics or {}
+        metadata = {
+            "deterministic_acceptance_code": exc.code,
+        }
+        verification: list[dict[str, Any]] = []
+        if diagnostic:
+            metadata["deterministic_acceptance_diagnostic"] = diagnostic
+            verification.append(diagnostic)
+        raise _ProviderBlocked(
+            "DETERMINISTIC_MUTATION_VERIFICATION_FAILED",
+            exc.message,
+            provider_error_metadata=metadata,
+            verification=verification,
+        ) from exc
 
 
 class _ProviderBlocked(Exception):
@@ -551,11 +794,16 @@ class _ProviderBlocked(Exception):
         failure_class: str,
         message: str,
         retryability: RuntimeRetryability = RuntimeRetryability.NON_RETRYABLE,
+        *,
+        provider_error_metadata: dict[str, Any] | None = None,
+        verification: list[dict[str, Any]] | None = None,
     ):
         super().__init__(message)
         self.failure_class = failure_class
         self.message = message
         self.retryability = retryability
+        self.provider_error_metadata = provider_error_metadata or {}
+        self.verification = verification or []
 
 
 def _build_prompt(
@@ -570,7 +818,7 @@ def _build_prompt(
         "Work only inside the supplied isolated workspace.",
         "Return strict JSON only, with no markdown.",
         "Schema:",
-        '{"files":[{"path":"relative/path","content":"exact file contents"}]}'
+        '{"edits":[{"path":"relative/path","old":"exact existing fragment","new":"replacement fragment"}]}'
         if not runtime_request.read_only
         else '{"summary":"...","completed_substeps":["..."],"files":[],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
         f"Execution id: {runtime_request.execution_id}",
@@ -594,6 +842,17 @@ def _build_prompt(
             if runtime_request.deterministic_acceptance_checks
             else "<none>"
         ),
+        "Mandatory literal file acceptance requirements: "
+        + (
+            "; ".join(
+                f"{check['path']} MUST contain exactly: {check['expected_text']}"
+                for check in runtime_request.deterministic_acceptance_checks
+                if check.get("type") == "file_contains"
+                and check.get("path")
+                and check.get("expected_text")
+            )
+            or "<none>"
+        ),
         f"Workspace: {workspace}",
         f"Task intent: {runtime_request.task_intent}",
         "Keep the change tiny, deterministic, and automatically verifiable.",
@@ -611,8 +870,12 @@ def _build_prompt(
         lines.extend(
             [
                 "Authorized current file context follows. This is the authoritative current workspace state for the frozen mutation scope only.",
-                "Modify only authorized files. Preserve unrelated behavior and content. Return complete resulting contents for changed files only.",
-                "Do not return unchanged files unnecessarily.",
+                "Modify only authorized files. Preserve unrelated behavior and content.",
+                "Return compact exact-fragment edits only; never return complete files.",
+                "For an existing file, old must be a non-empty exact fragment that occurs exactly once in the current authorized file content.",
+                "Every compact edit must produce an effective content change; old and new must not be identical.",
+                "For a new file only, use old as an empty string and new as the complete initial file content.",
+                "Multiple edits to one authorized file are allowed and are applied in response order.",
                 "command_succeeds acceptance checks are Lucius verification commands; do not execute, edit, or reinterpret those commands.",
             ]
         )
@@ -647,7 +910,7 @@ def _ollama_model_capability_profile(
             model_id=model,
             execution_tier="LOCAL_TIER_1",
             is_local=True,
-            supported_task_classes=["engineering"],
+            supported_task_classes=["engineering", "inspection", "reasoning"],
             supported_capabilities=["inspection_reasoning", "documentation_update", "code_modification"],
             supports_mutation=True,
             evidence_sensitive_suitable=False,
@@ -655,12 +918,14 @@ def _ollama_model_capability_profile(
             deterministic_verification_required=True,
             supervision_required=False,
             unattended_eligible=True,
+            unattended_mutation_eligible=False,
             max_task_complexity="T1",
             default_timeout_seconds=min(default_timeout_seconds, 120),
             max_timeout_seconds=120,
             status=ModelQualificationStatus.QUALIFIED_WITH_CONSTRAINTS,
             policy_notes=[
-                "Qualified only for small, bounded, highly verifiable local work.",
+                "Useful local Tier-1 support model for bounded read-only and non-mutating work.",
+                "Not qualified for unattended code mutation after LWORK_000147/LMEXEC_000196/LQCHK_000092 and LWORK_000148/LMEXEC_000197/LQCHK_000093 deterministic mutation failures.",
                 "Not qualified for general unattended operation.",
             ],
         )
@@ -678,6 +943,7 @@ def _ollama_model_capability_profile(
             deterministic_verification_required=True,
             supervision_required=True,
             unattended_eligible=False,
+            unattended_mutation_eligible=False,
             max_task_complexity="T2",
             default_timeout_seconds=default_timeout_seconds,
             max_timeout_seconds=180,
@@ -700,6 +966,7 @@ def _ollama_model_capability_profile(
         deterministic_verification_required=True,
         supervision_required=True,
         unattended_eligible=False,
+        unattended_mutation_eligible=False,
         max_task_complexity="T0",
         default_timeout_seconds=default_timeout_seconds,
         max_timeout_seconds=60,
@@ -708,18 +975,67 @@ def _ollama_model_capability_profile(
     )
 
 
-def _parse_model_payload(body: dict[str, Any]) -> dict[str, Any]:
+def _parse_model_payload(
+    body: dict[str, Any],
+    *,
+    num_predict: int | None = None,
+) -> dict[str, Any]:
     raw = body.get("response")
     if not isinstance(raw, str):
         raise _ProviderBlocked("MALFORMED_OLLAMA_RESPONSE", "Ollama response missing text payload.")
+
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
+        done = body.get("done")
+        done_reason = body.get("done_reason")
+        eval_count = _optional_int(body.get("eval_count"))
+
+        likely_truncated = (
+            done is False
+            or done_reason == "length"
+            or (
+                num_predict is not None
+                and eval_count is not None
+                and eval_count >= num_predict
+            )
+        )
+
+        if likely_truncated:
+            raise _ProviderBlocked(
+                "OLLAMA_OUTPUT_TRUNCATED",
+                (
+                    "Ollama output ended before valid JSON completed "
+                    f"(eval_count={eval_count}, num_predict={num_predict}, "
+                    f"done={done}, done_reason={done_reason!r}, response_chars={len(raw)})."
+                ),
+                RuntimeRetryability.RETRYABLE_OR_FAILOVERABLE,
+            )
+
         start = raw.find("{")
         end = raw.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            raise _ProviderBlocked("MALFORMED_OLLAMA_JSON", "Ollama response was not valid JSON.")
-        payload = json.loads(raw[start : end + 1])
+            raise _ProviderBlocked(
+                "MALFORMED_OLLAMA_JSON",
+                (
+                    "Ollama response was not valid JSON "
+                    f"(eval_count={eval_count}, done={done}, "
+                    f"done_reason={done_reason!r}, response_chars={len(raw)})."
+                ),
+            )
+
+        try:
+            payload = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise _ProviderBlocked(
+                "MALFORMED_OLLAMA_JSON",
+                (
+                    "Ollama response contained malformed JSON "
+                    f"(eval_count={eval_count}, done={done}, "
+                    f"done_reason={done_reason!r}, response_chars={len(raw)})."
+                ),
+            ) from exc
+
     if not isinstance(payload, dict):
         raise _ProviderBlocked("MALFORMED_OLLAMA_JSON", "Ollama JSON response must be an object.")
     return payload
@@ -774,7 +1090,12 @@ def _failed_result(
     failure_class: str,
     message: str,
     retryability: RuntimeRetryability,
+    provider_error_metadata: dict[str, Any] | None = None,
+    verification: list[dict[str, Any]] | None = None,
 ) -> RuntimeExecutionResult:
+    metadata = {"message": message}
+    if provider_error_metadata:
+        metadata.update(provider_error_metadata)
     return RuntimeExecutionResult(
         execution_id=runtime_request.execution_id,
         provider_id=provider.provider_id,
@@ -786,9 +1107,10 @@ def _failed_result(
         provider_native_status="FAILED",
         mutation_summary=message,
         active_execution_seconds=max(0.0, time.monotonic() - started),
+        verification=verification or [],
         retryability=retryability,
         failure_class=failure_class,
-        provider_error_metadata={"message": message},
+        provider_error_metadata=metadata,
     )
 
 

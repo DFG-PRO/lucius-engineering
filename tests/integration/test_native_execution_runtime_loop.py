@@ -25,6 +25,7 @@ from lucius.domain.enums import (
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
 from lucius.persistence.orm import (
     AuditEventORM,
+    EngineeringPlanORM,
     PersistentWorkflowORM,
     PlanFreezeORM,
     ProjectORM,
@@ -34,6 +35,7 @@ from lucius.persistence.orm import (
     TaskORM,
     utc_now,
 )
+from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.pilots.workflows import PersistentWorkflowService
 from lucius.projects.service import ProjectRegistryService
 from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
@@ -435,6 +437,137 @@ def test_runtime_missing_frozen_plan_blocks_before_router_dispatch(session):
     )
 
 
+def test_runtime_dispatch_selection_failure_blocks_with_canonical_queue_checkpoint(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-PLAN-MISMATCH")])
+    _install_plan_project_mismatch(session, workflow.id)
+    adapter = CountingExecutionAdapter()
+
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    item = row.task_backlog[0]
+    checkpoint_id = item["current_block_checkpoint_id"]
+
+    assert result.status == "FAILED"
+    assert result.blocked_tasks == 1
+    assert adapter.calls == []
+    assert result.stopped_reason == "PLAN_FREEZE_PROJECT_OR_TASK_MISMATCH"
+    assert item["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert item["version"] == 1
+    assert checkpoint_id
+    assert item["block_checkpoints"][0]["id"] == checkpoint_id
+    assert item["block_checkpoints"][0]["prior_state"] == QueueWorkItemState.READY.value
+    assert item["block_checkpoints"][0]["blocking_state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert item["block_checkpoints"][0]["item_version"] == 0
+    assert row.checkpoint_history == [checkpoint_id]
+    assert (
+        session.query(AuditEventORM)
+        .filter(AuditEventORM.event_type == "QUEUE_WORK_ITEM_BLOCKED")
+        .count()
+        == 1
+    )
+    assert (
+        session.query(AuditEventORM)
+        .filter(AuditEventORM.event_type == "NATIVE_RUNTIME_PRE_MUTATION_RELEASE_BLOCKED")
+        .count()
+        == 1
+    )
+
+
+def test_runtime_dispatch_selection_blocker_can_resume_after_plan_repair(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-PLAN-REPAIR")])
+    _install_plan_project_mismatch(session, workflow.id)
+    first_adapter = CountingExecutionAdapter()
+
+    first = _runtime(session, first_adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    blocked_item = row.task_backlog[0]
+    checkpoint_id = blocked_item["current_block_checkpoint_id"]
+    expected_version = blocked_item["version"]
+
+    _repair_plan_project_mismatch(session, workflow.id)
+    task = session.get(TaskORM, workflow.task_id)
+    repaired_task_status = task.status
+    resolved = NonBlockingQueueService(session).resolve_blocker(
+        workflow.id,
+        "DARWIN-PLAN-REPAIR",
+        checkpoint_id=checkpoint_id,
+        expected_item_version=expected_version,
+        resolution_event="PLAN_FREEZE_PROJECT_OR_TASK_MISMATCH repaired and task readiness revalidated.",
+        actor=Actor.LUCIUS,
+    )
+    second_adapter = CountingExecutionAdapter()
+    second = _runtime(session, second_adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+
+    assert first.status == "FAILED"
+    assert repaired_task_status == TaskStatus.READY.value
+    assert resolved["state"] == QueueWorkItemState.READY_TO_RESUME.value
+    assert resolved["current_block_checkpoint_id"] == checkpoint_id
+    assert second.status == "COMPLETED"
+    assert second.resumed_tasks == 1
+    assert second_adapter.calls == ["DARWIN-PLAN-REPAIR"]
+    assert row.task_backlog[0]["state"] == QueueWorkItemState.COMPLETED.value
+    assert session.get(TaskORM, workflow.task_id).status == TaskStatus.COMPLETE.value
+
+
+def test_runtime_dispatch_selection_blocker_rejects_stale_checkpoint_and_version(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-STALE-BLOCK")])
+    _install_plan_project_mismatch(session, workflow.id)
+
+    _runtime(session, CountingExecutionAdapter()).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    item = row.task_backlog[0]
+    queue = NonBlockingQueueService(session)
+
+    with pytest.raises(QueueStateError, match="Stale checkpoint"):
+        queue.resolve_blocker(
+            workflow.id,
+            "DARWIN-STALE-BLOCK",
+            checkpoint_id=f"{item['current_block_checkpoint_id']}-stale",
+            expected_item_version=item["version"],
+            resolution_event="attempt stale checkpoint",
+        )
+
+    with pytest.raises(QueueStateError, match="Stale item version"):
+        queue.resolve_blocker(
+            workflow.id,
+            "DARWIN-STALE-BLOCK",
+            checkpoint_id=item["current_block_checkpoint_id"],
+            expected_item_version=item["version"] - 1,
+            resolution_event="attempt stale version",
+        )
+
+
+def test_runtime_dispatch_selection_unrepaired_problem_fails_closed_again_after_resolution(session):
+    workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-UNREPAIRED")])
+    _install_plan_project_mismatch(session, workflow.id)
+
+    first = _runtime(session, CountingExecutionAdapter()).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    first_checkpoint = row.task_backlog[0]["current_block_checkpoint_id"]
+    first_version = row.task_backlog[0]["version"]
+    NonBlockingQueueService(session).resolve_blocker(
+        workflow.id,
+        "DARWIN-UNREPAIRED",
+        checkpoint_id=first_checkpoint,
+        expected_item_version=first_version,
+        resolution_event="operator attempted resume before repairing plan mismatch",
+    )
+
+    second = _runtime(session, CountingExecutionAdapter()).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    item = row.task_backlog[0]
+
+    assert first.status == "FAILED"
+    assert second.status == "FAILED"
+    assert second.stopped_reason == "PLAN_FREEZE_PROJECT_OR_TASK_MISMATCH"
+    assert item["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert item["current_block_checkpoint_id"] != first_checkpoint
+    assert len(item["block_checkpoints"]) == 2
+
+
 def test_runtime_selected_task_identity_mismatch_blocks_before_provider_dispatch(session):
     workflow = _workflow(
         session,
@@ -563,6 +696,126 @@ def test_runtime_completed_workflow_with_missing_required_docs_becomes_documenta
     assert session.get(TaskORM, workflow.task_id).status == TaskStatus.DOCUMENTATION_PENDING.value
 
 
+def test_runtime_default_planner_uses_explicit_queue_mutation_scope_and_checks(session):
+    expected_check = {
+        "type": "file_contains",
+        "path": "src/lucius/runtime/adapters.py",
+        "text": "Runtime plan",
+    }
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[
+            _item(
+                "DARWIN-EXPLICIT-SCOPE",
+                unattended=True,
+                deterministic_checks=[expected_check],
+            )
+        ],
+    )
+
+    reference = ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow.id)
+    plan = session.get(EngineeringPlanORM, reference.plan_id)
+    freeze = session.get(PlanFreezeORM, reference.plan_freeze_id)
+
+    assert [item["path"] for item in plan.affected_files] == ["src/lucius/runtime/adapters.py"]
+    assert [item["path"] for item in freeze.plan_payload["affected_files"]] == [
+        "src/lucius/runtime/adapters.py"
+    ]
+    assert freeze.plan_payload["deterministic_acceptance_checks"] == [
+        {
+            "type": "file_contains",
+            "path": "src/lucius/runtime/adapters.py",
+            "expected_text": "Runtime plan",
+        }
+    ]
+
+
+def test_runtime_router_receives_scope_and_checks_from_default_plan_freeze(session):
+    expected_check = {
+        "type": "file_contains",
+        "path": "src/lucius/runtime/adapters.py",
+        "expected_text": "Runtime plan",
+    }
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[
+            _item(
+                "DARWIN-ROUTER-SCOPE",
+                deterministic_checks=[expected_check],
+            )
+        ],
+    )
+    adapter = CustomExecutionAdapter()
+
+    result = _runtime(session, adapter).run(RuntimeLoopConfig(workflow_ids=[workflow.id], max_tasks=1))
+
+    assert result.status == "COMPLETED"
+    assert adapter.contexts[0].allowed_mutation_paths == ["src/lucius/runtime/adapters.py"]
+    assert adapter.contexts[0].deterministic_acceptance_checks == [expected_check]
+
+
+def test_runtime_default_planner_does_not_use_documentation_targets_as_mutation_scope(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-DOCS-ONLY", include_mutation_scope=False)],
+        documentation_required=True,
+    )
+
+    with pytest.raises(ValueError, match="explicit allowed_mutation_paths"):
+        ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow.id)
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    assert row.plan_id is None
+    assert row.plan_freeze_id is None
+
+
+def test_runtime_default_planner_fails_mutation_without_explicit_paths(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-NO-MUTATION-PATHS", include_mutation_scope=False)],
+    )
+
+    with pytest.raises(ValueError, match="explicit allowed_mutation_paths"):
+        ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow.id)
+
+
+def test_runtime_default_planner_fails_unattended_mutation_without_checks(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[_item("DARWIN-UNATTENDED-NO-CHECKS", unattended=True)],
+    )
+
+    with pytest.raises(ValueError, match="deterministic_acceptance_checks"):
+        ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow.id)
+
+
+def test_runtime_default_planner_allows_read_only_without_mutation_scope(session):
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[
+            _item(
+                "DARWIN-READ-ONLY",
+                include_mutation_scope=False,
+                read_only=True,
+            )
+        ],
+        documentation_required=True,
+    )
+
+    reference = ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow.id)
+    freeze = session.get(PlanFreezeORM, reference.plan_freeze_id)
+
+    assert freeze.plan_payload["affected_files"] == []
+    assert freeze.plan_payload["deterministic_acceptance_checks"] == []
+    assert freeze.plan_payload["documentation_requirements"]
+
+
 def test_runtime_completed_workflow_reconciliation_preserves_historical_rows_without_bound_task(session):
     workflow = _workflow(session, project_id="DARWIN", backlog=[_item("DARWIN-HISTORICAL")])
     workflow_row = session.get(PersistentWorkflowORM, workflow.id)
@@ -687,6 +940,26 @@ def _workflow(
     )
 
 
+def _install_plan_project_mismatch(session, workflow_id: str) -> None:
+    reference = ScriptedRuntimePlanningAdapter().prepare_workflow_plan(session, workflow_id)
+    workflow = session.get(PersistentWorkflowORM, workflow_id)
+    other_project = _ensure_project(session, f"{workflow.project_id}_OTHER")
+    plan = session.get(EngineeringPlanORM, reference.plan_id)
+    freeze = session.get(PlanFreezeORM, reference.plan_freeze_id)
+    plan.project_id = other_project.id
+    freeze.project_id = other_project.id
+    session.flush()
+
+
+def _repair_plan_project_mismatch(session, workflow_id: str) -> None:
+    workflow = session.get(PersistentWorkflowORM, workflow_id)
+    plan = session.get(EngineeringPlanORM, workflow.plan_id)
+    freeze = session.get(PlanFreezeORM, workflow.plan_freeze_id)
+    plan.project_id = workflow.project_id
+    freeze.project_id = workflow.project_id
+    session.flush()
+
+
 def _ensure_project(session, project_id: str) -> ProjectORM:
     project = session.get(ProjectORM, project_id)
     if project is not None:
@@ -750,8 +1023,13 @@ def _item(
     state: QueueWorkItemState = QueueWorkItemState.READY,
     priority: str = "NORMAL",
     order: int = 1,
+    include_mutation_scope: bool = True,
+    mutation_paths: list[str] | None = None,
+    deterministic_checks: list[dict] | None = None,
+    unattended: bool = False,
+    read_only: bool = False,
 ) -> dict:
-    return {
+    item = {
         "item_id": item_id,
         "logical_task_id": item_id,
         "title": f"Runtime task {item_id}",
@@ -762,6 +1040,22 @@ def _item(
         "completed_substeps": [],
         "version": 0,
     }
+    if include_mutation_scope:
+        item["allowed_mutation_paths"] = mutation_paths or ["src/lucius/runtime/adapters.py"]
+    if deterministic_checks is not None:
+        item["deterministic_acceptance_checks"] = deterministic_checks
+    if unattended:
+        item["unattended"] = True
+        item["context_limits"] = {"deterministic_verification": True}
+        item["task_complexity"] = "T1"
+        item["task_risk"] = "LOW"
+        item["isolation_mode"] = "ISOLATED_WORKTREE"
+    if read_only:
+        item["read_only"] = True
+        item["mutation_allowed"] = False
+        item["task_type"] = "inspection"
+        item["required_capabilities"] = ["inspection_reasoning"]
+    return item
 
 @pytest.mark.parametrize(
     "failure_class",

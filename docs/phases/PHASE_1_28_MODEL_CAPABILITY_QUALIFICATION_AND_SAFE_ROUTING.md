@@ -19,6 +19,16 @@ items timed out and moved fail-closed while independent queue work continued.
 The correct status is `LOCAL_TIER_1` candidate for small, bounded, highly
 verifiable local work only.
 
+Later corrected-runtime qualification attempts showed that `qwen3:8b` is not
+reliable enough for unattended code mutation under the current Lucius runtime
+contract. `LWORK_000147` / `LMEXEC_000196` / `LQCHK_000092` and `LWORK_000148`
+/ `LMEXEC_000197` / `LQCHK_000093` both used clean bounded T1 mutation scope,
+explicit deterministic acceptance checks, isolated worktrees, `UNSUPERVISED`
+execution, `think=false`, and successful provider invocation. The model output
+failed deterministic mutation verification with invalid or incomplete Python,
+and Lucius rolled back fail-closed. These are model-output quality failures,
+not planning, router, lifecycle, provider-transport, or rollback failures.
+
 No historical workflow outcome is rewritten by this phase.
 
 ## Runtime Model
@@ -41,9 +51,11 @@ Statuses are `QUALIFIED`, `QUALIFIED_WITH_CONSTRAINTS`, `SUPERVISED_ONLY`,
 ## Initial Local Policy
 
 `qwen3:8b` is encoded as `LOCAL_TIER_1` and
-`QUALIFIED_WITH_CONSTRAINTS`. It is eligible for unattended routing only when
-the task is small enough for its configured profile, isolated, bounded,
-deterministically verifiable, and within timeout policy.
+`QUALIFIED_WITH_CONSTRAINTS`. It remains a useful local Tier-1 support model
+for bounded read-only or otherwise non-mutating work where the profile and
+router policy allow it. It is not qualified for unattended code mutation.
+Router eligibility must reject unattended mutation for this profile with
+`MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION`.
 
 `qwen3-coder:30b` is encoded as
 `TIER_2_LOCAL_SUPERVISED_SCHEMA_CONSTRAINED` and `SUPERVISED_ONLY`. It cannot
@@ -66,6 +78,7 @@ requires it. Explicit reason codes include:
 
 - `MODEL_SUPERVISION_REQUIRED`;
 - `MODEL_NOT_QUALIFIED_FOR_UNATTENDED`;
+- `MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION`;
 - `MODEL_LACKS_REQUIRED_CAPABILITY`;
 - `TASK_COMPLEXITY_UNKNOWN`;
 - `TASK_COMPLEXITY_EXCEEDS_MODEL_PROFILE`;

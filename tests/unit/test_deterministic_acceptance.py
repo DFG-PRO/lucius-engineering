@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from lucius.runtime import deterministic_acceptance
 from lucius.runtime.deterministic_acceptance import (
     DeterministicAcceptanceError,
     normalize_deterministic_acceptance_checks,
@@ -198,6 +200,10 @@ def test_command_succeeds_valid_pytest_command_passes(tmp_path):
 
     assert result[0]["type"] == "deterministic_acceptance_command_succeeds"
     assert result[0]["exit_code"] == 0
+    assert result[0]["argv"] == [".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"]
+    assert result[0]["argv_redacted"] is False
+    assert result[0]["stdout_truncated"] is False
+    assert result[0]["stderr_truncated"] is False
 
 
 def test_command_succeeds_nonzero_pytest_fails_closed(tmp_path):
@@ -211,6 +217,167 @@ def test_command_succeeds_nonzero_pytest_fails_closed(tmp_path):
         )
 
     assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NONZERO_EXIT"
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["type"] == "deterministic_acceptance_command_succeeds"
+    assert diagnostic["result"] == "FAIL"
+    assert diagnostic["argv"] == [".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"]
+    assert diagnostic["argv_redacted"] is False
+    assert diagnostic["exit_code"] == 1
+    assert "test_fail" in diagnostic["stdout"]
+
+
+def test_command_succeeds_diagnostic_argv_redacts_secret_like_values_without_changing_execution(
+    tmp_path,
+    monkeypatch,
+):
+    _prepare_pytest_workspace(tmp_path, "def test_ok():\n    assert True\n")
+    raw_secret_arg = "tests/test_profitability.py::test_token=secretvalue"
+    executed: dict[str, list[str]] = {}
+
+    def fake_run(command, **kwargs):
+        executed["command"] = list(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="simulated failure\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(deterministic_acceptance.subprocess, "run", fake_run)
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", raw_secret_arg, "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert executed["command"][3] == raw_secret_arg
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["argv_redacted"] is True
+    assert "secretvalue" not in diagnostic["argv"][3]
+    assert diagnostic["argv"][3] == "tests/test_profitability.py::test_token=<REDACTED>"
+
+
+def test_command_diagnostic_argv_redacts_common_secret_argument_forms():
+    diagnostic = deterministic_acceptance._command_diagnostics(
+        argv=[
+            ".venv/bin/python",
+            "-m",
+            "pytest",
+            "tests/test_profitability.py",
+            "--token=secretvalue",
+            "--password",
+            "passwordvalue",
+            "api_key=apikeyvalue",
+            "credential:credentialvalue",
+            "Authorization: Bearer bearer-secret-value",
+        ],
+        timeout_seconds=10,
+        exit_code=1,
+        stdout="",
+        stderr="",
+        result="FAIL",
+        timed_out=False,
+    )
+
+    rendered = " ".join(diagnostic["argv"])
+    assert diagnostic["argv_redacted"] is True
+    assert "secretvalue" not in rendered
+    assert "passwordvalue" not in rendered
+    assert "apikeyvalue" not in rendered
+    assert "credentialvalue" not in rendered
+    assert "bearer-secret-value" not in rendered
+    assert "--token=<REDACTED>" in diagnostic["argv"]
+    assert diagnostic["argv"][diagnostic["argv"].index("--password") + 1] == "<REDACTED>"
+
+
+def test_command_succeeds_exit_code_2_preserves_collection_diagnostic(tmp_path):
+    _prepare_pytest_workspace(tmp_path, "def test_broken(:\n    assert True\n")
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_NONZERO_EXIT"
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["exit_code"] == 2
+    assert "SyntaxError" in diagnostic["stdout"] or "SyntaxError" in diagnostic["stderr"]
+
+
+def test_command_succeeds_failure_captures_stdout_and_stderr(tmp_path):
+    _prepare_pytest_workspace(
+        tmp_path,
+        (
+            "import sys\n\n"
+            "def test_output_then_fail():\n"
+            "    print('DIAGNOSTIC_STDOUT')\n"
+            "    print('DIAGNOSTIC_STDERR', file=sys.stderr)\n"
+            "    assert False\n"
+        ),
+    )
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-s", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["exit_code"] == 1
+    assert "DIAGNOSTIC_STDOUT" in diagnostic["stdout"]
+    assert "DIAGNOSTIC_STDERR" in diagnostic["stderr"]
+
+
+def test_command_succeeds_failure_bounds_and_marks_truncated_output(tmp_path):
+    _prepare_pytest_workspace(
+        tmp_path,
+        (
+            "def test_noisy_failure():\n"
+            "    print('A' * 5000)\n"
+            "    assert False\n"
+        ),
+    )
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-s", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["stdout_truncated"] is True
+    assert diagnostic["output_limit_bytes"] == 4096
+    assert diagnostic["stdout"].endswith("[truncated]")
+    assert len(diagnostic["stdout"].encode("utf-8")) < diagnostic["stdout_bytes"]
+
+
+def test_command_succeeds_failure_redacts_secret_like_output(tmp_path):
+    _prepare_pytest_workspace(
+        tmp_path,
+        (
+            "def test_secret_output_failure():\n"
+            "    print('API_TOKEN=super-secret-value')\n"
+            "    assert False\n"
+        ),
+    )
+
+    with pytest.raises(DeterministicAcceptanceError) as exc:
+        verify_deterministic_acceptance(
+            tmp_path,
+            [_command_check([".venv/bin/python", "-m", "pytest", "tests/test_profitability.py", "-s", "-q"])],
+            authorized_paths={"src/demo.py"},
+        )
+
+    diagnostic = exc.value.diagnostics
+    assert diagnostic["stdout_redacted"] is True
+    assert "super-secret-value" not in diagnostic["stdout"]
+    assert "API_TOKEN=<REDACTED>" in diagnostic["stdout"]
 
 
 def test_command_succeeds_timeout_fails_closed(tmp_path):
@@ -227,6 +394,8 @@ def test_command_succeeds_timeout_fails_closed(tmp_path):
         )
 
     assert exc.value.code == "DETERMINISTIC_ACCEPTANCE_COMMAND_TIMEOUT"
+    assert exc.value.diagnostics["timed_out"] is True
+    assert exc.value.diagnostics["exit_code"] is None
 
 
 def test_command_succeeds_shell_metacharacters_are_rejected_not_interpreted(tmp_path):

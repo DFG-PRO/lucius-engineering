@@ -250,6 +250,95 @@ class NonBlockingQueueService:
         )
         return checkpoint
 
+    def block_dispatch_selected_item(
+        self,
+        workflow_id: str,
+        item_id: str,
+        *,
+        expected_state: QueueWorkItemState,
+        expected_item_version: int,
+        blocking_state: QueueWorkItemState,
+        blocking_reason: str,
+        blocker_category: str,
+        resume_condition: str,
+        work_completed: list[str] | None = None,
+        implementation_head: str | None = None,
+        pending_decision_or_dependency: str | None = None,
+        known_risks: list[str] | None = None,
+        relevant_artifacts: list[str] | None = None,
+        repair_counters: dict[str, Any] | None = None,
+        approval_requirements: list[str] | None = None,
+        next_safe_action: str = "Repair the failed dispatch precondition, then resolve the queue blocker.",
+        stale_state_validation_requirements: list[str] | None = None,
+        actor: Actor = Actor.LUCIUS,
+    ) -> QueueBlockCheckpoint:
+        if blocking_state not in BLOCKED_STATES:
+            raise QueueStateError(f"Blocking state required, got {blocking_state.value}")
+        if expected_state not in ELIGIBLE_STATES:
+            raise QueueStateError(f"Dispatch-selected item must be READY or READY_TO_RESUME, got {expected_state.value}")
+        workflow = self._workflow(workflow_id)
+        items = self._items(workflow)
+        item = self._item(items, item_id)
+        prior_state = _state(item)
+        if prior_state != expected_state:
+            raise QueueStateError("Stale dispatch selection cannot block newer queue state.")
+        if int(item.get("version", 0)) != expected_item_version:
+            raise QueueStateError("Stale dispatch selection version cannot block newer queue state.")
+        checkpoint = QueueBlockCheckpoint(
+            id=next_id(self.session, "queue_checkpoint"),
+            workflow_id=workflow.id,
+            item_id=item_id,
+            prior_state=prior_state,
+            blocking_state=blocking_state,
+            blocking_reason=blocking_reason,
+            blocker_category=blocker_category,
+            work_completed=work_completed or list(item.get("completed_substeps", [])),
+            implementation_head=implementation_head,
+            pending_decision_or_dependency=pending_decision_or_dependency,
+            resume_condition=resume_condition,
+            known_risks=known_risks or [],
+            relevant_artifacts=relevant_artifacts or [],
+            repair_counters=repair_counters or workflow.repair_counters or {},
+            approval_requirements=approval_requirements or [],
+            next_safe_action=next_safe_action,
+            stale_state_validation_requirements=stale_state_validation_requirements or [
+                "current_block_checkpoint_id matches",
+                "item_state matches blocking_state",
+                "item_version matches checkpoint item_version",
+            ],
+            created_at=utc_now(),
+        )
+        item.setdefault("block_checkpoints", []).append(
+            checkpoint.model_dump(mode="json") | {"item_version": int(item.get("version", 0))}
+        )
+        item["current_block_checkpoint_id"] = checkpoint.id
+        item["blocked_at"] = _now_iso()
+        item["blocking_reason"] = blocking_reason
+        item["blocker_category"] = blocker_category
+        item["resume_condition"] = resume_condition
+        item["work_completed"] = checkpoint.work_completed
+        item["completed_substeps"] = _merge_substeps(
+            list(item.get("completed_substeps", [])),
+            checkpoint.work_completed,
+        )
+        self._set_state(item, blocking_state)
+        workflow.active_task_id = None
+        set_json_field(workflow, "task_backlog", items)
+        set_json_field(workflow, "checkpoint_history", [*workflow.checkpoint_history, checkpoint.id])
+        workflow.updated_at = utc_now()
+        self.session.flush()
+        self.audit.record(
+            event_type="QUEUE_WORK_ITEM_BLOCKED",
+            actor=actor.value,
+            project_id=workflow.project_id,
+            repository_id=workflow.repository_id,
+            task_id=workflow.task_id,
+            action="block_dispatch_selected_queue_work_item",
+            result=blocking_state.value,
+            metadata={"workflow_id": workflow.id, "item_id": item_id, "queue_checkpoint_id": checkpoint.id},
+        )
+        return checkpoint
+
     def resolve_blocker(
         self,
         workflow_id: str,

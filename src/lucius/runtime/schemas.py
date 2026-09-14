@@ -168,6 +168,7 @@ class ModelCapabilityProfile(BaseModel):
     deterministic_verification_required: bool = True
     supervision_required: bool = True
     unattended_eligible: bool = False
+    unattended_mutation_eligible: bool = False
     max_task_complexity: str = "T0"
     default_timeout_seconds: int | None = None
     max_timeout_seconds: int | None = None

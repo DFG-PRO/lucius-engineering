@@ -4,7 +4,17 @@ Phase 1.30 extends Lucius from bounded autonomous read-only local work to bounde
 
 ## Scope and authority
 
-The qualified unattended model remains `qwen3:8b`, limited to T0/T1, LOW-risk, isolated, explicitly rooted and deterministically verifiable work.
+At Phase 1.30 closure, the qualified unattended mutation model was
+`qwen3:8b`, limited to T0/T1, LOW-risk, isolated, explicitly rooted and
+deterministically verifiable work.
+
+Qualification update: later corrected-runtime evidence supersedes the original
+model authorization. `LWORK_000147` / `LMEXEC_000196` / `LQCHK_000092` and
+`LWORK_000148` / `LMEXEC_000197` / `LQCHK_000093` both failed deterministic
+mutation verification after successful provider invocation because the model
+produced invalid or incomplete Python. `qwen3:8b` remains useful for bounded
+read-only or non-mutating local support work, but it is no longer qualified for
+unattended code mutation under the current Lucius runtime contract.
 
 Mutation authority is derived only from `PlanFreeze.plan_payload["affected_files"]`, not from model output, queue metadata or authority-tier labels:
 

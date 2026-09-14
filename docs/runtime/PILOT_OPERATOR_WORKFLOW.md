@@ -334,9 +334,64 @@ isolated workspace is outside the configured roots.
 such as `qwen3-coder:30b` require explicit `SUPERVISED` or `HUMAN_APPROVED`
 operator selection and are still not unattended-authorized.
 
+`qwen3:8b` remains available through the local Ollama provider as a useful
+Tier-1 support model for bounded read-only or otherwise non-mutating workloads.
+It is not qualified for unattended code mutation under the current Lucius
+runtime contract after `LWORK_000147` / `LMEXEC_000196` / `LQCHK_000092` and
+`LWORK_000148` / `LMEXEC_000197` / `LQCHK_000093` both failed deterministic
+mutation verification from model-output quality errors. This conclusion does
+not state that the model is generally incapable of coding; it means the model
+is not reliable enough for unattended mutation in Lucius.
+
 Allowed roots authorize only provider work inside those roots. They do not
 authorize merge, cherry-pick, push, deployment, production operations, live
 trading, money movement, or integration back into a canonical branch.
+
+Unattended mutation queue items must carry explicit structured mutation and
+verification metadata before the runtime planner may create an EngineeringPlan:
+
+```json
+{
+  "item_id": "LWORK_ITEM_001",
+  "state": "READY",
+  "unattended": true,
+  "allowed_mutation_paths": ["src/example.py"],
+  "deterministic_acceptance_checks": [
+    {
+      "type": "file_contains",
+      "path": "src/example.py",
+      "expected_text": "expected retained text"
+    },
+    {
+      "type": "command_succeeds",
+      "argv": [".venv/bin/python", "-m", "pytest", "tests/test_example.py", "-q"],
+      "timeout_seconds": 300
+    }
+  ]
+}
+```
+
+`allowed_mutation_paths` or structured `affected_files` are the only default
+runtime-planner sources for frozen mutation scope. Documentation targets,
+natural-language acceptance criteria, and item prose are not mutation
+authorization, and Lucius must not fall back to `docs/runtime.md`. Unattended
+mutation also requires explicit `deterministic_acceptance_checks`; missing
+checks fail during planning rather than later in provider routing. Read-only
+inspection or reasoning items may omit mutation paths when they are explicitly
+marked read-only, for example with `read_only: true`, `mutation_allowed: false`,
+or an inspection/read-only `task_type`.
+
+When a frozen `command_succeeds` deterministic acceptance check fails during
+local provider mutation verification, Lucius still fails closed and rolls back
+the isolated workspace mutation. The failed runtime result preserves bounded,
+machine-readable diagnostics in provider error metadata and failed verification
+handoff: check type, argv, timeout, exit code or timeout marker, stdout/stderr,
+truncation flags, redaction flags, and the byte limit used. stdout and stderr
+are stored only after bounded capture and secret-like output redaction. The
+stored argv is also a diagnostic representation only: secret-like assignment
+arguments and common split secret flag values are redacted without changing the
+argv actually executed. Prompts, model responses, and arbitrary workspace
+contents are not added to this diagnostic record.
 
 ## Phase 1.23A Closure Policies
 
