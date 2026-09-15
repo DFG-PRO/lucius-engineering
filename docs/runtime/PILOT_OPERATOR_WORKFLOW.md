@@ -393,6 +393,95 @@ arguments and common split secret flag values are redacted without changing the
 argv actually executed. Prompts, model responses, and arbitrary workspace
 contents are not added to this diagnostic record.
 
+## Run Controlled Model Mutation Qualification
+
+Controlled local model mutation qualification uses the same canonical runtime
+path as real work: persistent workflow, ModelExecutionRouter, Ollama provider,
+isolated Git worktree, explicit mutation scope, deterministic acceptance,
+audits, checkpoints, and provider rollback. Qualification mode is supervised
+and does not update model capability profiles, integrate changes, commit, push,
+merge, or deploy.
+
+For the qwen3-coder:30b Darwin hashing qualification, first capture Darwin's
+current `main` HEAD, then run:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite run-model-mutation-qualification \
+  --model-id qwen3-coder:30b \
+  --target-repository "/Volumes/BLACKBOX/2 CODE PROJECTS/Darwin Research Engine/darwin-research-engine" \
+  --target-branch main \
+  --target-baseline "$DARWIN_MAIN_HEAD" \
+  --isolated-worktree "/private/tmp/lucius-qwen3-coder-content-hashing-qualification" \
+  --execution-supervision SUPERVISED \
+  --objective "Create exactly one new file tests/test_content_hashing_model_qualification.py with focused deterministic regression coverage for darwin.content.hashing.sha256_text and sha256_bytes. Prove sha256_text is deterministic, returned hashes begin with sha256:, and sha256_text(text) equals sha256_bytes(text.encode(\"utf-8\")). Do not modify production hashing behavior." \
+  --allowed-mutation-path tests/test_content_hashing_model_qualification.py \
+  --deterministic-acceptance-check '{"type":"file_contains","path":"tests/test_content_hashing_model_qualification.py","expected_text":"def test_sha256_helpers_are_deterministic_and_equivalent_for_utf8_text("}' \
+  --deterministic-acceptance-check '{"type":"command_succeeds","argv":[".venv/bin/python","-m","pytest","tests/test_content_hashing_model_qualification.py","-q"],"timeout_seconds":300}' \
+  --deterministic-acceptance-check '{"type":"command_succeeds","argv":[".venv/bin/python","-m","pytest","-q"],"timeout_seconds":300}' \
+  --immutable-verifier-check '{"type":"command_succeeds","argv":[".venv/bin/python","-m","pytest","tests/test_content_hashing_model_qualification_verifier.py","-q"],"timeout_seconds":300}' \
+  --ollama-mutation-num-predict 1024
+```
+
+The qualification task may create only
+`tests/test_content_hashing_model_qualification.py`, and the test must verify
+`darwin.content.hashing.sha256_text` and `sha256_bytes` determinism, prefix,
+and UTF-8 equivalence. If the existing qwen3-coder:30b profile rejects the run,
+Lucius must report the router blocker rather than bypassing supervision,
+schema, or capability policy.
+
+Syntax/regression acceptance checks prove that the generated file has expected
+shape and that pytest exits successfully. They are necessary but not sufficient
+for model qualification, because a trivial test body can still pass. Semantic
+or behavioral qualification acceptance should be supplied as an immutable
+verifier command. The verifier file must already exist in the target baseline,
+must not be inside `allowed_mutation_paths`, and is run through the same
+`command_succeeds` deterministic primitive after mutation. If the model alters
+or tries to authorize the verifier as a mutation target, qualification fails
+closed.
+
+When the target repository already has a local `.venv`, the qualification
+harness links the isolated worktree `.venv` to that target environment so
+frozen `command_succeeds` checks such as `.venv/bin/python -m pytest ...` can
+execute. The harness does not copy or mutate the target environment, does not
+stage the symlink, verifies the resolved environment remains the target
+repository `.venv`, and fails closed on conflicting or unsafe `.venv` state.
+
+Real qwen3-coder:30b Stage 1 qualification evidence against Darwin baseline
+`29db80f7ade0b30ff0b934c4511b7e344acd1213` closed as follows:
+
+- `LWORK_000149` / `LTASK_000298`: `FAILED` with `PROVIDER_TIMEOUT` at the
+  original 60-second provider allowance. Provider invocation reached local
+  Ollama, deterministic verification did not run, and the worktree was clean
+  after fail-closed handling. This is infrastructure/configuration evidence,
+  not model-quality evidence.
+- `LWORK_000150` / `LTASK_000299`: `FAILED` because deterministic acceptance
+  could not execute `.venv/bin/python` in the isolated worktree. This exposed
+  the missing reusable target-environment linkage and is infrastructure
+  evidence, not model-quality evidence.
+- `LWORK_000151` / `LTASK_000300`: runtime `COMPLETED`, but human inspection
+  found the only generated qualification test contained a function body of
+  `pass`. The run is recorded as `SEMANTIC_FALSE_POSITIVE`, not a successful
+  model qualification. It proves that pytest success over worker-authored tests
+  is insufficient for semantic qualification.
+- `LWORK_000152` / `LTASK_000301`: `FAILED` with
+  `DETERMINISTIC_MUTATION_VERIFICATION_FAILED` after an immutable verifier
+  rejected the generated qualification test for lacking behavioral assertions.
+  The failure was non-retryable, diagnostics were preserved, rollback completed,
+  and the worktree was clean after fail-closed handling. This is model-quality
+  evidence.
+
+Permanent qualification principle: `WORKER != EXAMINER`. Tests or checks
+authored inside the worker model's allowed mutation scope cannot by themselves
+establish semantic correctness. Where semantic correctness matters, acceptance
+must include deterministic evidence outside the worker's mutable authority.
+
+Closure decision: `qwen3-coder:30b` remains under its existing supervised,
+schema-constrained local policy and receives no unattended T1 code-mutation
+promotion from these runs. Do not retry this hashing benchmark or proceed to a
+Stage 2 production mutation under an unattended qualification claim. Future
+requalification requires materially new evidence, model conditions, or runtime
+conditions, not prompt tuning against this benchmark.
+
 ## Phase 1.23A Closure Policies
 
 Plan freeze now enforces planning-claim semantics for direct ORM-created plans

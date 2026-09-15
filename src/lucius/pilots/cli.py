@@ -107,6 +107,28 @@ def main() -> None:
     )
     runtime_loop.add_argument("--stop-on-block", action="store_true")
 
+    qualification = sub.add_parser("run-model-mutation-qualification")
+    qualification.add_argument("--model-id", required=True)
+    qualification.add_argument("--target-repository", type=Path, required=True)
+    qualification.add_argument("--target-branch", default="main")
+    qualification.add_argument("--target-baseline", required=True)
+    qualification.add_argument("--isolated-worktree", type=Path)
+    qualification.add_argument(
+        "--execution-supervision",
+        choices=["SUPERVISED", "HUMAN_APPROVED"],
+        default="SUPERVISED",
+    )
+    qualification.add_argument("--allowed-mutation-path", action="append", required=True)
+    qualification.add_argument("--deterministic-acceptance-check", action="append", default=[])
+    qualification.add_argument("--deterministic-acceptance-checks-file", type=Path)
+    qualification.add_argument("--immutable-verifier-check", action="append", default=[])
+    qualification.add_argument("--immutable-verifier-checks-file", type=Path)
+    qualification.add_argument("--objective", default="Run a controlled local model code-mutation qualification task.")
+    qualification.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
+    qualification.add_argument("--ollama-timeout-seconds", type=int, default=60)
+    qualification.add_argument("--ollama-mutation-num-predict", type=int, default=1024)
+    qualification.add_argument("--bootstrap-only", action="store_true")
+
     args = parser.parse_args()
     lock_timeout = float(os.environ.get("LUCIUS_ARTIFACT_STORE_LOCK_TIMEOUT_SECONDS", "10.0"))
     lock = (
@@ -160,6 +182,34 @@ def _run_command(args: argparse.Namespace) -> None:
                 ),
                 evaluation_version=args.evaluation_version,
                 actor=Actor.LUCIUS,
+            )
+            session.commit()
+            print(result.model_dump_json(indent=2))
+        elif args.command == "run-model-mutation-qualification":
+            from lucius.runtime.qualification import (
+                ModelMutationQualificationConfig,
+                run_model_mutation_qualification,
+            )
+            from lucius.runtime.schemas import RuntimeExecutionSupervision
+
+            result = run_model_mutation_qualification(
+                session,
+                ModelMutationQualificationConfig(
+                    model_id=args.model_id,
+                    target_repository=args.target_repository,
+                    target_branch=args.target_branch,
+                    target_baseline=args.target_baseline,
+                    isolated_worktree=args.isolated_worktree,
+                    execution_supervision=RuntimeExecutionSupervision(args.execution_supervision),
+                    allowed_mutation_paths=args.allowed_mutation_path,
+                    deterministic_acceptance_checks=_qualification_acceptance_checks(args),
+                    immutable_verifier_checks=_qualification_immutable_verifier_checks(args),
+                    objective=args.objective,
+                    ollama_endpoint=args.ollama_endpoint,
+                    ollama_timeout_seconds=args.ollama_timeout_seconds,
+                    ollama_mutation_num_predict=args.ollama_mutation_num_predict,
+                    execute=not args.bootstrap_only,
+                ),
             )
             session.commit()
             print(result.model_dump_json(indent=2))
@@ -319,6 +369,7 @@ def _requires_store_write_serialization(command: str) -> bool:
         "queue-start",
         "queue-global-start",
         "run-runtime-loop",
+        "run-model-mutation-qualification",
     }
 
 
@@ -341,6 +392,58 @@ def _ollama_allowed_workspace_roots(args: argparse.Namespace) -> list[Path] | No
     if raw_env:
         roots.extend(Path(root).expanduser().resolve() for root in raw_env.split(os.pathsep) if root.strip())
     return roots or None
+
+
+def _qualification_acceptance_checks(args: argparse.Namespace) -> list[dict]:
+    checks: list[dict] = []
+    for raw in getattr(args, "deterministic_acceptance_check", []) or []:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise SystemExit("--deterministic-acceptance-check must be a JSON object")
+        checks.append(parsed)
+    checks_file = getattr(args, "deterministic_acceptance_checks_file", None)
+    if checks_file:
+        parsed_file = json.loads(checks_file.read_text(encoding="utf-8"))
+        if not isinstance(parsed_file, list) or not all(isinstance(item, dict) for item in parsed_file):
+            raise SystemExit("--deterministic-acceptance-checks-file must contain a JSON list of objects")
+        checks.extend(parsed_file)
+    if not checks:
+        raise SystemExit("At least one deterministic acceptance check is required.")
+    return checks
+
+
+def _qualification_immutable_verifier_checks(args: argparse.Namespace) -> list[dict]:
+    return _qualification_json_checks(
+        getattr(args, "immutable_verifier_check", []) or [],
+        getattr(args, "immutable_verifier_checks_file", None),
+        option_name="--immutable-verifier-check",
+        file_option_name="--immutable-verifier-checks-file",
+        require_any=False,
+    )
+
+
+def _qualification_json_checks(
+    raw_items: list[str],
+    checks_file: Path | None,
+    *,
+    option_name: str,
+    file_option_name: str,
+    require_any: bool,
+) -> list[dict]:
+    checks: list[dict] = []
+    for raw in raw_items:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise SystemExit(f"{option_name} must be a JSON object")
+        checks.append(parsed)
+    if checks_file:
+        parsed_file = json.loads(checks_file.read_text(encoding="utf-8"))
+        if not isinstance(parsed_file, list) or not all(isinstance(item, dict) for item in parsed_file):
+            raise SystemExit(f"{file_option_name} must contain a JSON list of objects")
+        checks.extend(parsed_file)
+    if require_any and not checks:
+        raise SystemExit("At least one deterministic acceptance check is required.")
+    return checks
 
 
 if __name__ == "__main__":
