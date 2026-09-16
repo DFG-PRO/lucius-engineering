@@ -71,6 +71,62 @@ def provision_controlled_mutation(
         raise
 
 
+def _resolve_or_create_project(
+    session: Session,
+    *,
+    project_spec: dict[str, Any],
+    workspace: Path,
+) -> ProjectORM:
+    requested_name = project_spec["name"]
+    requested_slug = project_spec["slug"]
+
+    by_name = session.scalar(
+        select(ProjectORM).where(ProjectORM.name == requested_name)
+    )
+    by_slug = session.scalar(
+        select(ProjectORM).where(ProjectORM.slug == requested_slug)
+    )
+
+    if by_name is not None and by_slug is not None and by_name.id != by_slug.id:
+        raise ControlledMutationProvisioningError(
+            "Controlled mutation project identity conflict: "
+            f"name {requested_name!r} and slug {requested_slug!r} "
+            "resolve to different existing projects."
+        )
+
+    existing = by_name or by_slug
+
+    if existing is not None:
+        if by_slug is existing and existing.name != requested_name:
+            raise ControlledMutationProvisioningError(
+                "Controlled mutation project identity conflict: "
+                f"slug {requested_slug!r} already belongs to "
+                f"project {existing.name!r}, not {requested_name!r}."
+            )
+
+        return existing
+
+    project = ProjectORM(
+        id=next_id(session, "project"),
+        name=requested_name,
+        slug=requested_slug,
+        organization=project_spec.get("organization"),
+        project_type="ENGINEERING",
+        status="ACTIVE",
+        description=project_spec.get("description"),
+        workspace_scope=str(workspace),
+        documentation_policy={
+            "canonical_target_documentation_required": True,
+        },
+        default_authority_level=AuthorityLevel.L1.value,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session.add(project)
+    session.flush()
+    return project
+
+
 def _provision_controlled_mutation(
     session: Session,
     specification: dict[str, Any],
@@ -94,24 +150,11 @@ def _provision_controlled_mutation(
         frozen_head=repository_spec["frozen_head"],
     )
 
-    project = ProjectORM(
-        id=next_id(session, "project"),
-        name=project_spec["name"],
-        slug=project_spec["slug"],
-        organization=project_spec.get("organization"),
-        project_type="ENGINEERING",
-        status="ACTIVE",
-        description=project_spec.get("description"),
-        workspace_scope=str(workspace),
-        documentation_policy={
-            "canonical_target_documentation_required": True,
-        },
-        default_authority_level=AuthorityLevel.L1.value,
-        created_at=utc_now(),
-        updated_at=utc_now(),
+    project = _resolve_or_create_project(
+        session,
+        project_spec=project_spec,
+        workspace=workspace,
     )
-    session.add(project)
-    session.flush()
 
     repository = RepositoryRegistrationORM(
         id=next_id(session, "repository"),

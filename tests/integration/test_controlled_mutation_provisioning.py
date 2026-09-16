@@ -315,6 +315,63 @@ def test_canonical_baseline_must_match(session, tmp_path: Path):
         provision_controlled_mutation(session, specification)
 
 
+def test_reuses_existing_project_when_name_matches_but_slug_differs(
+    session,
+    tmp_path: Path,
+):
+    specification, _ = _setup(tmp_path)
+
+    existing = ProjectORM(
+        id="LPROJ_009999",
+        name=specification["project"]["name"],
+        slug="existing-darwin-project",
+        organization=None,
+        project_type="R_AND_D",
+        status="ACTIVE",
+        description="Existing canonical Darwin project.",
+        workspace_scope=None,
+        documentation_policy={},
+        default_authority_level="L0",
+        created_at=__import__(
+            "lucius.persistence.orm",
+            fromlist=["utc_now"],
+        ).utc_now(),
+        updated_at=__import__(
+            "lucius.persistence.orm",
+            fromlist=["utc_now"],
+        ).utc_now(),
+    )
+    session.add(existing)
+    session.flush()
+
+    result = provision_controlled_mutation(
+        session,
+        specification,
+    )
+
+    assert len(result) == 1
+
+    projects = session.scalars(
+        select(ProjectORM)
+    ).all()
+
+    assert len(projects) == 1
+    assert projects[0].id == existing.id
+    assert projects[0].name == specification["project"]["name"]
+    assert projects[0].slug == "existing-darwin-project"
+
+    task = session.scalar(select(TaskORM))
+    repository = session.scalar(
+        select(RepositoryRegistrationORM)
+    )
+
+    assert task is not None
+    assert repository is not None
+    assert task.project_id == existing.id
+    assert repository.project_id == existing.id
+
+
+
 def test_duplicate_provisioning_is_rejected(session, tmp_path: Path):
     specification, _ = _setup(tmp_path)
 
