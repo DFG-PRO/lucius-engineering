@@ -14,6 +14,11 @@ from lucius.pilots.evaluation import EngineeringPlanEvaluationService
 from lucius.pilots.freeze import PlanFreezeService
 from lucius.pilots.queue import NonBlockingQueueService, QueueStateError
 from lucius.pilots.release import ReleaseGateService
+from lucius.pilots.provisioning import (
+    ReadOnlyBacklogProvisioningError,
+    load_specification,
+    provision_read_only_backlog,
+)
 from lucius.pilots.repository_state import RepositoryStateError, RepositoryStateService
 from lucius.pilots.rubric import HumanRubricService
 from lucius.repositories.schemas import WorkspaceContext
@@ -84,6 +89,9 @@ def main() -> None:
 
     queue_global_start = sub.add_parser("queue-global-start")
     queue_global_start.add_argument("workflow_ids", nargs="*")
+
+    provision = sub.add_parser("provision-read-only-backlog")
+    provision.add_argument("--spec", type=Path, required=True)
 
     runtime_loop = sub.add_parser("run-runtime-loop")
     runtime_loop.add_argument("workflow_ids", nargs="+")
@@ -309,6 +317,15 @@ def _run_command(args: argparse.Namespace) -> None:
                 raise SystemExit(1) from error
             session.commit()
             print(result.model_dump_json(indent=2))
+        elif args.command == "provision-read-only-backlog":
+            try:
+                result = provision_read_only_backlog(session, load_specification(args.spec))
+            except ReadOnlyBacklogProvisioningError as error:
+                session.rollback()
+                print(json.dumps({"result": "BLOCKED", "reason": str(error)}, indent=2))
+                raise SystemExit(1) from error
+            session.commit()
+            print(json.dumps({"result": "PROVISIONED", "workflows": result}, indent=2))
         elif args.command == "run-runtime-loop":
             from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
             from lucius.runtime.ollama import OllamaExecutionProvider
@@ -368,6 +385,7 @@ def _requires_store_write_serialization(command: str) -> bool:
         "compute-release-gate",
         "queue-start",
         "queue-global-start",
+        "provision-read-only-backlog",
         "run-runtime-loop",
         "run-model-mutation-qualification",
     }
