@@ -32,7 +32,7 @@ from lucius.runtime.schemas import (
 )
 from lucius.runtime.schema_constraints import SKELETON_METADATA_KEY
 
-DEFAULT_OLLAMA_NUM_PREDICT = 256
+DEFAULT_OLLAMA_NUM_PREDICT = 512
 DEFAULT_MUTATION_NUM_PREDICT = 256
 MAX_MUTATION_NUM_PREDICT = 4096
 DEFAULT_MAX_CONTEXT_FILE_BYTES = 20_000
@@ -161,12 +161,25 @@ class OllamaExecutionProvider:
                 if not runtime_request.read_only
                 else []
             )
+            read_only_context = (
+                self._read_only_file_context(
+                    workspace,
+                    runtime_request.context_limits.get("read_only_context_paths", []),
+                )
+                if runtime_request.read_only
+                else []
+            )
             num_predict = (
                 DEFAULT_OLLAMA_NUM_PREDICT
                 if runtime_request.read_only
                 else self.mutation_num_predict
             )
-            prompt = _build_prompt(runtime_request, workspace, mutation_context=mutation_context)
+            prompt = _build_prompt(
+                runtime_request,
+                workspace,
+                mutation_context=mutation_context,
+                read_only_context=read_only_context,
+            )
             response = self._post(
                 "/api/generate",
                 {
@@ -202,29 +215,29 @@ class OllamaExecutionProvider:
                             "type": "object",
                             "properties": {
                                 "summary": {"type": "string"},
-                                "completed_substeps": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
                                 "files": {
                                     "type": "array",
                                     "maxItems": 0,
                                 },
-                                "verification": {
+                                "evidence_refs": {
                                     "type": "array",
-                                    "items": {"type": "object"},
-                                },
-                                "documentation": {
-                                    "type": "array",
-                                    "items": {"type": "object"},
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "path": {"type": "string"},
+                                            "exact_fragment": {"type": "string"},
+                                        },
+                                        "required": ["path", "exact_fragment"],
+                                        "additionalProperties": False,
+                                    },
                                 },
                             },
                             "required": [
                                 "summary",
-                                "completed_substeps",
                                 "files",
-                                "verification",
-                                "documentation",
+                                "evidence_refs",
                             ],
                             "additionalProperties": False,
                         }
@@ -249,6 +262,11 @@ class OllamaExecutionProvider:
                         "READ_ONLY_MUTATION_ATTEMPT",
                         "Ollama response contained malformed file-change data for a read-only request.",
                     )
+                deterministic_read_only_verification = _verify_read_only_evidence(
+                    workspace,
+                    read_only_context,
+                    payload.get("evidence_refs"),
+                )
                 latency_ms = _latency_ms(response.body, started)
                 prompt_tokens = _optional_int(response.body.get("prompt_eval_count"))
                 output_tokens = _optional_int(response.body.get("eval_count"))
@@ -274,7 +292,7 @@ class OllamaExecutionProvider:
                             "num_predict": num_predict,
                         }
                     ],
-                    verification=_verification(payload, []),
+                    verification=deterministic_read_only_verification,
                     documentation=_dict_list(payload.get("documentation")),
                     active_execution_seconds=max(0.0, time.monotonic() - started),
                     latency_ms=latency_ms,
@@ -289,6 +307,8 @@ class OllamaExecutionProvider:
                         "endpoint": self.endpoint,
                         "model_response_captured": True,
                         "read_only": True,
+                        "deterministic_read_only_verification": True,
+                        "verified_evidence_refs": len(deterministic_read_only_verification),
                         "num_predict": num_predict,
                     },
                 )
@@ -476,6 +496,46 @@ class OllamaExecutionProvider:
         with request.urlopen(req, timeout=timeout_seconds) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return OllamaHttpResponse(status=resp.status, body=data)
+
+    def _read_only_file_context(
+        self,
+        workspace: Path,
+        relative_paths: list[str],
+    ) -> list[dict[str, Any]]:
+        if not relative_paths:
+            raise _ProviderBlocked(
+                "MISSING_READ_ONLY_CONTEXT",
+                "Read-only repository-grounded execution requires explicit read_only_context_paths.",
+            )
+        root = workspace.resolve()
+        context: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw_path in relative_paths:
+            relative_path = str(raw_path).strip()
+            if not relative_path or relative_path in seen:
+                continue
+            path = (root / relative_path).resolve()
+            if not _is_relative_to(path, root):
+                raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Path escapes workspace: {relative_path}")
+            if not path.is_file():
+                raise _ProviderBlocked("MISSING_READ_ONLY_CONTEXT", f"Context file does not exist: {relative_path}")
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise _ProviderBlocked(
+                    "INVALID_READ_ONLY_CONTEXT",
+                    f"Context file is not UTF-8 text: {relative_path}",
+                ) from exc
+            if len(content.encode("utf-8")) > 200_000:
+                raise _ProviderBlocked(
+                    "READ_ONLY_CONTEXT_TOO_LARGE",
+                    f"Context file exceeds 200000 bytes: {relative_path}",
+                )
+            seen.add(relative_path)
+            context.append({"path": relative_path, "content": content})
+        if not context:
+            raise _ProviderBlocked("MISSING_READ_ONLY_CONTEXT", "No usable read-only context files were supplied.")
+        return context
 
     def _validate_workspace(self, runtime_request: RuntimeExecutionRequest) -> Path:
         if runtime_request.isolation_mode != "ISOLATED_WORKTREE":
@@ -811,6 +871,7 @@ def _build_prompt(
     workspace: Path,
     *,
     mutation_context: list[dict[str, Any]] | None = None,
+    read_only_context: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
         "You are a bounded local execution provider for Lucius.",
@@ -820,7 +881,7 @@ def _build_prompt(
         "Schema:",
         '{"edits":[{"path":"relative/path","old":"exact existing fragment","new":"replacement fragment"}]}'
         if not runtime_request.read_only
-        else '{"summary":"...","completed_substeps":["..."],"files":[],"verification":[{"result":"PASS","detail":"..."}],"documentation":[]}',
+        else '{"summary":"brief repository-grounded finding","files":[],"evidence_refs":[{"path":"authorized/relative/path","exact_fragment":"exact copied fragment"}]}',
         f"Execution id: {runtime_request.execution_id}",
         f"Task id: {runtime_request.task_id}",
         f"Plan id: {runtime_request.plan_id}",
@@ -856,7 +917,7 @@ def _build_prompt(
         f"Workspace: {workspace}",
         f"Task intent: {runtime_request.task_intent}",
         "Keep the change tiny, deterministic, and automatically verifiable.",
-        "This is a read-only request. Do not return file changes; files must be an empty array."
+        "This is read-only. Keep summary concise. files must be []. Return 1-3 evidence_refs only."
         if runtime_request.read_only
         else (
             "Return only the minimal JSON object required by the mutation schema. "
@@ -866,6 +927,23 @@ def _build_prompt(
         "For evidence-sensitive work, label quantitative statements as FACT, DERIVED_VALUE, ASSUMPTION, PROPOSED_PARAMETER, or UNKNOWN.",
         "Do not present proposed protocol values, thresholds, dates, costs, markets, credentials, or performance as facts without supplied evidence.",
     ]
+    if runtime_request.read_only:
+        lines.extend(
+            [
+                "Only the supplied repository context is authoritative.",
+                "Support the summary with 1-3 evidence_refs using authorized paths and exact non-empty copied fragments.",
+                "Do not invent repository facts.",
+            ]
+        )
+        for item in read_only_context or []:
+            lines.extend(
+                [
+                    f"--- BEGIN AUTHORIZED READ-ONLY FILE: {item['path']} ---",
+                    item["content"],
+                    f"--- END AUTHORIZED READ-ONLY FILE: {item['path']} ---",
+                ]
+            )
+
     if not runtime_request.read_only:
         lines.extend(
             [
@@ -1053,6 +1131,55 @@ def _bounded_num_predict(value: Any, *, max_num_predict: int) -> int:
     if value > max_num_predict:
         raise ValueError("mutation_num_predict exceeds hard maximum")
     return value
+
+
+def _verify_read_only_evidence(
+    workspace: Path,
+    read_only_context: list[dict[str, Any]],
+    evidence_refs: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        raise _ProviderBlocked(
+            "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+            "Read-only execution returned no repository evidence references.",
+        )
+
+    authorized = {item["path"]: item["content"] for item in read_only_context}
+    verified: list[dict[str, Any]] = []
+
+    for ref in evidence_refs:
+        if not isinstance(ref, dict):
+            raise _ProviderBlocked(
+                "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+                "Repository evidence reference must be an object.",
+            )
+        path = ref.get("path")
+        fragment = ref.get("exact_fragment")
+        if not isinstance(path, str) or path not in authorized:
+            raise _ProviderBlocked(
+                "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+                f"Repository evidence path is not authorized: {path}",
+            )
+        if not isinstance(fragment, str) or not fragment.strip():
+            raise _ProviderBlocked(
+                "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+                f"Repository evidence fragment is empty for: {path}",
+            )
+        if fragment not in authorized[path]:
+            raise _ProviderBlocked(
+                "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+                f"Repository evidence fragment was not found in frozen context: {path}",
+            )
+        verified.append(
+            {
+                "result": "PASS",
+                "type": "deterministic_repository_evidence",
+                "path": path,
+                "detail": "Exact model-cited fragment exists in the frozen authorized read-only context.",
+            }
+        )
+
+    return verified
 
 
 def _verification(payload: dict[str, Any], written_files: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -455,3 +455,96 @@ def _queue_evaluation_row(
     row.evaluated_at = utc_now()
     session.flush()
     return row
+
+
+def test_blocked_item_configuration_repair_is_bounded_and_does_not_resume(session):
+    workflow = _workflow(session)
+    queue = NonBlockingQueueService(session)
+    queue.start_next(workflow.id)
+    checkpoint = queue.block_running_item(
+        workflow.id,
+        "A1",
+        blocking_state=QueueWorkItemState.WAITING_HUMAN,
+        blocking_reason="Runtime configuration requires repair.",
+        blocker_category="NO_ELIGIBLE_PROVIDER",
+        resume_condition="Repair configuration and revalidate.",
+    )
+
+    repaired = queue.repair_blocked_item_configuration(
+        workflow.id,
+        "A1",
+        checkpoint_id=checkpoint.id,
+        expected_item_version=2,
+        timeout_seconds=120,
+        context_limits_patch={"deterministic_verification": True},
+    )
+
+    assert repaired["state"] == QueueWorkItemState.WAITING_HUMAN.value
+    assert repaired["version"] == 3
+    assert repaired["timeout_seconds"] == 120
+    assert repaired["context_limits"]["deterministic_verification"] is True
+    assert repaired["current_block_checkpoint_id"] == checkpoint.id
+
+    resolved = queue.resolve_blocker(
+        workflow.id,
+        "A1",
+        checkpoint_id=checkpoint.id,
+        expected_item_version=3,
+        resolution_event="configuration_repaired_and_revalidated",
+    )
+    assert resolved["state"] == QueueWorkItemState.READY_TO_RESUME.value
+    assert resolved["version"] == 4
+
+
+def test_blocked_item_configuration_repair_rejects_unsafe_context_changes(session):
+    workflow = _workflow(session)
+    queue = NonBlockingQueueService(session)
+    queue.start_next(workflow.id)
+    checkpoint = queue.block_running_item(
+        workflow.id,
+        "A1",
+        blocking_state=QueueWorkItemState.WAITING_HUMAN,
+        blocking_reason="Runtime configuration requires repair.",
+        blocker_category="NO_ELIGIBLE_PROVIDER",
+        resume_condition="Repair configuration and revalidate.",
+    )
+
+    try:
+        queue.repair_blocked_item_configuration(
+            workflow.id,
+            "A1",
+            checkpoint_id=checkpoint.id,
+            expected_item_version=2,
+            context_limits_patch={"external_side_effects": True},
+        )
+    except QueueStateError as error:
+        assert "Unsafe context_limits repair keys" in str(error)
+    else:
+        raise AssertionError("Unsafe context repair should fail closed")
+
+
+def test_blocked_item_configuration_repair_rejects_stale_version(session):
+    workflow = _workflow(session)
+    queue = NonBlockingQueueService(session)
+    queue.start_next(workflow.id)
+    checkpoint = queue.block_running_item(
+        workflow.id,
+        "A1",
+        blocking_state=QueueWorkItemState.WAITING_HUMAN,
+        blocking_reason="Runtime configuration requires repair.",
+        blocker_category="NO_ELIGIBLE_PROVIDER",
+        resume_condition="Repair configuration and revalidate.",
+    )
+
+    try:
+        queue.repair_blocked_item_configuration(
+            workflow.id,
+            "A1",
+            checkpoint_id=checkpoint.id,
+            expected_item_version=1,
+            timeout_seconds=120,
+        )
+    except QueueStateError as error:
+        assert "Stale item version" in str(error)
+    else:
+        raise AssertionError("Stale repair should fail closed")

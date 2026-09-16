@@ -180,6 +180,59 @@ def test_runtime_task_local_semantic_failure_allows_independent_work_but_not_dep
     assert states["DARWIN-DEPENDENT"] == QueueWorkItemState.READY.value
 
 
+def test_runtime_truncated_model_output_is_task_local_and_continues_independent_work(session):
+    failed = _item("DARWIN-OUTPUT-TRUNCATED", order=1)
+    independent = _item("DARWIN-INDEPENDENT-AFTER-TRUNCATION", order=2)
+    dependent = _item("DARWIN-DEPENDENT-ON-TRUNCATION", order=3)
+    dependent["dependencies"] = ["DARWIN-OUTPUT-TRUNCATED"]
+
+    workflow = _workflow(
+        session,
+        project_id="DARWIN",
+        backlog=[failed, independent, dependent],
+    )
+
+    result = _runtime(
+        session,
+        ScriptedExecutionAdapter(
+            {
+                "DARWIN-OUTPUT-TRUNCATED": ExecutionAdapterResult(
+                    outcome="FAILED",
+                    blocking_reason="Model output ended before valid JSON completed.",
+                    blocker_category="OLLAMA_OUTPUT_TRUNCATED",
+                    failure_class="OLLAMA_OUTPUT_TRUNCATED",
+                )
+            }
+        ),
+    ).run(
+        RuntimeLoopConfig(
+            workflow_ids=[workflow.id],
+            max_tasks=3,
+        )
+    )
+
+    row = session.get(PersistentWorkflowORM, workflow.id)
+    states = {item["item_id"]: item["state"] for item in row.task_backlog}
+
+    assert result.selected_tasks == 2
+    assert result.blocked_tasks == 1
+    assert result.completed_tasks == 1
+    assert result.stopped_reason == "NO_ELIGIBLE_MULTI_PROJECT_WORK"
+
+    assert (
+        states["DARWIN-OUTPUT-TRUNCATED"]
+        == QueueWorkItemState.WAITING_HUMAN.value
+    )
+    assert (
+        states["DARWIN-INDEPENDENT-AFTER-TRUNCATION"]
+        == QueueWorkItemState.COMPLETED.value
+    )
+    assert (
+        states["DARWIN-DEPENDENT-ON-TRUNCATION"]
+        == QueueWorkItemState.READY.value
+    )
+
+
 def test_runtime_counts_ready_to_resume_without_repeating_completed_substeps(session):
     workflow = _workflow(
         session,

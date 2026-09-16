@@ -339,6 +339,98 @@ class NonBlockingQueueService:
         )
         return checkpoint
 
+    def repair_blocked_item_configuration(
+        self,
+        workflow_id: str,
+        item_id: str,
+        *,
+        checkpoint_id: str,
+        expected_item_version: int,
+        timeout_seconds: int | None = None,
+        context_limits_patch: dict[str, Any] | None = None,
+        actor: Actor = Actor.LUCIUS,
+    ) -> dict[str, Any]:
+        workflow = self._workflow(workflow_id)
+        items = self._items(workflow)
+        item = self._item(items, item_id)
+
+        if item.get("current_block_checkpoint_id") != checkpoint_id:
+            raise QueueStateError("Stale checkpoint cannot repair newer queue state.")
+        if int(item.get("version", 0)) != expected_item_version:
+            raise QueueStateError("Stale item version cannot repair queue state.")
+        if _state(item) not in BLOCKED_STATES:
+            raise QueueStateError(f"Blocked item required, got {_state(item).value}")
+
+        before = {
+            "timeout_seconds": item.get("timeout_seconds"),
+            "context_limits": deepcopy(item.get("context_limits", {})),
+        }
+
+        if timeout_seconds is not None:
+            if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+                raise QueueStateError("timeout_seconds repair must be a positive integer.")
+            item["timeout_seconds"] = timeout_seconds
+
+        allowed_context_limit_keys = {
+            "deterministic_verification",
+            "read_only_context_paths",
+        }
+        patch = dict(context_limits_patch or {})
+        forbidden = sorted(set(patch) - allowed_context_limit_keys)
+        if forbidden:
+            raise QueueStateError(
+                f"Unsafe context_limits repair keys are not allowed: {', '.join(forbidden)}"
+            )
+        if "deterministic_verification" in patch and patch["deterministic_verification"] is not True:
+            raise QueueStateError("deterministic_verification repair may only set the value to true.")
+        if "read_only_context_paths" in patch:
+            paths = patch["read_only_context_paths"]
+            if (
+                not isinstance(paths, list)
+                or not paths
+                or any(not isinstance(path, str) or not path.strip() for path in paths)
+            ):
+                raise QueueStateError(
+                    "read_only_context_paths repair requires a non-empty list of non-empty strings."
+                )
+
+        context_limits = dict(item.get("context_limits", {}))
+        context_limits.update(patch)
+        item["context_limits"] = context_limits
+
+        previous_version = int(item.get("version", 0))
+        item["version"] = previous_version + 1
+        item["updated_at"] = _now_iso()
+
+        after = {
+            "timeout_seconds": item.get("timeout_seconds"),
+            "context_limits": deepcopy(item.get("context_limits", {})),
+        }
+
+        set_json_field(workflow, "task_backlog", items)
+        workflow.updated_at = utc_now()
+        self.session.flush()
+
+        self.audit.record(
+            event_type="QUEUE_WORK_ITEM_CONFIGURATION_REPAIRED",
+            actor=actor.value,
+            project_id=workflow.project_id,
+            repository_id=workflow.repository_id,
+            task_id=workflow.task_id,
+            action="repair_blocked_queue_work_item_configuration",
+            result=item_id,
+            metadata={
+                "workflow_id": workflow.id,
+                "item_id": item_id,
+                "queue_checkpoint_id": checkpoint_id,
+                "previous_version": previous_version,
+                "new_version": int(item["version"]),
+                "before": before,
+                "after": after,
+            },
+        )
+        return deepcopy(item)
+
     def resolve_blocker(
         self,
         workflow_id: str,

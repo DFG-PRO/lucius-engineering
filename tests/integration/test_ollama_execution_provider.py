@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from argparse import Namespace
 import os
@@ -656,8 +657,15 @@ def test_ollama_malformed_json_protection_remains(tmp_path):
 
 
 def test_ollama_read_only_request_rejects_file_changes_without_writing(tmp_path):
+    (tmp_path / "source.py").write_text("def grounded():\\n    return True\\n")
     provider = FakeOllamaProvider(tmp_path)
-    request = _request(tmp_path).model_copy(update={"read_only": True, "required_capabilities": ["inspection_reasoning"]})
+    request = _request(tmp_path).model_copy(
+        update={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "context_limits": {"read_only_context_paths": ["source.py"]},
+        }
+    )
 
     result = provider.invoke(request)
 
@@ -665,7 +673,87 @@ def test_ollama_read_only_request_rejects_file_changes_without_writing(tmp_path)
     assert result.failure_class == "READ_ONLY_MUTATION_ATTEMPT"
     assert not (tmp_path / "provider-proof.txt").exists()
     assert provider.last_payload is not None
-    assert "read-only request" in provider.last_payload["prompt"]
+    assert "This is read-only" in provider.last_payload["prompt"]
+    assert "def grounded():" in provider.last_payload["prompt"]
+
+
+def test_ollama_read_only_grounding_verifies_exact_repository_fragment(tmp_path):
+    (tmp_path / "source.py").write_text("def grounded():\n    return True\n")
+    provider = GroundedReadOnlyOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(
+        update={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "context_limits": {"read_only_context_paths": ["source.py"]},
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "COMPLETED"
+    assert result.verification
+    assert result.verification[0]["result"] == "PASS"
+    assert result.verification[0]["type"] == "deterministic_repository_evidence"
+    assert result.verification[0]["path"] == "source.py"
+    assert result.verification_handoff_metadata["deterministic_read_only_verification"] is True
+    assert "def grounded():" in provider.last_payload["prompt"]
+
+
+def test_ollama_read_only_grounding_rejects_invented_fragment(tmp_path):
+    (tmp_path / "source.py").write_text("def grounded():\n    return True\n")
+    provider = GroundedReadOnlyOllamaProvider(
+        tmp_path,
+        evidence_fragment="def invented():",
+    )
+    request = _request(tmp_path).model_copy(
+        update={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "context_limits": {"read_only_context_paths": ["source.py"]},
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED"
+
+
+def test_ollama_read_only_grounding_rejects_unauthorized_evidence_path(tmp_path):
+    (tmp_path / "source.py").write_text("def grounded():\n    return True\n")
+    provider = GroundedReadOnlyOllamaProvider(
+        tmp_path,
+        evidence_path="other.py",
+    )
+    request = _request(tmp_path).model_copy(
+        update={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "context_limits": {"read_only_context_paths": ["source.py"]},
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED"
+
+
+def test_ollama_read_only_grounding_requires_explicit_context_paths(tmp_path):
+    provider = GroundedReadOnlyOllamaProvider(tmp_path)
+    request = _request(tmp_path).model_copy(
+        update={
+            "read_only": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "context_limits": {},
+        }
+    )
+
+    result = provider.invoke(request)
+
+    assert result.status == "FAILED"
+    assert result.failure_class == "MISSING_READ_ONLY_CONTEXT"
+    assert provider.generate_called is False
 
 
 def test_ollama_timeout_has_distinct_failure_class(tmp_path):
@@ -774,6 +862,45 @@ class FakeOllamaProvider(OllamaExecutionProvider):
                 "response": (
                     f'{{"files":[{file_payload}]}}'
                 ),
+                "total_duration": 21_000_000,
+                "prompt_eval_count": 12,
+                "eval_count": 18,
+            },
+        )
+
+
+class GroundedReadOnlyOllamaProvider(FakeOllamaProvider):
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        evidence_path: str = "source.py",
+        evidence_fragment: str = "def grounded():",
+    ):
+        super().__init__(workspace)
+        self.evidence_path = evidence_path
+        self.evidence_fragment = evidence_fragment
+
+    def _post(self, path: str, payload: dict, *, timeout_seconds: int) -> OllamaHttpResponse:
+        assert path == "/api/generate"
+        self.generate_called = True
+        self.last_payload = payload
+        response_payload = {
+            "summary": "Repository-grounded inspection completed.",
+            "files": [],
+            "evidence_refs": [
+                {
+                    "path": self.evidence_path,
+                    "exact_fragment": self.evidence_fragment,
+                }
+            ],
+        }
+        return OllamaHttpResponse(
+            status=200,
+            body={
+                "model": "qwen3:8b",
+                "done": True,
+                "response": json.dumps(response_payload),
                 "total_duration": 21_000_000,
                 "prompt_eval_count": 12,
                 "eval_count": 18,
