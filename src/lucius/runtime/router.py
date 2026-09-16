@@ -35,6 +35,7 @@ from lucius.runtime.schemas import (
     RuntimeProviderStatus,
     RuntimeRetryability,
     RuntimeRoutingDecision,
+    RuntimeWorkerShape,
 )
 
 
@@ -294,6 +295,16 @@ class ModelExecutionRouter:
                 provider_error_metadata={"reason": "Router completed without provider result."},
             )
         return self._complete_routing(context, request, decision, final_result, final_retry_index, failovers_used)
+
+    def preview(self, context: RuntimeExecutionContext) -> dict:
+        """Evaluate the exact runtime request without audit, queue, or model side effects."""
+        request = self._request_from_context(context)
+        candidates = [_evaluate_provider(request, provider) for provider in self.registry.providers()]
+        return {
+            "request": request,
+            "candidates": candidates,
+            "worker_shape": _worker_shape(request, self.registry.providers()),
+        }
 
     def _request_from_context(self, context: RuntimeExecutionContext) -> RuntimeExecutionRequest:
         if not context.workflow_task_id:
@@ -606,6 +617,65 @@ def _evaluate_provider(
         eligible=True,
         reasons=reasons,
         selected_model_id=selected_model.model_id if selected_model else None,
+    )
+
+
+def _worker_shape(request: RuntimeExecutionRequest, providers: list[RuntimeExecutionProvider]) -> RuntimeWorkerShape:
+    if not request.read_only or not request.unattended:
+        return RuntimeWorkerShape(valid=True)
+    limits = [
+        provider.registration.metadata.get("read_only_worker_shape")
+        for provider in providers
+        if provider.registration.metadata.get("read_only_worker_shape")
+    ]
+    if not limits:
+        return RuntimeWorkerShape(valid=True)
+    limit = limits[0]
+    paths = request.context_limits.get("read_only_context_paths", [])
+    reasons: list[str] = []
+    context_bytes = 0
+    from pathlib import Path
+
+    workspace = Path(request.isolated_workspace).resolve()
+    for raw_path in paths:
+        path = (workspace / str(raw_path)).resolve()
+        if path.is_file() and workspace in path.parents:
+            context_bytes += len(path.read_bytes())
+    max_files = int(limit.get("max_context_files", 0))
+    max_bytes = int(limit.get("max_context_bytes", 0))
+    max_evidence_refs = int(limit.get("max_evidence_refs", 0))
+    requested_evidence_refs = request.context_limits.get("requested_evidence_refs")
+    expected_fields = {
+        "task_type": "inspection",
+        "task_complexity": "T1",
+        "task_risk": "LOW",
+        "isolation_mode": "ISOLATED_WORKTREE",
+        "execution_supervision": "UNSUPERVISED",
+    }
+    for field, expected in expected_fields.items():
+        if getattr(request, field) != expected:
+            reasons.append(f"WORKER_{field.upper()}_MISMATCH")
+    if request.required_capabilities != list(limit.get("required_capabilities", ["inspection_reasoning"])):
+        reasons.append("WORKER_CAPABILITY_MISMATCH")
+    if request.context_limits.get("deterministic_verification") is not True:
+        reasons.append("WORKER_DETERMINISTIC_VERIFICATION_REQUIRED")
+    if request.context_limits.get("evidence_reference_validation_required") is not True:
+        reasons.append("WORKER_EVIDENCE_VALIDATION_REQUIRED")
+    if len(paths) > max_files:
+        reasons.append("WORKER_CONTEXT_FILE_LIMIT_EXCEEDED")
+    if context_bytes > max_bytes:
+        reasons.append("WORKER_CONTEXT_BYTE_LIMIT_EXCEEDED")
+    if requested_evidence_refs is not None and int(requested_evidence_refs) > max_evidence_refs:
+        reasons.append("WORKER_EVIDENCE_REFERENCE_LIMIT_EXCEEDED")
+    return RuntimeWorkerShape(
+        valid=not reasons,
+        reasons=reasons,
+        context_file_count=len(paths),
+        context_bytes=context_bytes,
+        max_context_files=max_files,
+        max_context_bytes=max_bytes,
+        requested_evidence_refs=int(requested_evidence_refs) if requested_evidence_refs is not None else None,
+        max_evidence_refs=max_evidence_refs,
     )
 
 

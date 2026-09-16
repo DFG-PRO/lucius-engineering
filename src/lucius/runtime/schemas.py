@@ -207,6 +207,32 @@ class RuntimeProviderRegistration(BaseModel):
         return value
 
 
+class RuntimeWorkerShape(BaseModel):
+    valid: bool
+    reasons: list[str] = Field(default_factory=list)
+    context_file_count: int = 0
+    context_bytes: int = 0
+    max_context_files: int | None = None
+    max_context_bytes: int | None = None
+    requested_evidence_refs: int | None = None
+    max_evidence_refs: int | None = None
+
+
+class RuntimePreflightProvider(BaseModel):
+    provider_id: str
+    model_id: str | None = None
+    eligible: bool
+    reasons: list[str] = Field(default_factory=list)
+
+
+class RuntimePreflightResult(BaseModel):
+    workflow_id: str
+    eligible_providers: list[RuntimePreflightProvider] = Field(default_factory=list)
+    rejected_providers: list[RuntimePreflightProvider] = Field(default_factory=list)
+    worker_shape: RuntimeWorkerShape
+    launchable: bool
+
+
 class RuntimeExecutionRequest(BaseModel):
     execution_id: str
     task_id: str

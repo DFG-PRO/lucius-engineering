@@ -123,6 +123,18 @@ class OllamaExecutionProvider:
                 "max_mutation_num_predict": self.max_mutation_num_predict,
                 "max_context_file_bytes": self.max_context_file_bytes,
                 "max_context_total_bytes": self.max_context_total_bytes,
+                "read_only_worker_shape": {
+                    "version": "qwen3:8b-unattended-read-only-v1",
+                    "max_context_files": 3,
+                    "max_context_bytes": 40_000,
+                    "max_evidence_refs": 3,
+                    "task_type": "inspection",
+                    "task_complexity": "T1",
+                    "task_risk": "LOW",
+                    "required_capabilities": ["inspection_reasoning"],
+                    "isolation_mode": "ISOLATED_WORKTREE",
+                    "execution_supervision": "UNSUPERVISED",
+                },
             },
         )
 

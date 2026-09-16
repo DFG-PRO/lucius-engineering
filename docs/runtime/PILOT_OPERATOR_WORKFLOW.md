@@ -313,6 +313,46 @@ and reports reasons such as `MALFORMED_UNSCHEDULABLE:UNKNOWN_STATE:<value>`,
 
 ## Run Native Runtime Loop
 
+## Provision, Preflight, Launch
+
+Provisioning, runtime preflight, and runtime launch are separate operator
+gates. Provisioning creates canonical project, task, plan, freeze, workflow,
+and queue records. It does not establish provider eligibility.
+
+Before an unattended launch, run the read-only provider preflight against the
+explicit workflow IDs:
+
+```bash
+python -m lucius.pilots.cli --database data/lucius-pilots.sqlite \
+  runtime-preflight LWORK_000001 LWORK_000002 \
+  --execution-provider ollama \
+  --provider-id ollama-local \
+  --execution-supervision UNSUPERVISED \
+  --ollama-model qwen3:8b \
+  --ollama-allowed-workspace-root /path/to/authorized/workspaces \
+  --fail-on-ineligible
+```
+
+Preflight builds the same effective `RuntimeExecutionRequest` used by the
+native runtime and calls the canonical `ModelExecutionRouter` eligibility
+logic. It reports eligible providers, rejected providers, exact rejection
+reasons, provider-specific worker-shaping results, and `launchable` per
+workflow. It invokes no model, creates no `ModelExecution` row, and does not
+mutate queue or workflow state. `--fail-on-ineligible` makes any zero-provider
+workflow fail closed before launch.
+
+Worker-shaping v1 is a conservative constraint set exposed by the current
+provider/profile, not a universal Lucius architecture limit. The qwen3:8b
+unattended read-only profile currently declares at most three context files,
+40,000 aggregate context bytes, and three requested evidence references, with
+inspection/T1/LOW/`inspection_reasoning`/isolated-worktree/unsupervised
+requirements. Future providers may expose different limits through their own
+registration metadata without changing router policy.
+
+Only after provisioning and successful preflight should an operator launch
+`run-runtime-loop`. Repair is not authorization, authorization is not resume,
+and preflight is not execution.
+
 The native runtime loop may use the scripted provider or the local Ollama
 provider through the Model Execution Router:
 

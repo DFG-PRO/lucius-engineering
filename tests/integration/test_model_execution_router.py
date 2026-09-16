@@ -1277,6 +1277,197 @@ def test_router_records_success_failure_and_timeout_attempts_in_model_executions
     assert rows[0].error_code == "PROVIDER_TIMEOUT"
 
 
+def test_router_preview_uses_canonical_eligibility_without_execution_or_persistence(session, tmp_path):
+    context_file = tmp_path / "README.md"
+    context_file.write_text("bounded evidence\n", encoding="utf-8")
+    provider = _profiled_provider("ollama-local", _qwen3_8b_support_profile("ollama-local"))
+    provider.registration = provider.registration.model_copy(
+        update={
+            "metadata": {
+                "explicit_allowed_workspace_roots": True,
+                "read_only_worker_shape": {
+                    "max_context_files": 3,
+                    "max_context_bytes": 40_000,
+                    "max_evidence_refs": 3,
+                    "required_capabilities": ["inspection_reasoning"],
+                },
+            }
+        }
+    )
+    context = _context(
+        worktree_path=tmp_path,
+        title="Review one bounded observability invariant",
+        queue_item={
+            "read_only": True,
+            "unattended": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "inspection",
+            "task_complexity": "T1",
+            "task_risk": "LOW",
+            "isolation_mode": "ISOLATED_WORKTREE",
+            "execution_supervision": "UNSUPERVISED",
+            "context_limits": {
+                "deterministic_verification": True,
+                "evidence_reference_validation_required": True,
+                "read_only_context_paths": ["README.md"],
+                "requested_evidence_refs": 1,
+            },
+        },
+    )
+
+    preview = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([provider]),
+    ).preview(context)
+
+    assert [candidate.provider_id for candidate in preview["candidates"] if candidate.eligible] == ["ollama-local"]
+    assert preview["worker_shape"].valid is True
+    assert provider.calls == 0
+    assert session.scalars(select(ModelExecutionORM)).all() == []
+    assert _audit_count(session, "MODEL_EXECUTION_ROUTING_DECISION") == 0
+
+
+def test_router_preview_rejects_evidence_sensitive_qwen_task(session, tmp_path):
+    provider = _profiled_provider("ollama-local", _qwen3_8b_support_profile("ollama-local"))
+    provider.registration = provider.registration.model_copy(
+        update={"metadata": {"explicit_allowed_workspace_roots": True}}
+    )
+    context = _context(
+        worktree_path=tmp_path,
+        title="Inventory profitability evidence",
+        queue_item={
+            "read_only": True,
+            "unattended": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "inspection",
+            "task_complexity": "T1",
+            "task_risk": "LOW",
+            "isolation_mode": "ISOLATED_WORKTREE",
+            "execution_supervision": "UNSUPERVISED",
+            "context_limits": {
+                "deterministic_verification": True,
+                "evidence_reference_validation_required": True,
+            },
+        },
+    )
+
+    preview = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider])).preview(context)
+
+    assert preview["candidates"][0].eligible is False
+    assert preview["candidates"][0].reasons == ["MODEL_NOT_QUALIFIED_FOR_EVIDENCE_SENSITIVE_WORK"]
+    assert session.scalars(select(ModelExecutionORM)).all() == []
+
+
+def test_router_preview_mixed_backlog_reports_eligible_and_ineligible_states(session, tmp_path):
+    provider = _profiled_provider("ollama-local", _qwen3_8b_support_profile("ollama-local"))
+    provider.registration = provider.registration.model_copy(
+        update={"metadata": {"explicit_allowed_workspace_roots": True}}
+    )
+    router = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider]))
+    narrow = _context(
+        worktree_path=tmp_path,
+        title="Review one bounded invariant",
+        queue_item={
+            "read_only": True,
+            "unattended": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "inspection",
+            "task_complexity": "T1",
+            "task_risk": "LOW",
+            "isolation_mode": "ISOLATED_WORKTREE",
+            "execution_supervision": "UNSUPERVISED",
+            "context_limits": {"deterministic_verification": True, "evidence_reference_validation_required": True},
+        },
+    )
+    evidence = narrow.model_copy(update={"title": "Review profitability evidence"})
+
+    narrow_preview = router.preview(narrow)
+    evidence_preview = router.preview(evidence)
+
+    assert any(candidate.eligible for candidate in narrow_preview["candidates"])
+    assert not any(candidate.eligible for candidate in evidence_preview["candidates"])
+    assert evidence_preview["candidates"][0].reasons == ["MODEL_NOT_QUALIFIED_FOR_EVIDENCE_SENSITIVE_WORK"]
+
+
+def test_router_preview_zero_provider_is_not_launchable(session, tmp_path):
+    provider = ScriptedExecutionAdapter(provider_id="wrong-capability", capabilities=["code_modification"])
+    router = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider]))
+    context = _context(
+        worktree_path=tmp_path,
+        title="Review one bounded invariant",
+        queue_item={
+            "read_only": True,
+            "unattended": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "inspection",
+            "task_complexity": "T1",
+            "task_risk": "LOW",
+            "isolation_mode": "ISOLATED_WORKTREE",
+            "execution_supervision": "UNSUPERVISED",
+            "context_limits": {"deterministic_verification": True, "evidence_reference_validation_required": True},
+        },
+    )
+
+    preview = router.preview(context)
+
+    assert not any(candidate.eligible for candidate in preview["candidates"])
+    assert "missing capabilities" in preview["candidates"][0].reasons[0]
+    assert session.scalars(select(ModelExecutionORM)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("paths", "requested_refs", "expected_reason"),
+    [
+        (["a", "b", "c", "d"], 1, "WORKER_CONTEXT_FILE_LIMIT_EXCEEDED"),
+        (["large"], 1, "WORKER_CONTEXT_BYTE_LIMIT_EXCEEDED"),
+        (["a"], 4, "WORKER_EVIDENCE_REFERENCE_LIMIT_EXCEEDED"),
+    ],
+)
+def test_router_preview_enforces_provider_worker_shape(session, tmp_path, paths, requested_refs, expected_reason):
+    for path in paths:
+        (tmp_path / path).write_text("x" * (40_001 if path == "large" else 1), encoding="utf-8")
+    provider = _profiled_provider("ollama-local", _qwen3_8b_support_profile("ollama-local"))
+    provider.registration = provider.registration.model_copy(
+        update={
+            "metadata": {
+                "explicit_allowed_workspace_roots": True,
+                "read_only_worker_shape": {
+                    "max_context_files": 3,
+                    "max_context_bytes": 40_000,
+                    "max_evidence_refs": 3,
+                    "required_capabilities": ["inspection_reasoning"],
+                },
+            }
+        }
+    )
+    context = _context(
+        worktree_path=tmp_path,
+        title="Review one bounded invariant",
+        queue_item={
+            "read_only": True,
+            "unattended": True,
+            "required_capabilities": ["inspection_reasoning"],
+            "task_type": "inspection",
+            "task_complexity": "T1",
+            "task_risk": "LOW",
+            "isolation_mode": "ISOLATED_WORKTREE",
+            "execution_supervision": "UNSUPERVISED",
+            "context_limits": {
+                "deterministic_verification": True,
+                "evidence_reference_validation_required": True,
+                "read_only_context_paths": paths,
+                "requested_evidence_refs": requested_refs,
+            },
+        },
+    )
+
+    preview = ModelExecutionRouter(session, registry=RuntimeProviderRegistry([provider])).preview(context)
+
+    assert preview["worker_shape"].valid is False
+    assert expected_reason in preview["worker_shape"].reasons
+    assert session.scalars(select(ModelExecutionORM)).all() == []
+
+
 def _router(session, providers, *, max_provider_retries: int = 0, max_failovers: int = 0) -> ModelExecutionRouter:
     _ensure_default_plan_freeze(session)
     return ModelExecutionRouter(

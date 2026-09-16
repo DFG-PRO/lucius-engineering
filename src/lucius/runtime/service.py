@@ -215,6 +215,15 @@ class ExecutionRuntimeLoopService:
             queue_item=dict(item),
         )
 
+    def execution_context_for_preflight(self, workflow_id: str) -> RuntimeExecutionContext:
+        workflow = self.session.get(PersistentWorkflowORM, workflow_id)
+        if workflow is None:
+            raise ExecutionRuntimeLoopError(f"Unknown persistent workflow: {workflow_id}")
+        candidates = [item for item in workflow.task_backlog if item.get("state") in {"READY", "READY_TO_RESUME"}]
+        if len(candidates) != 1:
+            raise ExecutionRuntimeLoopError("Preflight requires exactly one READY or READY_TO_RESUME queue item.")
+        return self._execution_context(workflow_id=workflow_id, item_id=str(candidates[0].get("item_id")))
+
     def _pre_dispatch_release_error(self, context: RuntimeExecutionContext) -> str | None:
         workflow = self.session.get(PersistentWorkflowORM, context.workflow_id)
         task = self.session.get(TaskORM, context.workflow_task_id) if context.workflow_task_id else None

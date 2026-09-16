@@ -93,6 +93,17 @@ def main() -> None:
     provision = sub.add_parser("provision-read-only-backlog")
     provision.add_argument("--spec", type=Path, required=True)
 
+    preflight = sub.add_parser("runtime-preflight")
+    preflight.add_argument("workflow_ids", nargs="+")
+    preflight.add_argument("--provider-id", default=None)
+    preflight.add_argument("--execution-provider", choices=["ollama"], default="ollama")
+    preflight.add_argument("--execution-supervision", choices=["UNSUPERVISED", "SUPERVISED", "HUMAN_APPROVED"], default="UNSUPERVISED")
+    preflight.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
+    preflight.add_argument("--ollama-model", default="qwen3:8b")
+    preflight.add_argument("--ollama-timeout-seconds", type=int, default=60)
+    preflight.add_argument("--ollama-allowed-workspace-root", action="append", default=[])
+    preflight.add_argument("--fail-on-ineligible", action="store_true")
+
     runtime_loop = sub.add_parser("run-runtime-loop")
     runtime_loop.add_argument("workflow_ids", nargs="+")
     runtime_loop.add_argument("--max-tasks", type=int, default=1)
@@ -326,6 +337,30 @@ def _run_command(args: argparse.Namespace) -> None:
                 raise SystemExit(1) from error
             session.commit()
             print(json.dumps({"result": "PROVISIONED", "workflows": result}, indent=2))
+        elif args.command == "runtime-preflight":
+            from lucius.runtime.preflight import RuntimePreflightService
+            from lucius.runtime.ollama import OllamaExecutionProvider
+            from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
+            from lucius.runtime.schemas import RuntimeExecutionSupervision
+
+            provider = OllamaExecutionProvider(
+                provider_id=args.provider_id or "ollama-local",
+                endpoint=args.ollama_endpoint,
+                model=args.ollama_model,
+                timeout_seconds=args.ollama_timeout_seconds,
+                allowed_workspace_roots=_ollama_allowed_workspace_roots(args),
+            )
+            router = ModelExecutionRouter(
+                session,
+                registry=RuntimeProviderRegistry([provider]),
+                actor=Actor.LUCIUS,
+                default_execution_supervision=RuntimeExecutionSupervision(args.execution_supervision),
+            )
+            results = RuntimePreflightService(session, router=router).inspect(args.workflow_ids)
+            payload = {"result": "READY" if all(result.launchable for result in results) else "BLOCKED", "workflows": [result.model_dump(mode="json") for result in results]}
+            print(json.dumps(payload, indent=2))
+            if args.fail_on_ineligible and payload["result"] == "BLOCKED":
+                raise SystemExit(1)
         elif args.command == "run-runtime-loop":
             from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
             from lucius.runtime.ollama import OllamaExecutionProvider

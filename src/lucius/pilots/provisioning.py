@@ -340,6 +340,7 @@ def _queue_item(task: dict[str, Any], item_id: str) -> dict[str, Any]:
             "deterministic_verification": True,
             "evidence_reference_validation_required": True,
             "read_only_context_paths": list(task["context_paths"]),
+            "requested_evidence_refs": int(task.get("requested_evidence_refs", 3)),
         },
         "version": 0,
     }
