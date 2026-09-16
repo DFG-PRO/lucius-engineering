@@ -19,6 +19,11 @@ from lucius.pilots.provisioning import (
     load_specification,
     provision_read_only_backlog,
 )
+from lucius.pilots.controlled_mutation_provisioning import (
+    ControlledMutationProvisioningError,
+    load_controlled_mutation_specification,
+    provision_controlled_mutation,
+)
 from lucius.pilots.repository_state import RepositoryStateError, RepositoryStateService
 from lucius.pilots.rubric import HumanRubricService
 from lucius.repositories.schemas import WorkspaceContext
@@ -92,6 +97,9 @@ def main() -> None:
 
     provision = sub.add_parser("provision-read-only-backlog")
     provision.add_argument("--spec", type=Path, required=True)
+
+    controlled_mutation = sub.add_parser("provision-controlled-mutation")
+    controlled_mutation.add_argument("--spec", type=Path, required=True)
 
     preflight = sub.add_parser("runtime-preflight")
     preflight.add_argument("workflow_ids", nargs="+")
@@ -337,6 +345,32 @@ def _run_command(args: argparse.Namespace) -> None:
                 raise SystemExit(1) from error
             session.commit()
             print(json.dumps({"result": "PROVISIONED", "workflows": result}, indent=2))
+        elif args.command == "provision-controlled-mutation":
+            try:
+                result = provision_controlled_mutation(
+                    session,
+                    load_controlled_mutation_specification(args.spec),
+                )
+            except ControlledMutationProvisioningError as error:
+                session.rollback()
+                print(
+                    json.dumps(
+                        {"result": "BLOCKED", "reason": str(error)},
+                        indent=2,
+                    )
+                )
+                raise SystemExit(1) from error
+            session.commit()
+            print(
+                json.dumps(
+                    {
+                        "result": "PROVISIONED",
+                        "mode": "CONTROLLED_MUTATION",
+                        "workflows": result,
+                    },
+                    indent=2,
+                )
+            )
         elif args.command == "runtime-preflight":
             from lucius.runtime.preflight import RuntimePreflightService
             from lucius.runtime.ollama import OllamaExecutionProvider
@@ -421,6 +455,7 @@ def _requires_store_write_serialization(command: str) -> bool:
         "queue-start",
         "queue-global-start",
         "provision-read-only-backlog",
+        "provision-controlled-mutation",
         "run-runtime-loop",
         "run-model-mutation-qualification",
     }
