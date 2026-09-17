@@ -428,7 +428,7 @@ def _provision_controlled_mutation(
             "deterministic_verification": True,
             "required_capabilities": task_spec.get(
                 "required_capabilities",
-                ["code_mutation"],
+                ["code_modification"],
             ),
             "context_paths": task_spec.get("context_paths", []),
         }

@@ -166,6 +166,7 @@ def test_provisions_l1_controlled_mutation_workflow(session, tmp_path: Path):
     assert workflow.task_backlog[0]["read_only"] is False
     assert workflow.task_backlog[0]["unattended"] is False
     assert workflow.task_backlog[0]["execution_supervision"] == "SUPERVISED"
+    assert workflow.task_backlog[0]["required_capabilities"] == ["code_modification"]
 
     assert task.authority_level == "L1"
     assert contract.authority_level == "L1"
@@ -385,3 +386,92 @@ def test_duplicate_provisioning_is_rejected(session, tmp_path: Path):
             session,
             copy.deepcopy(specification),
         )
+
+
+def test_historical_code_mutation_alias_regression(session, tmp_path: Path):
+    from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry, _requires_mutation
+    from lucius.runtime.ollama import OllamaExecutionProvider
+    from lucius.runtime.preflight import RuntimePreflightService
+    from lucius.runtime.schemas import RuntimeExecutionRequest, RuntimeExecutionSupervision
+
+    specification, baseline = _setup(tmp_path)
+    # Manually inject historical code_mutation capability to emulate LWORK_000172
+    specification["tasks"][0]["required_capabilities"] = ["code_mutation"]
+    workflows = provision_controlled_mutation(session, specification)
+    workflow_id = workflows[0]["workflow_id"]
+
+    workflow = session.scalar(select(PersistentWorkflowORM).where(PersistentWorkflowORM.id == workflow_id))
+    assert workflow.task_backlog[0]["required_capabilities"] == ["code_mutation"]
+
+    # 1. Historical persisted code_mutation is accepted and becomes canonical code_modification in RuntimeExecutionRequest
+    req = RuntimeExecutionRequest(
+        execution_id="TEST_EXEC_01",
+        task_id="TASK_01",
+        workflow_id=workflow_id,
+        item_id="ITEM_01",
+        logical_task_id="LOGICAL_01",
+        plan_id="PLAN_01",
+        plan_freeze_id="FREEZE_01",
+        isolated_workspace=str(tmp_path),
+        task_intent="test intent",
+        allowed_mutation_scope="L1",
+        allowed_mutation_paths=["src/portfolio.py"],
+        deterministic_acceptance_checks=[{"type": "file_exists", "path": "src/portfolio.py"}],
+        required_capabilities=["code_mutation"],
+    )
+    assert req.required_capabilities == ["code_modification"]
+
+    # 2. Historical alias preserves mutation detection
+    assert _requires_mutation(req) is True
+
+    # 3. Supervised qwen3:8b provider evaluates eligible on historical workflow via preflight
+    qwen3_8b_provider = OllamaExecutionProvider(
+        provider_id="ollama-local",
+        model="qwen3:8b",
+        allowed_workspace_roots=[tmp_path],
+    )
+    router_supervised = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([qwen3_8b_provider]),
+        default_execution_supervision=RuntimeExecutionSupervision.SUPERVISED,
+    )
+    preflight_results = RuntimePreflightService(session, router=router_supervised).inspect([workflow_id])
+    assert preflight_results[0].launchable is True
+    assert preflight_results[0].eligible_providers[0].provider_id == "ollama-local"
+
+    # 4. qwen3-coder:30b remains blocked by SCHEMA_CONSTRAINT_REQUIRED under supervised execution
+    qwen3_coder_provider = OllamaExecutionProvider(
+        provider_id="ollama-local",
+        model="qwen3-coder:30b",
+        allowed_workspace_roots=[tmp_path],
+    )
+    router_coder = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([qwen3_coder_provider]),
+        default_execution_supervision=RuntimeExecutionSupervision.SUPERVISED,
+    )
+    coder_preflight = RuntimePreflightService(session, router=router_coder).inspect([workflow_id])
+    assert coder_preflight[0].launchable is False
+    assert "SCHEMA_CONSTRAINT_REQUIRED" in coder_preflight[0].rejected_providers[0].reasons
+
+    # 5. Unattended mutation remains forbidden for qwen3:8b (MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION)
+    router_unattended = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([qwen3_8b_provider]),
+        default_execution_supervision=RuntimeExecutionSupervision.UNSUPERVISED,
+    )
+    workflow.task_backlog[0]["unattended"] = True
+    session.flush()
+    unattended_preflight = RuntimePreflightService(session, router=router_unattended).inspect([workflow_id])
+    assert unattended_preflight[0].launchable is False
+    assert "MODEL_NOT_QUALIFIED_FOR_UNATTENDED_MUTATION" in unattended_preflight[0].rejected_providers[0].reasons
+
+    # 6. qwen3-coder:30b remains SUPERVISED_ONLY under unattended execution
+    coder_unattended_router = ModelExecutionRouter(
+        session,
+        registry=RuntimeProviderRegistry([qwen3_coder_provider]),
+        default_execution_supervision=RuntimeExecutionSupervision.UNSUPERVISED,
+    )
+    coder_unattended_preflight = RuntimePreflightService(session, router=coder_unattended_router).inspect([workflow_id])
+    assert coder_unattended_preflight[0].launchable is False
+    assert "MODEL_SUPERVISION_REQUIRED" in coder_unattended_preflight[0].rejected_providers[0].reasons

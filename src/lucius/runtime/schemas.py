@@ -265,6 +265,16 @@ class RuntimeExecutionRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("required_capabilities", mode="before")
+    @classmethod
+    def _normalize_required_capabilities(cls, value: Any) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [
+            "code_modification" if str(item) == "code_mutation" else str(item)
+            for item in value
+        ]
+
 
 class ExecutionAdapterResult(BaseModel):
     outcome: RuntimeExecutionOutcome
