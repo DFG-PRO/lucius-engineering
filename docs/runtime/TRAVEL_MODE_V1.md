@@ -74,3 +74,28 @@ Executes travel mode using deterministic scripted provider adapters:
 ### Readiness Status
 - **Classification:** `READY_FOR_4H_CONTROLLED_TRAVEL_RUN`
 - **Real Ollama Execution:** Verified empirically via canonical CLI with `qwen3:8b` model completing read-only Class A research tasks (`FEED-RBACK-MON-001`) grounded in bounded excerpts of its real canonical provenance (`docs/runtime/monetization-opportunity-portfolio.md`), passing deterministic repository evidence verification.
+
+---
+
+## 5. Shift 10A Empirical Controlled Travel Run & Durable Mission Readiness
+
+### Empirical Controlled Run Result (`.lucius/state_travel_4h_20260917.db`)
+- **Session Status:** `IDLE` (`IDLE_NO_ELIGIBLE_WORK`)
+- **Wall Clock Time:** 124.23 seconds
+- **Tasks Selected / Fed:** 7 / 7
+- **Tasks Completed:** 3 (`FEED-RBACK-MON-001`, `FEED-RBACK-MON-003`, `FEED-RBACK-MON-002`)
+- **Tasks Blocked:** 4 (`FEED-RBACK-MON-004`, `FEED-RBACK-TECH-001`, `FEED-RBACK-TECH-002`, `FEED-RBACK-VAL-001`)
+- **Return Code:** 0
+
+### Forensic Block Classification
+1. **`FEED-RBACK-MON-004` (Trading Strategy Hardening):** `DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED` $\rightarrow$ **RESOURCE / CAPABILITY BLOCK**. Multi-document evidence extraction exceeded `qwen3:8b` reasoning capacity; requires Tier 2 provider escalation.
+2. **`FEED-RBACK-TECH-001` (Scrapling Scout):** `MISSING_READ_ONLY_CONTEXT` $\rightarrow$ **DATA / PROVENANCE BLOCK**. Backlog item lacks canonical repository provenance (`provenance_refs = []`); requires evidence intake dependency.
+3. **`FEED-RBACK-TECH-002` (Vibe-Trading Scout):** `MISSING_READ_ONLY_CONTEXT` $\rightarrow$ **DATA / PROVENANCE BLOCK**. Lacks canonical repository provenance; requires evidence intake dependency.
+4. **`FEED-RBACK-VAL-001` (Locations Concierge CDMX):** `MISSING_READ_ONLY_CONTEXT` $\rightarrow$ **DATA / PROVENANCE BLOCK**. Lacks canonical repository provenance; requires evidence intake dependency.
+
+### Root Cause for Early IDLE (124.23s)
+The session completed in 124s because all 7 fed tasks reached terminal states for the single local provider: 3 completed and 4 blocked. Because `BoundedContinuationService` currently lacks `WAITING_RESOURCE` and `WAITING_DEPENDENCY` wait states, provider escalation paths, and a durable mission supervisor, non-ready tasks could not be scheduled or escalated, exiting cleanly as `IDLE_NO_ELIGIBLE_WORK`.
+
+### System Classification & Next Gate
+- **Classification:** `PASS_WITH_LIMITED_DURATION`
+- **Next Gate:** `SHIFT 10B — DURABLE MISSION SUPERVISOR + RESOURCE-AWARE SCHEDULER V0`
