@@ -227,7 +227,20 @@ class BoundedContinuationService:
                 result.status = "FAILED"
                 break
 
-            # Queue is empty / IDLE: consult task feeder if available
+            # 1. Re-evaluate durable waits (e.g. expired timers, satisfied file conditions)
+            if mission_id:
+                cleared_waits = self.supervisor.reevaluate_durable_waits(mission_id)
+                if cleared_waits:
+                    self.audit.record(
+                        event_type="DURABLE_WAITS_CLEARED_DURING_CONTINUATION",
+                        actor=self.actor.value,
+                        action="run_session",
+                        result="SUCCESS",
+                        metadata={"cleared_count": len(cleared_waits), "mission_id": mission_id},
+                    )
+                    continue
+
+            # 2. Queue is empty / IDLE: consult task feeder if available
             if self.feeder is not None and not feeder_exhausted:
                 result.feeder_invocations += 1
                 newly_ingested = self.feeder.feed_into_queue(self.session, max_items=5)
@@ -247,16 +260,32 @@ class BoundedContinuationService:
                 else:
                     feeder_exhausted = True
 
-            # Check if any tasks remain in WAITING_RESOURCE / WAITING_DEPENDENCY / WAITING_SCHEDULE state in the queue
+            # Check queue items and active wait records
             waiting_count = 0
             for wf in self.session.query(PersistentWorkflowORM).all():
                 for item in wf.task_backlog or []:
-                    if isinstance(item, dict) and item.get("state") in (
-                        QueueWorkItemState.WAITING_RESOURCE.value,
-                        QueueWorkItemState.WAITING_DEPENDENCY.value,
-                        QueueWorkItemState.WAITING_SCHEDULE.value,
-                    ):
-                        waiting_count += 1
+                    if isinstance(item, dict):
+                        st = item.get("state")
+                        if st in (
+                            QueueWorkItemState.WAITING_RESOURCE.value,
+                            QueueWorkItemState.WAITING_DEPENDENCY.value,
+                            QueueWorkItemState.WAITING_SCHEDULE.value,
+                        ):
+                            waiting_count += 1
+
+            if mission_id:
+                mission_rec = self.supervisor.get_mission(mission_id)
+                if mission_rec and mission_rec.wait_records:
+                    uncleared = [
+                        w for w in mission_rec.wait_records
+                        if not w.is_cleared and w.wait_class.value in (
+                            DurableWaitClass.RESOURCE.value,
+                            DurableWaitClass.DEPENDENCY.value,
+                            DurableWaitClass.SCHEDULE.value,
+                        )
+                    ]
+                    if uncleared and waiting_count == 0:
+                        waiting_count += len(uncleared)
 
             if mission_id:
                 self.supervisor.reconcile_mission_state(mission_id)

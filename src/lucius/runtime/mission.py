@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -206,6 +207,42 @@ class DurableMissionSupervisor:
         )
         return rec
 
+    def reevaluate_durable_waits(self, mission_id: str | None = None) -> list[DurableWaitRecord]:
+        now = utc_now()
+        query = self.session.query(DurableWaitORM).filter_by(is_cleared=False)
+        if mission_id is not None:
+            query = query.filter_by(mission_id=mission_id)
+
+        cleared_records: list[DurableWaitRecord] = []
+        for w in query.all():
+            should_clear = False
+
+            # 1. Expired retry_after timer
+            if w.retry_after:
+                retry_at = w.retry_after if w.retry_after.tzinfo is not None else w.retry_after.replace(tzinfo=timezone.utc)
+                if retry_at <= now:
+                    should_clear = True
+
+            # 2. Machine-verifiable dependency condition
+            if not should_clear and w.wait_class == DurableWaitClass.DEPENDENCY.value:
+                meta = w.wait_metadata or {}
+                required_paths = meta.get("required_paths") or meta.get("dependency_file_paths")
+                if required_paths and isinstance(required_paths, list):
+                    all_exist = True
+                    for p in required_paths:
+                        if not Path(p).exists():
+                            all_exist = False
+                            break
+                    if all_exist:
+                        should_clear = True
+
+            if should_clear:
+                cleared = self.clear_wait(w.id)
+                if cleared:
+                    cleared_records.append(cleared)
+
+        return cleared_records
+
     def reconcile_mission_state(self, mission_id: str) -> DurableMissionRecord:
         mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
         if mission_orm is None:
@@ -278,6 +315,11 @@ class DurableMissionSupervisor:
         )
 
     def _wait_orm_to_record(self, wait_orm: DurableWaitORM) -> DurableWaitRecord:
+        def _tz(dt: datetime | None) -> datetime | None:
+            if dt is not None and dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
         return DurableWaitRecord(
             wait_id=wait_orm.id,
             mission_id=wait_orm.mission_id,
@@ -285,9 +327,9 @@ class DurableMissionSupervisor:
             task_id=wait_orm.task_id,
             wait_class=DurableWaitClass(wait_orm.wait_class),
             reason=wait_orm.reason,
-            retry_after=wait_orm.retry_after,
-            cleared_at=wait_orm.cleared_at,
+            retry_after=_tz(wait_orm.retry_after),
+            cleared_at=_tz(wait_orm.cleared_at),
             is_cleared=wait_orm.is_cleared,
-            created_at=wait_orm.created_at,
+            created_at=_tz(wait_orm.created_at) or utc_now(),
             metadata=dict(wait_orm.wait_metadata or {}),
         )

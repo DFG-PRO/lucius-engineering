@@ -119,7 +119,7 @@ class OllamaExecutionProvider:
         provider_version: str = "1",
         endpoint: str = "http://127.0.0.1:11434",
         model: str = "qwen3:8b",
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 300,
         allowed_workspace_roots: list[str | Path] | None = None,
         max_files: int = 3,
         max_file_bytes: int = 20_000,

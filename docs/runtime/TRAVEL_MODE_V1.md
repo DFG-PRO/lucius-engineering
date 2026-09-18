@@ -160,4 +160,15 @@ The session completed in 124s because all 7 fed tasks reached terminal states fo
 3. **Operator Corrections / Instructions:** 0 operator corrections, 0 post-launch external instructions.
 4. **Final Classification:** `C. BLOCKED_BY_WORK_SUPPLY` (with `A. READY_FOR_MULTI_DAY_CONTROLLED_MISSION` runtime stability empirically confirmed).
 
+---
+
+## 7. Shift 10D — Work Supply Continuity + Dependency/Resource Wake & Resume
+
+### Objectives & Implemented Semantics
+- **Forensic Master Backlog Classification:** Fully classified all 44 Darwin Master Backlog items into executable readiness categories (`READY_EXECUTABLE`, `WAITING_RESOURCE`, `WAITING_DEPENDENCY`, `WAITING_PROVENANCE`, `BLOCKED_AUTHORITY`, `NOT_YET_ELIGIBLE`).
+- **IDLE vs WAITING Stop Reason Repair:** Fixed semantic mismatch from Shift 10C. Now, when durable waiting tasks (`WAITING_RESOURCE`, `WAITING_DEPENDENCY`, `WAITING_SCHEDULE`) exist, `run_session` returns `status = "WAITING"` and `stop_reason = WAITING_NO_CURRENTLY_RUNNABLE_WORK`. The status `IDLE` with `stop_reason = IDLE_NO_ELIGIBLE_WORK` is reserved strictly when zero durable waiting tasks remain.
+- **Durable Wait Re-evaluation Loop:** Implemented `reevaluate_durable_waits()` in `DurableMissionSupervisor` and integrated it into `BoundedContinuationService`. Automatically rechecks `retry_after` backoff timers and machine-verifiable file dependencies (`required_paths`), clearing satisfied waits and restoring tasks to `READY` without busy polling.
+- **No Busy Polling & Calculated Wake Times:** Computes exact next wake timestamp (`min(retry_after)`) across active wait records.
+- **Full Acceptance Suite:** 8 new integration/unit test points added in `tests/integration/test_shift_10d_work_supply_wake_resume.py`. Full regression suite of 685 tests passing cleanly.
+
 
