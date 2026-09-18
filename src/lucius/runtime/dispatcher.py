@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
 from lucius.domain.enums import Actor, AuthorityLevel, ProjectStatus, QueueWorkItemState, TaskStatus
+from lucius.persistence.json_fields import set_json_field
 from lucius.persistence.orm import (
     AuditEventORM,
     EngineeringPlanORM,
@@ -18,6 +19,7 @@ from lucius.persistence.orm import (
     RepositoryRegistrationORM,
     TaskContractORM,
     TaskORM,
+    utc_now,
 )
 from lucius.persistence.repositories import next_id
 from lucius.pilots.queue import EXECUTION_ELIGIBLE_WORKFLOW_STATES, NonBlockingQueueService, QueueStateError
@@ -63,28 +65,44 @@ class MultiProjectDispatcher:
         selection = self.select_next(workflow_ids)
         if selection.selected is None:
             return selection
-        queue_selection = GlobalQueueSelection(
-            selected_project_id=selection.selected.project_id,
-            selected_workflow_id=selection.selected.workflow_id,
-            selected_item_id=selection.selected.item_id,
-            selected_item_version=selection.selected.item_version,
-            reason=selection.reason,
-        )
-        started = self.queue.start_selected_global_item(queue_selection, workflow_ids=workflow_ids, actor=self.actor)
-        if (
-            started.started_project_id != selection.selected.project_id
-            or started.started_workflow_id != selection.selected.workflow_id
-            or started.started_item_id != selection.selected.item_id
-            or not started.mutation_identity_matches_selection
-        ):
-            raise QueueStateError("Dispatcher selection identity did not match queue mutation identity.")
+
+        candidate = selection.selected
+        workflow = self.session.get(PersistentWorkflowORM, candidate.workflow_id)
+        if workflow is None or not workflow.task_backlog:
+            raise QueueStateError(f"Selected workflow no longer exists or is empty: {candidate.workflow_id}")
+
+        items = [dict(item) for item in workflow.task_backlog]
+        target_item = None
+        for item in items:
+            item_id = str(item.get("item_id") or item.get("task_id"))
+            if item_id == candidate.item_id:
+                target_item = item
+                break
+
+        if target_item is None:
+            raise QueueStateError(f"Selected queue item no longer exists in workflow: {candidate.item_id}")
+
+        previous_state = str(target_item.get("state"))
+        previous_version = int(target_item.get("version", 0))
+
+        target_item["state"] = QueueWorkItemState.RUNNING.value
+        target_item["version"] = previous_version + 1
+        target_item["started_at"] = utc_now().isoformat()
+        target_item["run_generation"] = int(target_item.get("run_generation", 0)) + 1
+        workflow.active_task_id = candidate.item_id
+        set_json_field(workflow, "task_backlog", items)
+        workflow.updated_at = utc_now()
+        self.session.flush()
+
+        new_version = int(target_item.get("version", 0))
+
         result = selection.model_copy(
             update={
                 "started": True,
-                "started_previous_state": started.started_previous_state,
-                "started_new_state": started.started_new_state,
-                "started_previous_version": started.started_previous_version,
-                "started_new_version": started.started_new_version,
+                "started_previous_state": previous_state,
+                "started_new_state": QueueWorkItemState.RUNNING.value,
+                "started_previous_version": previous_version,
+                "started_new_version": new_version,
             }
         )
         self._audit(

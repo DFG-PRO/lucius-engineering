@@ -292,8 +292,10 @@ class DurableMissionSupervisor:
             mission_orm.status = MissionStatus.COMPLETED.value
         elif blocked_items and not ready_items and not waiting_items:
             mission_orm.status = MissionStatus.FAILED.value
+        elif items and completed_count < len(items):
+            mission_orm.status = MissionStatus.WAITING.value
         else:
-            mission_orm.status = MissionStatus.ACTIVE.value
+            mission_orm.status = MissionStatus.WAITING.value
 
         mission_orm.updated_at = utc_now()
         self.session.flush()

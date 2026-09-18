@@ -261,8 +261,20 @@ class DarwinBacklogFeeder:
 
         selected = candidates[:effective_max]
 
-        if not selected:
+        ingested_portfolio: list[dict[str, Any]] = []
+        if self._custom_items is None and len(selected) < effective_max:
+            from lucius.portfolio.service import GlobalWorkPortfolioService
+            port_service = GlobalWorkPortfolioService(registry=self.registry, feeder=self)
+            ingested_portfolio = port_service.feed_portfolio_into_queue(
+                session,
+                max_items=effective_max - len(selected),
+                actor=actor,
+            )
+
+        if not selected and not ingested_portfolio:
             return []
+        if not selected:
+            return ingested_portfolio
 
         # Ensure project and repository records exist in Lucius
         project = self._ensure_project(session, project_id)
@@ -317,7 +329,19 @@ class DarwinBacklogFeeder:
                 continue
 
             item_id = f"FEED-{env.source_item_id}"
-            valid_context_paths = [p for p in (env.provenance_refs or []) if (self.darwin_root / p).is_file()]
+            lucius_root = Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering")
+            billy_root = Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Billy Production Engine/billy-production-engine")
+            valid_context_paths = []
+            for p in (env.provenance_refs or []):
+                p_path = Path(p)
+                if (self.darwin_root / p_path).is_file():
+                    valid_context_paths.append(str(p_path))
+                elif (lucius_root / p_path).is_file():
+                    valid_context_paths.append(str(p_path))
+                elif (billy_root / p_path).is_file():
+                    valid_context_paths.append(str(p_path))
+                elif p_path.is_file():
+                    valid_context_paths.append(str(p_path))
 
             queue_item = {
                 "item_id": item_id,
@@ -380,6 +404,7 @@ class DarwinBacklogFeeder:
                 }
             )
 
+        ingested.extend(ingested_portfolio)
         self._total_fed += len(ingested)
         session.flush()
         return ingested

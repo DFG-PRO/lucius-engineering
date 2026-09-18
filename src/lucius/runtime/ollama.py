@@ -590,25 +590,28 @@ class OllamaExecutionProvider:
         context: list[dict[str, Any]] = []
         seen: set[str] = set()
         for raw_path in relative_paths:
-            relative_path = str(raw_path).strip()
-            if not relative_path or relative_path in seen:
+            raw_str = str(raw_path).strip()
+            if not raw_str:
                 continue
-            path = (root / relative_path).resolve()
+            path = (root / raw_str).resolve() if not Path(raw_str).is_absolute() else Path(raw_str).resolve()
             if not _is_relative_to(path, root):
-                raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Path escapes workspace: {relative_path}")
+                raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Path escapes workspace: {raw_str}")
+            rel_key = str(path.relative_to(root))
+            if rel_key in seen:
+                continue
             if not path.is_file():
-                raise _ProviderBlocked("MISSING_READ_ONLY_CONTEXT", f"Context file does not exist: {relative_path}")
+                raise _ProviderBlocked("MISSING_READ_ONLY_CONTEXT", f"Context file does not exist: {raw_str}")
             try:
                 content = path.read_text(encoding="utf-8")
             except UnicodeDecodeError as exc:
                 raise _ProviderBlocked(
                     "INVALID_READ_ONLY_CONTEXT",
-                    f"Context file is not UTF-8 text: {relative_path}",
+                    f"Context file is not UTF-8 text: {raw_str}",
                 ) from exc
             if len(content.encode("utf-8")) > 200_000:
                 raise _ProviderBlocked(
                     "READ_ONLY_CONTEXT_TOO_LARGE",
-                    f"Context file exceeds 200000 bytes: {relative_path}",
+                    f"Context file exceeds 200000 bytes: {raw_str}",
                 )
             if len(content.encode("utf-8")) > max_file_bytes:
                 content = _extract_relevant_bounded_context(
@@ -616,8 +619,8 @@ class OllamaExecutionProvider:
                     task_intent=task_intent or "",
                     max_bytes=max_file_bytes,
                 )
-            seen.add(relative_path)
-            context.append({"path": relative_path, "content": content})
+            seen.add(rel_key)
+            context.append({"path": rel_key, "content": content})
         if not context:
             raise _ProviderBlocked("MISSING_READ_ONLY_CONTEXT", "No usable read-only context files were supplied.")
         return context

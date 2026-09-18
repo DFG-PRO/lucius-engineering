@@ -8,18 +8,32 @@ from sqlalchemy.orm import Session
 
 from lucius.domain.enums import (
     Actor,
+    AllowedAction,
+    AuthorityLevel,
     DesignCoverage,
     DDBDepth,
+    Environment,
     GlobalWorkState,
     ProjectPriority,
     ProjectProgressiveStage,
+    TaskComplexity,
+    TaskPriority,
+)
+from lucius.portfolio.adapters import (
+    CanonicalRoadmapAdapter,
+    DarwinBacklogAdapter,
+    ProjectWorkSourceAdapter,
 )
 from lucius.portfolio.schemas import (
     NormalizedProjectInventoryRecord,
     NormalizedWorkPackage,
 )
+from sqlalchemy import select
+from lucius.persistence.orm import ProjectORM, ProjectRepositoryAttachmentORM, RepositoryRegistrationORM
 from lucius.projects.registry_schema import DFGProjectRegistry
-from lucius.runtime.feeder import DarwinBacklogFeeder, NormalizedTaskEnvelope
+from lucius.runtime.feeder import DarwinBacklogFeeder
+from lucius.tasks.service import TaskService
+from lucius.pilots.workflows import PersistentWorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +41,19 @@ PRIORITY_RANK = {
     "P0_CRITICAL": 0,
     "P0_NOW": 0,
     "P0": 0,
+    "CRITICAL": 0,
     "P1_HIGH": 1,
     "P1": 1,
+    "HIGH": 1,
     "P2_NORMAL": 2,
     "P2": 2,
+    "NORMAL": 2,
     "P3_LOW": 3,
     "P3": 3,
+    "LOW": 3,
     "P4_SPECULATIVE": 4,
     "P4": 4,
+    "SPECULATIVE": 4,
     "PARKED": 98,
     "UNKNOWN": 99,
 }
@@ -48,6 +67,7 @@ class GlobalWorkPortfolioService:
         registry: DFGProjectRegistry | None = None,
         feeder: DarwinBacklogFeeder | None = None,
         registry_path: Path | str | None = None,
+        adapters: list[ProjectWorkSourceAdapter] | None = None,
     ):
         if registry is not None:
             self.registry = registry
@@ -60,7 +80,15 @@ class GlobalWorkPortfolioService:
             else:
                 self.registry = None
 
-        self.feeder = feeder or DarwinBacklogFeeder()
+        self.feeder = feeder or DarwinBacklogFeeder(registry=self.registry)
+
+        if adapters is not None:
+            self.adapters = adapters
+        else:
+            self.adapters = [
+                DarwinBacklogAdapter(feeder=self.feeder),
+                CanonicalRoadmapAdapter(registry=self.registry),
+            ]
 
     def get_canonical_inventory(self) -> list[NormalizedProjectInventoryRecord]:
         """Returns normalized inventory records for all registered DFG projects and candidates."""
@@ -147,57 +175,225 @@ class GlobalWorkPortfolioService:
         *,
         allowed_authority_classes: tuple[str, ...] = ("CLASS_A", "CLASS_B"),
     ) -> list[NormalizedWorkPackage]:
-        """Discovers, normalizes, deduplicates, and ranks work packages across all Universe projects."""
-        work_packages: list[NormalizedWorkPackage] = []
-        raw_envelopes = self.feeder.discover_eligible_tasks(allowed_authority_classes=allowed_authority_classes)
+        """Discovers, normalizes, deduplicates, and ranks work packages across all registered adapters."""
+        all_packages: list[NormalizedWorkPackage] = []
+        seen_keys: set[str] = set()
 
-        for env in raw_envelopes:
-            item_id = env.source_item_id
-            payload = env.raw_payload or {}
-            raw_p = payload.get("priority", "P1")
-            
-            # Map item status to GlobalWorkState
-            state = GlobalWorkState.READY
-            if payload.get("provenance_refs") == []:
-                state = GlobalWorkState.WAITING_DEPENDENCY
-            elif payload.get("blocked_by"):
-                state = GlobalWorkState.BLOCKED_DEPENDENCY
-            elif env.authority_class not in allowed_authority_classes:
-                state = GlobalWorkState.BLOCKED_AUTHORITY
+        for adapter in self.adapters:
+            if getattr(self.feeder, "_custom_items", None) is not None and adapter.__class__.__name__ != "DarwinBacklogAdapter":
+                continue
+            try:
+                pkgs = adapter.discover_work_packages(allowed_authority_classes=allowed_authority_classes)
+                for pkg in pkgs:
+                    if pkg.dedupe_key not in seen_keys:
+                        seen_keys.add(pkg.dedupe_key)
+                        all_packages.append(pkg)
+            except Exception as exc:
+                logger.warning("Adapter %s failed during work discovery: %s", adapter, exc)
 
-            pkg = NormalizedWorkPackage(
-                work_id=f"work_{item_id}",
-                project_id=env.project_id,
-                title=env.title,
-                objective=env.objective,
-                priority=raw_p,
-                project_priority=raw_p,
-                work_priority=raw_p,
-                work_type=env.task_type,
-                current_state=state,
-                readiness="READY" if state == GlobalWorkState.READY else str(state),
-                authority_class=env.authority_class,
-                required_capability=env.provider_requirement,
-                qualified_resource=env.provider_requirement,
-                dependencies=env.dependencies,
-                provenance_refs=env.provenance_refs,
-                expected_output=payload.get("expected_output"),
-                acceptance_criteria=payload.get("research_questions", []),
-                source_project=env.project_id,
-                source_record_id=item_id,
-                dedupe_key=env.dedupe_key,
-            )
-            work_packages.append(pkg)
-
-        # Rank work packages: GlobalWorkState == READY first, then priority rank (P0 < P1 < P2 < P3 < P4), then item_id
-        work_packages.sort(
+        # Rank work packages: GlobalWorkState == READY first (0), AUTO_PREPARABLE second (1), then others (2)
+        # then priority rank (P0 < P1 < P2 < P3 < P4), then work_id
+        all_packages.sort(
             key=lambda w: (
-                0 if w.current_state in (GlobalWorkState.READY, GlobalWorkState.AUTO_PREPARABLE) else 1,
+                0 if w.current_state == GlobalWorkState.READY else (1 if w.current_state == GlobalWorkState.AUTO_PREPARABLE else 2),
                 PRIORITY_RANK.get(w.priority, 99),
                 w.work_id,
             )
         )
-        return work_packages
+        return all_packages
+
+    def reconcile_auto_preparable(self) -> dict[str, Any]:
+        """Audits and classifies all 19 AUTO_PREPARABLE items from Shift 10F."""
+        packages = self.discover_global_work(allowed_authority_classes=("CLASS_A", "CLASS_B", "CLASS_C"))
+
+        classification_counts = {
+            "VALID_AUTO_PREPARABLE": 0,
+            "INVALID_SYNTHETIC": 0,
+            "DUPLICATE": 0,
+            "MISSING_PROVENANCE": 0,
+            "MISSING_ACCEPTANCE": 0,
+            "REQUIRES_RESEARCH": 0,
+            "REQUIRES_DECISION": 0,
+            "ALREADY_COMPLETED": 0,
+            "NOT_CURRENTLY_ELIGIBLE": 0,
+        }
+        details: list[dict[str, Any]] = []
+
+        raw_items = self.feeder.load_raw_backlog_items()
+        for item in raw_items:
+            data = item.model_dump() if hasattr(item, "model_dump") else (dict(item) if isinstance(item, dict) else {})
+            status = str(data.get("status", "")).upper()
+            if status != "NEEDS_EVIDENCE":
+                continue
+
+            item_id = str(data.get("item_id"))
+            refs = data.get("provenance_refs", [])
+            criteria = data.get("research_questions", []) or ([data.get("expected_output")] if data.get("expected_output") else [])
+
+            if not refs:
+                cat = "MISSING_PROVENANCE"
+            elif not criteria:
+                cat = "MISSING_ACCEPTANCE"
+            elif "BLOCKED" in status:
+                cat = "REQUIRES_DECISION"
+            else:
+                cat = "VALID_AUTO_PREPARABLE"
+
+            classification_counts[cat] += 1
+            details.append({"item_id": item_id, "title": data.get("title"), "classification": cat, "provenance_refs": refs})
+
+        return {
+            "total_audited": sum(classification_counts.values()),
+            "counts": classification_counts,
+            "details": details,
+        }
+
+    def feed_portfolio_into_queue(
+        self,
+        session: Session,
+        *,
+        allowed_authority_classes: tuple[str, ...] = ("CLASS_A", "CLASS_B"),
+        max_items: int = 5,
+        actor: Actor = Actor.LUCIUS,
+    ) -> list[dict[str, Any]]:
+        """Atomically ingests eligible runnable/preparable work packages across all projects into persistent workflows."""
+        work_packages = self.discover_global_work(session, allowed_authority_classes=allowed_authority_classes)
+        eligible_pkgs = [
+            p for p in work_packages
+            if p.current_state in (GlobalWorkState.READY, GlobalWorkState.AUTO_PREPARABLE)
+            and p.provenance_refs
+        ]
+
+        if not eligible_pkgs:
+            return []
+
+        task_service = TaskService(session)
+        workflow_service = PersistentWorkflowService(session)
+        ingested: list[dict[str, Any]] = []
+
+        for pkg in eligible_pkgs[:max_items]:
+            # Ensure ProjectORM exists in session
+            proj_orm = session.get(ProjectORM, pkg.project_id)
+            if proj_orm is None:
+                proj_orm = ProjectORM(
+                    id=pkg.project_id,
+                    name=pkg.project_id,
+                    slug=pkg.project_id.lower(),
+                    project_type="DFG_INTERNAL",
+                    status="ACTIVE",
+                    default_authority_level="L0",
+                )
+                session.add(proj_orm)
+                session.flush()
+
+            # Ensure RepositoryRegistrationORM and ProjectRepositoryAttachmentORM exist
+            reg_id = f"repo-{pkg.project_id}"
+            reg = session.scalar(
+                select(RepositoryRegistrationORM).where(
+                    RepositoryRegistrationORM.project_id == pkg.project_id,
+                )
+            ) or session.get(RepositoryRegistrationORM, reg_id)
+            if reg is None:
+                reg = RepositoryRegistrationORM(
+                    id=reg_id,
+                    project_id=pkg.project_id,
+                    name=pkg.project_id,
+                    adapter_type="git",
+                    location="/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering",
+                    access_mode="READ_ONLY",
+                    status="ACTIVE",
+                )
+                session.add(reg)
+                session.flush()
+
+            attachment = session.scalar(
+                select(ProjectRepositoryAttachmentORM).where(
+                    ProjectRepositoryAttachmentORM.project_id == pkg.project_id,
+                    ProjectRepositoryAttachmentORM.repository_id == reg.id,
+                )
+            )
+            if attachment is None:
+                attachment = ProjectRepositoryAttachmentORM(
+                    project_id=pkg.project_id,
+                    repository_id=reg.id,
+                    attached_by="LUCIUS",
+                )
+                session.add(attachment)
+                session.flush()
+
+            # Create Task record
+            task = task_service.create_task(
+                project_id=pkg.project_id,
+                title=pkg.title,
+                objective=pkg.objective,
+                priority=TaskPriority.HIGH if "P0" in pkg.priority else TaskPriority.NORMAL,
+                complexity=TaskComplexity.T1,
+                authority_level=AuthorityLevel.L0,
+                created_by=actor,
+            )
+
+            task_service.create_or_update_contract(
+                task_id=task.id,
+                objective=pkg.objective,
+                acceptance_criteria=[{"id": f"AC-{i+1:03d}", "statement": str(c), "status": "PENDING"} for i, c in enumerate(pkg.acceptance_criteria or ["Verify canonical evidence"])],
+                constraints=["READ_ONLY_REPOSITORY", "NO_TRADING_MESSAGING_OR_CREDENTIAL_ACTIONS"],
+                repository_ids=[reg.id],
+                allowed_actions=[AllowedAction.READ_REPOSITORY, AllowedAction.READ_DOCUMENTATION],
+                allowed_tools=[],
+                environment=Environment.SANDBOX,
+                authority_level=AuthorityLevel.L0,
+                documentation_required=False,
+                stop_conditions=["Evidence is absent or ungrounded."],
+                actor=actor,
+            )
+
+            ready = task_service.mark_ready(task.id, actor=actor)
+            if not ready.valid:
+                continue
+
+            item_id = f"FEED-{pkg.source_record_id}"
+            queue_item = {
+                "item_id": item_id,
+                "logical_task_id": item_id,
+                "task_id": task.id,
+                "project_id": pkg.project_id,
+                "title": pkg.title,
+                "state": "READY",
+                "status": "READY",
+                "priority": pkg.priority,
+                "created_order": 1,
+                "read_only": True,
+                "mutation_allowed": False,
+                "task_type": "inspection_reasoning",
+                "allowed_actions": ["READ_REPOSITORY", "READ_DOCUMENTATION"],
+                "allowed_paths": pkg.provenance_refs or ["docs/"],
+                "context_limits": {
+                    "read_only_context_paths": pkg.provenance_refs,
+                    "deterministic_verification": True,
+                    "evidence_reference_validation_required": True,
+                },
+                "dedupe_key": pkg.dedupe_key,
+            }
+
+            workflow = workflow_service.create(
+                objective=pkg.objective,
+                expected_main_head="4c48197b146282fc3e1c5383c09d10ebab37f01a",
+                isolated_branch=f"lucius/feed/{pkg.source_record_id.lower()}",
+                worktree_path="/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering",
+                authority_tier=AuthorityLevel.L0.value,
+                project_id=pkg.project_id,
+                repository_id=reg.id,
+                repository_snapshot_id="FEED-SNAPSHOT",
+                task_id=task.id,
+                task_backlog=[queue_item],
+                dependency_graph={item_id: []},
+                decisions=[{"type": "DEDUPE_KEY", "key": pkg.dedupe_key}],
+                pending_task_ids=[item_id],
+                actor=actor,
+            )
+            ingested.append({"task_id": task.id, "workflow_id": workflow.id, "project_id": pkg.project_id, "item_id": item_id})
+
+        return ingested
 
     def select_next_runnable_work(
         self,

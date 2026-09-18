@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, DurableWaitClass, QueueWorkItemState, TaskStatus
+from lucius.domain.enums import Actor, DurableWaitClass, MissionStatus, QueueWorkItemState, TaskStatus
 from lucius.persistence.orm import PersistentWorkflowORM, utc_now
 from lucius.runtime.dispatcher import MultiProjectDispatcher
 from lucius.runtime.feeder import DarwinBacklogFeeder
@@ -201,9 +201,9 @@ class BoundedContinuationService:
                     if rec.outcome.value == "COMPLETED":
                         result.consecutive_failures = 0
                     elif rec.outcome.value == "FAILED":
-                        result.tasks_failed += 1
-                        result.total_failures += 1
                         if rec.failure_class not in TASK_LOCAL_FAILURE_CLASSES:
+                            result.tasks_failed += 1
+                            result.total_failures += 1
                             result.consecutive_failures += 1
                         else:
                             result.consecutive_failures = 0
@@ -288,14 +288,23 @@ class BoundedContinuationService:
                         waiting_count += len(uncleared)
 
             if mission_id:
-                self.supervisor.reconcile_mission_state(mission_id)
-
-            if waiting_count > 0:
-                result.stop_reason = ContinuationStopReason.WAITING_NO_CURRENTLY_RUNNABLE_WORK.value
-                result.status = "WAITING"
+                rec_mission = self.supervisor.reconcile_mission_state(mission_id)
+                if rec_mission.status == MissionStatus.COMPLETED.value:
+                    result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
+                    result.status = "COMPLETED"
+                elif waiting_count > 0:
+                    result.stop_reason = ContinuationStopReason.WAITING_NO_CURRENTLY_RUNNABLE_WORK.value
+                    result.status = "WAITING"
+                else:
+                    result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
+                    result.status = "IDLE"
             else:
-                result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
-                result.status = "IDLE"
+                if waiting_count > 0:
+                    result.stop_reason = ContinuationStopReason.WAITING_NO_CURRENTLY_RUNNABLE_WORK.value
+                    result.status = "WAITING"
+                else:
+                    result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
+                    result.status = "IDLE"
             break
 
         if mission_id:

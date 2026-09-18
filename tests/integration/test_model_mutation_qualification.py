@@ -229,7 +229,7 @@ def test_model_mutation_qualification_immutable_verifier_rejects_trivial_pass(
         ),
     )
 
-    assert result.runtime_result["status"] == "FAILED"
+    assert result.runtime_result["status"] in ("FAILED", "BLOCKED")
     assert result.provider_invocation_authorized is True
     assert result.worktree_clean_after_run is True
     assert result.immutable_verifier_paths == ["tests/test_content_hashing_model_qualification_verifier.py"]

@@ -639,6 +639,8 @@ def _status_for_non_completion(adapter_result: ExecutionAdapterResult) -> Runtim
     if adapter_result.outcome.value == "ESCALATED":
         return RuntimeLoopStatus.ESCALATED
     if adapter_result.outcome.value == "FAILED":
+        if adapter_result.failure_class in TASK_LOCAL_FAILURE_CLASSES:
+            return RuntimeLoopStatus.BLOCKED
         return RuntimeLoopStatus.FAILED
     return RuntimeLoopStatus.BLOCKED
 

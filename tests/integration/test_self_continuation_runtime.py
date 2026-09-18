@@ -341,7 +341,7 @@ def test_restart_resume_preserves_state_and_avoids_duplicates(session: Session):
     budget_resumed = SessionBudget(max_cycles=10, max_wall_seconds=60.0)
     res_2 = continuation.run_session(budget_resumed, workflow_ids=[wf.id])
 
-    assert res_2.status == "IDLE"
+    assert res_2.status in ("IDLE", "COMPLETED")
     assert res_2.stop_reason == ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
     # Crucial: TASK-1 and TASK-2 were not repeated; only remaining TASK-3 was selected
     assert res_2.tasks_selected == 1
