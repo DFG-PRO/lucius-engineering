@@ -245,7 +245,7 @@ class BoundedContinuationService:
                 else:
                     feeder_exhausted = True
 
-            # Check if any tasks remain in WAITING state in the queue
+            # Check if any tasks remain in WAITING_RESOURCE / WAITING_DEPENDENCY / WAITING_SCHEDULE state in the queue
             waiting_count = 0
             for wf in self.session.query(PersistentWorkflowORM).all():
                 for item in wf.task_backlog or []:
@@ -253,8 +253,6 @@ class BoundedContinuationService:
                         QueueWorkItemState.WAITING_RESOURCE.value,
                         QueueWorkItemState.WAITING_DEPENDENCY.value,
                         QueueWorkItemState.WAITING_SCHEDULE.value,
-                        QueueWorkItemState.WAITING_HUMAN.value,
-                        QueueWorkItemState.WAITING_EXTERNAL.value,
                     ):
                         waiting_count += 1
 
@@ -268,6 +266,9 @@ class BoundedContinuationService:
                 result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
                 result.status = "IDLE"
             break
+
+        if mission_id:
+            self.supervisor.reconcile_mission_state(mission_id)
 
         result.wall_clock_duration_seconds = max(0.0, self.clock() - started_at)
         self.audit.record(

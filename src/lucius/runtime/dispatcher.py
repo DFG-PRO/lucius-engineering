@@ -30,7 +30,12 @@ STATE_RANK = {QueueWorkItemState.READY_TO_RESUME: 0, QueueWorkItemState.READY: 1
 BLOCKED_STATES = {
     QueueWorkItemState.WAITING_HUMAN,
     QueueWorkItemState.WAITING_EXTERNAL,
+    QueueWorkItemState.WAITING_RESOURCE,
+    QueueWorkItemState.WAITING_DEPENDENCY,
+    QueueWorkItemState.WAITING_SCHEDULE,
     QueueWorkItemState.BLOCKED_DEPENDENCY,
+    QueueWorkItemState.BLOCKED_AUTHORITY,
+    QueueWorkItemState.BLOCKED_DECISION,
     QueueWorkItemState.RETRY_LATER,
 }
 

@@ -119,3 +119,17 @@ The session completed in 124s because all 7 fed tasks reached terminal states fo
 ### Readiness & Verification
 - **Unit Suite:** 105 passed in `tests/unit/` (including 16 comprehensive durable mission supervisor & continuation test scenarios).
 - **Launcher Smoke Verification:** Real Ollama smoke test verified with `qwen3:8b` returning clean `SessionStatus: WAITING` / `WAITING_NO_CURRENTLY_RUNNABLE_WORK`.
+
+---
+
+## 7. Shift 10B.1 — Durable Mission V0 Empirical Acceptance
+
+### Acceptance Matrix
+- **Gate A (Full Suite Regression):** 677 passed, 0 failures across unit and integration test suites. `git diff --check` clean.
+- **Gate B (Controlled Wait & Resume):** Verified Task A (`WAITING_RESOURCE`) skipped while Task B completed independently; resource clearing restored Task A (`READY`), which resumed to `COMPLETED` without operator intervention. (`tests/integration/test_gate_b_controlled_wait_resume.py`)
+- **Gate C (Process Restart Recovery):** Verified process crash simulation on SQLite DB; process restart with SHA check verified zero duplicate workflows and resumed task to completion. (`tests/integration/test_gate_c_restart_recovery.py`)
+- **Gate D (Negative Authority Test):** Verified `BLOCKED_AUTHORITY`, `BLOCKED_DECISION`, `WAITING_DEPENDENCY` remain blocked; `qwen3-coder:30b` registered as `SUPERVISED_ONLY` is never selected for unattended execution. (`tests/integration/test_gate_d_negative_authority.py`)
+- **Gate E (Real Ollama Execution Regression):** Real Ollama execution (`qwen3:8b`) on `FEED-RBACK-MON-001` passed deterministic verification, recorded positive wall clock duration, and updated DB state to `COMPLETED`. (`tests/integration/test_gate_e_real_ollama_execution.py`)
+- **Gate F (Real Backlog Wait Semantics):** Real Darwin backlog ingestion verified; items in resource/dependency wait states resulted in `Session Status: WAITING` and stop reason `WAITING_NO_CURRENTLY_RUNNABLE_WORK`. (`tests/integration/test_gate_f_real_backlog_wait_semantics.py`)
+- **Gate G (Short Endurance Test):** Multi-cycle multi-project (DARWIN, LUCIUS, BILLY) controlled mission completed with 0 operator corrections, 0 post-launch external instructions, accurate duration, and clean status reconciliation. (`tests/integration/test_gate_g_endurance.py`)
+

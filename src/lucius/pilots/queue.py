@@ -25,7 +25,12 @@ from lucius.pilots.schemas import (
 BLOCKED_STATES = {
     QueueWorkItemState.WAITING_HUMAN,
     QueueWorkItemState.WAITING_EXTERNAL,
+    QueueWorkItemState.WAITING_RESOURCE,
+    QueueWorkItemState.WAITING_DEPENDENCY,
+    QueueWorkItemState.WAITING_SCHEDULE,
     QueueWorkItemState.BLOCKED_DEPENDENCY,
+    QueueWorkItemState.BLOCKED_AUTHORITY,
+    QueueWorkItemState.BLOCKED_DECISION,
     QueueWorkItemState.RETRY_LATER,
 }
 TERMINAL_STATES = {QueueWorkItemState.COMPLETED, QueueWorkItemState.FAILED}
