@@ -594,9 +594,17 @@ class OllamaExecutionProvider:
             if not raw_str:
                 continue
             path = (root / raw_str).resolve() if not Path(raw_str).is_absolute() else Path(raw_str).resolve()
-            if not _is_relative_to(path, root):
+            matching_allowed_root = None
+            if _is_relative_to(path, root):
+                matching_allowed_root = root
+            else:
+                for allowed_root in self.allowed_workspace_roots:
+                    if _is_relative_to(path, allowed_root):
+                        matching_allowed_root = allowed_root
+                        break
+            if matching_allowed_root is None:
                 raise _ProviderBlocked("UNSAFE_FILE_PATH", f"Path escapes workspace: {raw_str}")
-            rel_key = str(path.relative_to(root))
+            rel_key = str(path.relative_to(matching_allowed_root))
             if rel_key in seen:
                 continue
             if not path.is_file():

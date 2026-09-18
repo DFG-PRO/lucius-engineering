@@ -138,7 +138,10 @@ class DarwinBacklogAdapter(ProjectWorkSourceAdapter):
                 provenance_refs=provenance_refs,
                 expected_output=data.get("expected_output"),
                 acceptance_criteria=criteria,
-                source_project=pid,
+                source_project="darwin-research-engine",
+                execution_project=pid,
+                canonical_evidence_project="darwin-research-engine",
+                canonical_evidence_path=provenance_refs[0] if provenance_refs else None,
                 source_record_id=item_id,
                 dedupe_key=f"darwin:{item_id}",
             )
@@ -227,6 +230,9 @@ class CanonicalRoadmapAdapter(ProjectWorkSourceAdapter):
                     "Verify evidence grounding against canonical documentation",
                 ],
                 source_project=pid,
+                execution_project=pid,
+                canonical_evidence_project=pid,
+                canonical_evidence_path=provenance[0] if provenance else None,
                 source_record_id=f"registry:{pid}:{next_gate}",
                 dedupe_key=f"registry_gate:{pid}:{next_gate}",
             )

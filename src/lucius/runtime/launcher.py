@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from lucius.persistence.database import create_all, create_sqlite_engine, make_session_factory
+from lucius.projects.registry_schema import DFGProjectRegistry
 from lucius.repositories.worktree_hygiene import WorktreeHygieneService
 from lucius.runtime.continuation import (
     BoundedContinuationService,
@@ -223,10 +224,21 @@ class TravelLauncher:
                 if provider_type == "scripted":
                     provider = ScriptedExecutionAdapter(provider_id="scripted-runtime-provider")
                 else:
+                    all_roots = [self.lucius_root, self.darwin_root, self.billy_root]
+                    reg_file = self.lucius_root / "src" / "lucius" / "projects" / "dfg_canonical_registry.json"
+                    if reg_file.exists():
+                        try:
+                            reg_obj = DFGProjectRegistry.load_json(reg_file)
+                            for pdata in reg_obj.projects.values():
+                                repo_p = getattr(pdata, "canonical_repo", None) or (pdata.get("canonical_repo") if isinstance(pdata, dict) else None)
+                                if repo_p and Path(repo_p).exists():
+                                    all_roots.append(Path(repo_p).resolve())
+                        except Exception:
+                            pass
                     provider = OllamaExecutionProvider(
                         provider_id="ollama-local",
                         model="qwen3:8b",
-                        allowed_workspace_roots=[self.lucius_root, self.darwin_root, self.billy_root],
+                        allowed_workspace_roots=all_roots,
                     )
                 provider_registry = RuntimeProviderRegistry([provider])
 

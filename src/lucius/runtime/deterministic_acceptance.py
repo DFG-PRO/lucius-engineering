@@ -360,6 +360,14 @@ def _validate_pytest_target_arg(arg: str, *, index: int) -> None:
 
 def _verify_command_succeeds(root: Path, check: dict[str, Any]) -> dict[str, Any]:
     argv = list(check["argv"])
+    from lucius.runtime.safety import assert_unattended_command_authorized, ExecutionSafetyError
+    try:
+        assert_unattended_command_authorized(argv)
+    except ExecutionSafetyError as exc:
+        raise DeterministicAcceptanceError(
+            "DETERMINISTIC_ACCEPTANCE_COMMAND_ARG_NOT_ALLOWED",
+            exc.message,
+        ) from exc
     executable = root / argv[0]
     if not executable.exists() or not executable.is_file():
         raise DeterministicAcceptanceError(

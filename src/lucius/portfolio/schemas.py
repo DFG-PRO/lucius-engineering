@@ -66,5 +66,8 @@ class NormalizedWorkPackage(BaseModel):
     next_gate_relationship: str | None = None
     preemptibility: str = Field(default="SAFE_AT_CYCLE_BOUNDARY")
     source_project: str = Field(default="darwin-research-engine")
+    execution_project: str = Field(default="darwin-research-engine")
+    canonical_evidence_project: str = Field(default="darwin-research-engine")
+    canonical_evidence_path: str | None = Field(default=None)
     source_record_id: str | None = None
     dedupe_key: str

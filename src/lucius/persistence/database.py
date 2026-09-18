@@ -9,10 +9,16 @@ from lucius.persistence.orm import Base
 
 
 def create_sqlite_engine(database_path: str | Path = ":memory:") -> Engine:
-    if str(database_path) == ":memory:":
+    raw_str = str(database_path).strip()
+    if raw_str == ":memory:":
         url = "sqlite+pysqlite:///:memory:"
     else:
-        path = Path(database_path)
+        for prefix in ("sqlite+pysqlite:///", "sqlite+pysqlite://", "sqlite:///", "sqlite://", "sqlite:/", "sqlite:"):
+            if raw_str.startswith(prefix):
+                raw_str = raw_str[len(prefix):]
+                break
+
+        path = Path(raw_str).resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite+pysqlite:///{path}"
     return create_engine(url, connect_args={"timeout": 10.0}, future=True)

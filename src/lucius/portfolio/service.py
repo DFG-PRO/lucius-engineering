@@ -288,6 +288,13 @@ class GlobalWorkPortfolioService:
 
             # Ensure RepositoryRegistrationORM and ProjectRepositoryAttachmentORM exist
             reg_id = f"repo-{pkg.project_id}"
+            repo_loc = "/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering"
+            if self.registry and hasattr(self.registry, "projects") and pkg.project_id in self.registry.projects:
+                pdata = self.registry.projects[pkg.project_id]
+                cand_repo = getattr(pdata, "canonical_repo", None) or (pdata.get("canonical_repo") if isinstance(pdata, dict) else None)
+                if cand_repo and Path(cand_repo).exists():
+                    repo_loc = str(cand_repo)
+
             reg = session.scalar(
                 select(RepositoryRegistrationORM).where(
                     RepositoryRegistrationORM.project_id == pkg.project_id,
@@ -299,7 +306,7 @@ class GlobalWorkPortfolioService:
                     project_id=pkg.project_id,
                     name=pkg.project_id,
                     adapter_type="git",
-                    location="/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering",
+                    location=repo_loc,
                     access_mode="READ_ONLY",
                     status="ACTIVE",
                 )
@@ -351,6 +358,26 @@ class GlobalWorkPortfolioService:
             if not ready.valid:
                 continue
 
+            # Resolve canonical evidence context path across projects
+            ev_repo_loc = repo_loc
+            if self.registry and hasattr(self.registry, "projects") and pkg.canonical_evidence_project in self.registry.projects:
+                ev_pdata = self.registry.projects[pkg.canonical_evidence_project]
+                ev_cand = getattr(ev_pdata, "canonical_repo", None) or (ev_pdata.get("canonical_repo") if isinstance(ev_pdata, dict) else None)
+                if ev_cand and Path(ev_cand).exists():
+                    ev_repo_loc = str(ev_cand)
+
+            valid_context_paths = []
+            for p in (pkg.provenance_refs or []):
+                p_path = Path(p)
+                if (Path(ev_repo_loc) / p_path).is_file():
+                    valid_context_paths.append(str((Path(ev_repo_loc) / p_path).resolve()))
+                elif (Path(repo_loc) / p_path).is_file():
+                    valid_context_paths.append(str((Path(repo_loc) / p_path).resolve()))
+                elif p_path.is_file():
+                    valid_context_paths.append(str(p_path.resolve()))
+                else:
+                    valid_context_paths.append(str(p_path))
+
             item_id = f"FEED-{pkg.source_record_id}"
             queue_item = {
                 "item_id": item_id,
@@ -368,18 +395,22 @@ class GlobalWorkPortfolioService:
                 "allowed_actions": ["READ_REPOSITORY", "READ_DOCUMENTATION"],
                 "allowed_paths": pkg.provenance_refs or ["docs/"],
                 "context_limits": {
-                    "read_only_context_paths": pkg.provenance_refs,
+                    "read_only_context_paths": valid_context_paths,
                     "deterministic_verification": True,
                     "evidence_reference_validation_required": True,
                 },
                 "dedupe_key": pkg.dedupe_key,
+                "source_project": pkg.source_project,
+                "execution_project": pkg.execution_project,
+                "canonical_evidence_project": pkg.canonical_evidence_project,
+                "canonical_evidence_path": pkg.canonical_evidence_path,
             }
 
             workflow = workflow_service.create(
                 objective=pkg.objective,
                 expected_main_head="4c48197b146282fc3e1c5383c09d10ebab37f01a",
                 isolated_branch=f"lucius/feed/{pkg.source_record_id.lower()}",
-                worktree_path="/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering",
+                worktree_path=repo_loc,
                 authority_tier=AuthorityLevel.L0.value,
                 project_id=pkg.project_id,
                 repository_id=reg.id,
