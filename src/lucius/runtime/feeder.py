@@ -317,15 +317,7 @@ class DarwinBacklogFeeder:
                 continue
 
             item_id = f"FEED-{env.source_item_id}"
-            concise_context_paths = [
-                p for p in (env.provenance_refs or [])
-                if (self.darwin_root / p).is_file() and (self.darwin_root / p).stat().st_size <= 10_000
-            ]
-            if concise_context_paths:
-                valid_context_paths = concise_context_paths
-            else:
-                fallback = "docs/runtime/narrative-research-synthesis.md"
-                valid_context_paths = [fallback] if (self.darwin_root / fallback).is_file() else ["docs/"]
+            valid_context_paths = [p for p in (env.provenance_refs or []) if (self.darwin_root / p).is_file()]
 
             queue_item = {
                 "item_id": item_id,

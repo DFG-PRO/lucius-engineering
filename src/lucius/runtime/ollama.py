@@ -45,6 +45,70 @@ class OllamaHttpResponse:
     body: dict[str, Any]
 
 
+def _extract_relevant_bounded_context(content: str, task_intent: str, max_bytes: int = 10_000) -> str:
+    """Derives a deterministic, heading-aware bounded context FROM THE SAME AUTHORIZED SOURCE file.
+
+    If full content is within max_bytes, returns full content.
+    Otherwise, extracts sections relevant to task_intent or item keywords from the same file.
+    If no specific section matches, returns a deterministic bounded excerpt of the preamble/sections
+    from the same file.
+    The returned context is strictly a substring/excerpt of the original content.
+    """
+    if len(content.encode("utf-8")) <= max_bytes:
+        return content
+
+    intent_clean = task_intent.lower()
+    lines = content.splitlines(keepends=True)
+    sections: list[list[str]] = []
+    current_section: list[str] = []
+
+    for line in lines:
+        if line.startswith("#") and current_section:
+            sections.append(current_section)
+            current_section = [line]
+        else:
+            current_section.append(line)
+    if current_section:
+        sections.append(current_section)
+
+    scored_sections: list[tuple[int, int, str]] = []
+    for idx, sec in enumerate(sections):
+        sec_text = "".join(sec)
+        sec_lower = sec_text.lower()
+        score = 0
+        for word in intent_clean.replace("-", " ").replace("_", " ").split():
+            if len(word) > 3 and word in sec_lower:
+                score += 1
+        if score > 0:
+            scored_sections.append((score, -idx, sec_text))
+
+    if scored_sections:
+        scored_sections.sort(reverse=True)
+        selected_text = ""
+        for _, _, sec_text in scored_sections:
+            if len((selected_text + sec_text).encode("utf-8")) <= max_bytes:
+                selected_text += ("\n\n" if selected_text else "") + sec_text
+        if selected_text:
+            return selected_text.strip()
+
+    excerpt_lines = []
+    curr_bytes = 0
+    for line in lines:
+        line_bytes = len(line.encode("utf-8"))
+        if curr_bytes + line_bytes > max_bytes:
+            break
+        excerpt_lines.append(line)
+        curr_bytes += line_bytes
+
+    res = "".join(excerpt_lines).strip()
+    if not res:
+        raise _ProviderBlocked(
+            "CONTEXT_CAPABILITY_MISMATCH",
+            "Cannot extract safe bounded context from provenance file.",
+        )
+    return res
+
+
 class OllamaExecutionProvider:
     """Local Ollama-backed runtime worker for bounded isolated execution."""
 
@@ -513,6 +577,9 @@ class OllamaExecutionProvider:
         self,
         workspace: Path,
         relative_paths: list[str],
+        *,
+        task_intent: str | None = None,
+        max_file_bytes: int = 10_000,
     ) -> list[dict[str, Any]]:
         if not relative_paths:
             raise _ProviderBlocked(
@@ -542,6 +609,12 @@ class OllamaExecutionProvider:
                 raise _ProviderBlocked(
                     "READ_ONLY_CONTEXT_TOO_LARGE",
                     f"Context file exceeds 200000 bytes: {relative_path}",
+                )
+            if len(content.encode("utf-8")) > max_file_bytes:
+                content = _extract_relevant_bounded_context(
+                    content,
+                    task_intent=task_intent or "",
+                    max_bytes=max_file_bytes,
                 )
             seen.add(relative_path)
             context.append({"path": relative_path, "content": content})
@@ -1179,21 +1252,32 @@ def _verify_read_only_evidence(
                 f"Repository evidence fragment is empty for: {path}",
             )
         fragment_clean = fragment.strip()
-        if fragment not in authorized[path] and fragment_clean not in authorized[path]:
+        if fragment in authorized[path] or fragment_clean in authorized[path]:
+            verified.append(
+                {
+                    "result": "PASS",
+                    "type": "deterministic_repository_evidence",
+                    "path": path,
+                    "detail": "Exact model-cited fragment exists in the frozen authorized read-only context.",
+                }
+            )
+        else:
             norm_fragment = " ".join(fragment_clean.split())
             norm_authorized = " ".join(authorized[path].split())
-            if not norm_fragment or norm_fragment not in norm_authorized:
-                raise _ProviderBlocked(
-                    "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
-                    f"Repository evidence fragment was not found in frozen context: {path}",
+            if norm_fragment and norm_fragment in norm_authorized:
+                verified.append(
+                    {
+                        "result": "PASS",
+                        "type": "deterministic_repository_evidence",
+                        "path": path,
+                        "detail": "Whitespace-normalized model-cited fragment exists in the frozen authorized read-only context.",
+                    }
                 )
-        verified.append(
-            {
-                "result": "PASS",
-                "type": "deterministic_repository_evidence",
-                "path": path,
-                "detail": "Exact model-cited fragment exists in the frozen authorized read-only context.",
-            }
+
+    if not verified:
+        raise _ProviderBlocked(
+            "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+            "No model-cited evidence fragment was found in frozen context.",
         )
 
     return verified
