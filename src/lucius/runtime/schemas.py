@@ -436,9 +436,17 @@ class DurableWaitRecord(BaseModel):
     mission_id: str
     item_id: str | None = None
     task_id: str | None = None
+    project_id: str | None = None
     wait_class: DurableWaitClass
     reason: str
+    dependency_or_resource: str | None = None
+    entered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     retry_after: datetime | None = None
+    provider_info: dict[str, Any] = Field(default_factory=dict)
+    attempts: int = 0
+    last_attempt: datetime | None = None
+    next_eligibility_eval: datetime | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
     cleared_at: datetime | None = None
     is_cleared: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

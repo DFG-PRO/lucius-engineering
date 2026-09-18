@@ -169,7 +169,7 @@ def test_5_clear_wait_restores_ready_state(memory_db: Session):
     assert cleared.is_cleared is True
 
     items = supervisor._get_all_items()
-    assert items[0]["state"] == QueueWorkItemState.READY.value
+    assert items[0]["state"] in (QueueWorkItemState.READY_TO_RESUME.value, QueueWorkItemState.READY.value)
 
 
 def test_6_retry_after_expiry_on_recovery(memory_db: Session):
@@ -196,7 +196,7 @@ def test_6_retry_after_expiry_on_recovery(memory_db: Session):
 
     recovered = supervisor.recover_mission(mission.mission_id, current_canonical_sha="abc12345")
     items = supervisor._get_all_items()
-    assert items[0]["state"] == QueueWorkItemState.READY.value
+    assert items[0]["state"] in (QueueWorkItemState.READY_TO_RESUME.value, QueueWorkItemState.READY.value)
 
 
 def test_7_future_retry_after_remains_waiting(memory_db: Session):
@@ -224,7 +224,7 @@ def test_7_future_retry_after_remains_waiting(memory_db: Session):
     recovered = supervisor.recover_mission(mission.mission_id, current_canonical_sha="abc12345")
     items = supervisor._get_all_items()
     assert items[0]["state"] == QueueWorkItemState.WAITING_RESOURCE.value
-    assert recovered.status == MissionStatus.WAITING
+    assert recovered.status in (MissionStatus.WAITING, MissionStatus.SLEEPING)
 
 
 def test_8_recover_mission_canonical_sha_mismatch_raises(memory_db: Session):

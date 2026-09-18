@@ -88,10 +88,33 @@ class DurableMissionSupervisor:
         reason: str,
         item_id: str | None = None,
         task_id: str | None = None,
+        project_id: str | None = None,
+        dependency_or_resource: str | None = None,
         retry_after: datetime | None = None,
+        provider_info: dict[str, Any] | None = None,
+        attempts: int = 0,
+        last_attempt: datetime | None = None,
+        next_eligibility_eval: datetime | None = None,
+        provenance: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> DurableWaitRecord:
         wait_id = f"wait_{uuid.uuid4().hex[:12]}"
+        meta = dict(metadata or {})
+        if project_id:
+            meta["project_id"] = project_id
+        if dependency_or_resource:
+            meta["dependency_or_resource"] = dependency_or_resource
+        if provider_info:
+            meta["provider_info"] = provider_info
+        meta["attempts"] = attempts
+        if last_attempt:
+            meta["last_attempt"] = last_attempt.isoformat()
+        if next_eligibility_eval:
+            meta["next_eligibility_eval"] = next_eligibility_eval.isoformat()
+        if provenance:
+            meta["provenance"] = provenance
+        meta["entered_at"] = utc_now().isoformat()
+
         wait_orm = DurableWaitORM(
             id=wait_id,
             mission_id=mission_id,
@@ -102,20 +125,25 @@ class DurableMissionSupervisor:
             retry_after=retry_after,
             cleared_at=None,
             is_cleared=False,
-            wait_metadata=metadata or {},
+            wait_metadata=meta,
         )
         self.session.add(wait_orm)
 
         if item_id:
-            if wait_class == DurableWaitClass.RESOURCE:
+            w_class_str = str(wait_class)
+            if w_class_str == DurableWaitClass.RESOURCE_SHORT.value:
+                self._update_item_state(item_id, QueueWorkItemState.WAITING_RESOURCE_SHORT.value)
+            elif w_class_str == DurableWaitClass.RESOURCE_LONG.value:
+                self._update_item_state(item_id, QueueWorkItemState.WAITING_RESOURCE_LONG.value)
+            elif w_class_str in (DurableWaitClass.RESOURCE.value, "RESOURCE"):
                 self._update_item_state(item_id, QueueWorkItemState.WAITING_RESOURCE.value)
-            elif wait_class == DurableWaitClass.DEPENDENCY:
+            elif w_class_str == DurableWaitClass.DEPENDENCY.value:
                 self._update_item_state(item_id, QueueWorkItemState.WAITING_DEPENDENCY.value)
-            elif wait_class == DurableWaitClass.SCHEDULE:
+            elif w_class_str == DurableWaitClass.SCHEDULE.value:
                 self._update_item_state(item_id, QueueWorkItemState.WAITING_SCHEDULE.value)
-            elif wait_class == DurableWaitClass.AUTHORITY:
+            elif w_class_str == DurableWaitClass.AUTHORITY.value:
                 self._update_item_state(item_id, QueueWorkItemState.BLOCKED_AUTHORITY.value)
-            elif wait_class == DurableWaitClass.DECISION:
+            elif w_class_str == DurableWaitClass.DECISION.value:
                 self._update_item_state(item_id, QueueWorkItemState.BLOCKED_DECISION.value)
 
         self.session.flush()
@@ -146,6 +174,8 @@ class DurableMissionSupervisor:
 
         if wait_orm.item_id and wait_orm.wait_class in (
             DurableWaitClass.RESOURCE.value,
+            DurableWaitClass.RESOURCE_SHORT.value,
+            DurableWaitClass.RESOURCE_LONG.value,
             DurableWaitClass.DEPENDENCY.value,
             DurableWaitClass.SCHEDULE.value,
         ):
@@ -167,8 +197,7 @@ class DurableMissionSupervisor:
         mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
         if mission_orm is None:
             return None
-        waits_orm = self.session.query(DurableWaitORM).filter_by(mission_id=mission_id).all()
-        return self._orm_to_record(mission_orm, waits_orm)
+        return self.reconcile_mission_state(mission_id)
 
     def recover_mission(self, mission_id: str, current_canonical_sha: str) -> DurableMissionRecord:
         mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
@@ -190,6 +219,8 @@ class DurableMissionSupervisor:
                     w.cleared_at = now
                     if w.item_id and w.wait_class in (
                         DurableWaitClass.RESOURCE.value,
+                        DurableWaitClass.RESOURCE_SHORT.value,
+                        DurableWaitClass.RESOURCE_LONG.value,
                         DurableWaitClass.DEPENDENCY.value,
                         DurableWaitClass.SCHEDULE.value,
                     ):
@@ -236,6 +267,12 @@ class DurableMissionSupervisor:
                     if all_exist:
                         should_clear = True
 
+            # 3. Provider re-availability flag or metadata check
+            if not should_clear:
+                meta = w.wait_metadata or {}
+                if meta.get("provider_reavailable") is True or meta.get("can_resume") is True:
+                    should_clear = True
+
             if should_clear:
                 cleared = self.clear_wait(w.id)
                 if cleared:
@@ -254,7 +291,13 @@ class DurableMissionSupervisor:
         waiting_count = 0
         blocked_count = 0
         for w in uncleared_waits:
-            if w.wait_class in (DurableWaitClass.RESOURCE.value, DurableWaitClass.DEPENDENCY.value, DurableWaitClass.SCHEDULE.value):
+            if w.wait_class in (
+                DurableWaitClass.RESOURCE.value,
+                DurableWaitClass.RESOURCE_SHORT.value,
+                DurableWaitClass.RESOURCE_LONG.value,
+                DurableWaitClass.DEPENDENCY.value,
+                DurableWaitClass.SCHEDULE.value,
+            ):
                 waiting_count += 1
             elif w.wait_class in (DurableWaitClass.AUTHORITY.value, DurableWaitClass.DECISION.value, "BLOCKED"):
                 blocked_count += 1
@@ -265,6 +308,8 @@ class DurableMissionSupervisor:
         waiting_items = [
             i for i in items if i.get("state") in (
                 QueueWorkItemState.WAITING_RESOURCE.value,
+                QueueWorkItemState.WAITING_RESOURCE_SHORT.value,
+                QueueWorkItemState.WAITING_RESOURCE_LONG.value,
                 QueueWorkItemState.WAITING_DEPENDENCY.value,
                 QueueWorkItemState.WAITING_SCHEDULE.value,
                 QueueWorkItemState.WAITING_HUMAN.value,
@@ -287,7 +332,31 @@ class DurableMissionSupervisor:
         if ready_items:
             mission_orm.status = MissionStatus.ACTIVE.value
         elif waiting_items or uncleared_waits:
-            mission_orm.status = MissionStatus.WAITING.value
+            # If no ready items, but waiting/uncleared items exist, mission is SLEEPING/WAITING
+            def _ensure_utc(dt: datetime | None) -> datetime | None:
+                if dt is None:
+                    return None
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+            now_utc = utc_now()
+            has_long_or_schedule = any(
+                w.wait_class == DurableWaitClass.RESOURCE_LONG.value
+                or (w.retry_after and (_ensure_utc(w.retry_after) - now_utc).total_seconds() > 60)
+                for w in uncleared_waits
+            )
+            mission_orm.status = MissionStatus.SLEEPING.value if has_long_or_schedule else MissionStatus.WAITING.value
+
+            # Record sleeping metadata
+            meta = dict(mission_orm.mission_metadata or {})
+            retry_dates = [_ensure_utc(w.retry_after) for w in uncleared_waits if w.retry_after]
+            earliest_wake = min(retry_dates).isoformat() if retry_dates else None
+            meta["sleeping_metadata"] = {
+                "why_not_executable": "All active work packages are waiting on resources, dependencies, or schedules.",
+                "earliest_wake_at": earliest_wake,
+                "unresolved_dependencies": [w.reason for w in uncleared_waits if w.wait_class == DurableWaitClass.DEPENDENCY.value],
+                "blocked_authority_decisions": [w.reason for w in uncleared_waits if w.wait_class in (DurableWaitClass.AUTHORITY.value, DurableWaitClass.DECISION.value)],
+            }
+            set_json_field(mission_orm, "mission_metadata", meta)
         elif items and completed_count == len(items) and not blocked_items:
             mission_orm.status = MissionStatus.COMPLETED.value
         elif blocked_items and not ready_items and not waiting_items:
@@ -322,16 +391,35 @@ class DurableMissionSupervisor:
                 return dt.replace(tzinfo=timezone.utc)
             return dt
 
+        def _tz_parse(val: Any) -> datetime | None:
+            if isinstance(val, datetime):
+                return _tz(val)
+            if isinstance(val, str):
+                try:
+                    return _tz(datetime.fromisoformat(val))
+                except Exception:
+                    return None
+            return None
+
+        meta = dict(wait_orm.wait_metadata or {})
         return DurableWaitRecord(
             wait_id=wait_orm.id,
             mission_id=wait_orm.mission_id,
             item_id=wait_orm.item_id,
             task_id=wait_orm.task_id,
-            wait_class=DurableWaitClass(wait_orm.wait_class),
+            project_id=meta.get("project_id"),
+            wait_class=DurableWaitClass(wait_orm.wait_class) if wait_orm.wait_class in DurableWaitClass.__members__ else DurableWaitClass.RESOURCE,
             reason=wait_orm.reason,
+            dependency_or_resource=meta.get("dependency_or_resource"),
+            entered_at=_tz_parse(meta.get("entered_at")) or _tz(wait_orm.created_at) or utc_now(),
             retry_after=_tz(wait_orm.retry_after),
+            provider_info=dict(meta.get("provider_info") or {}),
+            attempts=int(meta.get("attempts", 0)),
+            last_attempt=_tz_parse(meta.get("last_attempt")),
+            next_eligibility_eval=_tz_parse(meta.get("next_eligibility_eval")),
+            provenance=dict(meta.get("provenance") or {}),
             cleared_at=_tz(wait_orm.cleared_at),
             is_cleared=wait_orm.is_cleared,
             created_at=_tz(wait_orm.created_at) or utc_now(),
-            metadata=dict(wait_orm.wait_metadata or {}),
+            metadata=meta,
         )

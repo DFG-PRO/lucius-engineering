@@ -268,6 +268,8 @@ class BoundedContinuationService:
                         st = item.get("state")
                         if st in (
                             QueueWorkItemState.WAITING_RESOURCE.value,
+                            QueueWorkItemState.WAITING_RESOURCE_SHORT.value,
+                            QueueWorkItemState.WAITING_RESOURCE_LONG.value,
                             QueueWorkItemState.WAITING_DEPENDENCY.value,
                             QueueWorkItemState.WAITING_SCHEDULE.value,
                         ):
@@ -280,6 +282,8 @@ class BoundedContinuationService:
                         w for w in mission_rec.wait_records
                         if not w.is_cleared and w.wait_class.value in (
                             DurableWaitClass.RESOURCE.value,
+                            DurableWaitClass.RESOURCE_SHORT.value,
+                            DurableWaitClass.RESOURCE_LONG.value,
                             DurableWaitClass.DEPENDENCY.value,
                             DurableWaitClass.SCHEDULE.value,
                         )

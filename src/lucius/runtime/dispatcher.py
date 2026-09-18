@@ -33,6 +33,8 @@ BLOCKED_STATES = {
     QueueWorkItemState.WAITING_HUMAN,
     QueueWorkItemState.WAITING_EXTERNAL,
     QueueWorkItemState.WAITING_RESOURCE,
+    QueueWorkItemState.WAITING_RESOURCE_SHORT,
+    QueueWorkItemState.WAITING_RESOURCE_LONG,
     QueueWorkItemState.WAITING_DEPENDENCY,
     QueueWorkItemState.WAITING_SCHEDULE,
     QueueWorkItemState.BLOCKED_DEPENDENCY,
