@@ -119,10 +119,12 @@ class BoundedContinuationService:
         last_project_id: str | None = None
 
         if mission_id is not None:
-            if canonical_sha:
+            existing = self.supervisor.get_mission(mission_id)
+            if existing is None:
+                current_sha = canonical_sha or "HEAD"
+                self.supervisor.create_mission(canonical_sha=current_sha, mission_id=mission_id)
+            elif canonical_sha:
                 self.supervisor.recover_mission(mission_id, canonical_sha)
-            else:
-                self.supervisor.get_mission(mission_id)
         else:
             current_sha = canonical_sha or "HEAD"
             mission = self.supervisor.create_mission(canonical_sha=current_sha)
