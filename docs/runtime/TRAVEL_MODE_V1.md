@@ -171,4 +171,15 @@ The session completed in 124s because all 7 fed tasks reached terminal states fo
 - **No Busy Polling & Calculated Wake Times:** Computes exact next wake timestamp (`min(retry_after)`) across active wait records.
 - **Full Acceptance Suite:** 8 new integration/unit test points added in `tests/integration/test_shift_10d_work_supply_wake_resume.py`. Full regression suite of 685 tests passing cleanly.
 
+---
+
+## 8. Shift 10E — Canonical Global Project & Work Portfolio
+
+### Objectives & Implemented Semantics
+- **Progressive Project Readiness Lifecycle:** Established taxonomy (`IDEA` → `ACCEPTED_CONCEPT` → `STRUCTURED_CONCEPT` → `RESEARCH_REQUIRED` → `DESIGN_PARTIAL` → `DESIGN_READY` → `ENGINEERING_READY` → `ACTIVE` → `OPERATIONAL` → `MONETIZING`).
+- **Project Design Debt & Design Coverage (D0–D5):** Defined levels D0 (Idea Only) to D5 (Operational Design) and DDB Depth levels (`DDB_LITE`, `DDB_STANDARD`, `DDB_FULL`). Classified design debt across all 22 registered projects.
+- **Global Work Portfolio Adapter (`GlobalWorkPortfolioService`):** Created normalized index and work discovery adapter ([service.py](file:///Volumes/BLACKBOX/2%20CODE%20PROJECTS/Lucius%20Engineering/lucius-engineering/src/lucius/portfolio/service.py)) over canonical project registry and backlog sources.
+- **Resource-Aware Scheduling (P0–P4):** P0 waiting work (`WAITING_RESOURCE` / `WAITING_DEPENDENCY`) retains mission ownership while P1/P2/P3/P4 ready work executes using idle local capacity under the Minimum Sufficient Resource Principle.
+- **Full Acceptance & Integration Suite:** 23 new test points added in `tests/integration/test_shift_10e_global_portfolio.py` (100% PASS). Full regression suite of 708 tests passing cleanly with 0 failures.
+
 

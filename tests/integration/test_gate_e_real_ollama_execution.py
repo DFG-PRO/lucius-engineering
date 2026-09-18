@@ -45,6 +45,7 @@ def test_gate_e_real_ollama_execution_regression():
     ollama_provider = OllamaExecutionProvider(
         provider_id="ollama-local",
         model="qwen3:8b",
+        timeout_seconds=600,
         allowed_workspace_roots=[lucius_root, darwin_root, billy_root],
     )
     provider_registry = RuntimeProviderRegistry([ollama_provider])
