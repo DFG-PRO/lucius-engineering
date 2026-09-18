@@ -168,12 +168,23 @@ class ExecutionRuntimeLoopService:
             result.provider_ids = list(dict.fromkeys(provider_ids))
             result.project_ids = list(dict.fromkeys(project_ids))
             result.wall_clock_duration_seconds = max(0.0, time.monotonic() - started_at)
+            compact_metadata = result.model_dump(mode="json")
+            compact_metadata["scheduler_decisions"] = [
+                {
+                    "cycle_id": dec.get("cycle_id"),
+                    "reason": dec.get("reason"),
+                    "selected_item_id": (dec.get("selected") or {}).get("item_id"),
+                    "selected_project_id": (dec.get("selected") or {}).get("project_id"),
+                    "started": dec.get("started"),
+                }
+                for dec in compact_metadata.get("scheduler_decisions", [])
+            ]
             self.audit.record(
                 event_type="NATIVE_RUNTIME_LOOP_COMPLETED",
                 actor=self.actor.value,
                 action="run_native_execution_runtime_loop",
                 result=result.status.value,
-                metadata=result.model_dump(mode="json"),
+                metadata=compact_metadata,
             )
         return result
 

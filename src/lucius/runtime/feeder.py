@@ -418,6 +418,16 @@ class DarwinBacklogFeeder:
                     val = decision.get("key")
                     if val:
                         keys.add(str(val))
+            for item in wf.task_backlog or []:
+                if isinstance(item, dict):
+                    if item.get("dedupe_key"):
+                        keys.add(str(item.get("dedupe_key")))
+                    if item.get("item_id"):
+                        keys.add(str(item.get("item_id")))
+                        keys.add(f"darwin:{item.get('item_id').replace('FEED-', '')}")
+                        keys.add(f"portfolio:{wf.project_id}:{item.get('item_id')}")
+                    if item.get("logical_task_id"):
+                        keys.add(str(item.get("logical_task_id")))
         return keys
 
     def _ensure_project(self, session: Session, project_id: str) -> ProjectORM:

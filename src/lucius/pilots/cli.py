@@ -154,7 +154,8 @@ def main() -> None:
     qualification.add_argument("--ollama-endpoint", default="http://127.0.0.1:11434")
     qualification.add_argument("--ollama-timeout-seconds", type=int, default=60)
     qualification.add_argument("--ollama-mutation-num-predict", type=int, default=1024)
-    qualification.add_argument("--bootstrap-only", action="store_true")
+    status_cmd = sub.add_parser("status")
+    status_cmd.add_argument("--mission-id", default=None)
 
     args = parser.parse_args()
     lock_timeout = float(os.environ.get("LUCIUS_ARTIFACT_STORE_LOCK_TIMEOUT_SECONDS", "10.0"))
@@ -441,6 +442,76 @@ def _run_command(args: argparse.Namespace) -> None:
             )
             session.commit()
             print(result.model_dump_json(indent=2))
+        elif args.command == "status":
+            from lucius.audit.service import AuditService
+            from lucius.runtime.mission import DurableMissionSupervisor
+            from lucius.persistence.orm import DurableMissionORM, PersistentWorkflowORM, AuditEventORM
+            from sqlalchemy import func, select
+
+            supervisor = DurableMissionSupervisor(session)
+            audit_service = AuditService(session)
+
+            db_file = Path(args.database)
+            db_size_bytes = db_file.stat().st_size if db_file.exists() else 0
+
+            mission_id = args.mission_id
+            if not mission_id:
+                last_m = session.query(DurableMissionORM).order_by(DurableMissionORM.updated_at.desc()).first()
+                mission_id = last_m.id if last_m else None
+
+            m_rec = supervisor.get_mission(mission_id) if mission_id else None
+            audit_stats = audit_service.get_audit_observability()
+
+            workflows = session.query(PersistentWorkflowORM).all()
+            completed_keys = set()
+            active_projects = set()
+            current_work = None
+            waiting_count = 0
+            blocked_count = 0
+
+            for wf in workflows:
+                if wf.project_id:
+                    active_projects.add(wf.project_id)
+                for item in wf.task_backlog or []:
+                    if isinstance(item, dict):
+                        st = item.get("state")
+                        key = item.get("dedupe_key") or item.get("item_id")
+                        if st == "COMPLETED" and key:
+                            completed_keys.add(key)
+                        elif st == "RUNNING":
+                            current_work = item.get("title") or item.get("item_id")
+                        elif st and "WAITING" in st:
+                            waiting_count += 1
+                        elif st and "BLOCKED" in st:
+                            blocked_count += 1
+
+            model_calls = session.scalar(
+                select(func.count()).select_from(AuditEventORM).where(
+                    AuditEventORM.event_type.in_(["NATIVE_RUNTIME_TASK_EXECUTION_RECORDED", "MODEL_EXECUTION_ROUTING_DECISION"])
+                )
+            ) or 0
+
+            earliest_wake = None
+            if m_rec and m_rec.metadata and "sleeping_metadata" in m_rec.metadata:
+                earliest_wake = m_rec.metadata["sleeping_metadata"].get("earliest_wake_at")
+
+            report = {
+                "mission_id": mission_id,
+                "attempt_id": (m_rec.metadata.get("current_attempt_id") if m_rec and m_rec.metadata else None),
+                "state": m_rec.status.value if m_rec else "NO_MISSION",
+                "current_work": current_work or "NONE",
+                "unique_useful_completions": len(completed_keys),
+                "active_projects": sorted(list(active_projects)),
+                "waiting": waiting_count,
+                "blocked": blocked_count,
+                "model_calls": model_calls,
+                "next_wake": earliest_wake or "NONE",
+                "db_size_bytes": db_size_bytes,
+                "audit_event_count": audit_stats["event_count"],
+                "audit_total_bytes": audit_stats["total_audit_bytes"],
+                "health": "ONLINE" if (m_rec and m_rec.status.value in ("ACTIVE", "WAITING", "SLEEPING")) else "OFFLINE",
+            }
+            print(json.dumps(report, indent=2))
 
 
 def _requires_store_write_serialization(command: str) -> bool:

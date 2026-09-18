@@ -110,6 +110,7 @@ class BoundedContinuationService:
         workflow_ids: list[str] | None = None,
         stop_on_block: bool = False,
         mission_id: str | None = None,
+        attempt_id: str | None = None,
         canonical_sha: str | None = None,
     ) -> ContinuationSessionResult:
         started_at = self.clock()
@@ -122,13 +123,16 @@ class BoundedContinuationService:
             existing = self.supervisor.get_mission(mission_id)
             if existing is None:
                 current_sha = canonical_sha or "HEAD"
-                self.supervisor.create_mission(canonical_sha=current_sha, mission_id=mission_id)
+                mission = self.supervisor.create_mission(canonical_sha=current_sha, mission_id=mission_id, attempt_id=attempt_id)
+                attempt_id = (mission.metadata or {}).get("current_attempt_id")
             elif canonical_sha:
-                self.supervisor.recover_mission(mission_id, canonical_sha)
+                mission = self.supervisor.recover_mission(mission_id, canonical_sha, attempt_id=attempt_id)
+                attempt_id = (mission.metadata or {}).get("current_attempt_id")
         else:
             current_sha = canonical_sha or "HEAD"
-            mission = self.supervisor.create_mission(canonical_sha=current_sha)
+            mission = self.supervisor.create_mission(canonical_sha=current_sha, attempt_id=attempt_id)
             mission_id = mission.mission_id
+            attempt_id = (mission.metadata or {}).get("current_attempt_id")
 
         self.audit.record(
             event_type="BOUNDED_CONTINUATION_SESSION_STARTED",
@@ -139,6 +143,7 @@ class BoundedContinuationService:
                 "budget": budget.model_dump(mode="json"),
                 "workflow_ids": active_workflows,
                 "mission_id": mission_id,
+                "attempt_id": attempt_id,
             },
         )
 
@@ -240,8 +245,16 @@ class BoundedContinuationService:
                     )
                     continue
 
-            # 2. Queue is empty / IDLE: consult task feeder if available
-            if self.feeder is not None and not feeder_exhausted:
+            # 2. Queue is empty / IDLE: consult task feeder if available (unless active mission is waiting)
+            has_uncleared_mission_wait = False
+            if mission_id:
+                mission_rec = self.supervisor.get_mission(mission_id)
+                if mission_rec and mission_rec.wait_records:
+                    uncleared_all = [w for w in mission_rec.wait_records if not w.is_cleared]
+                    if uncleared_all:
+                        has_uncleared_mission_wait = True
+
+            if self.feeder is not None and not feeder_exhausted and not has_uncleared_mission_wait:
                 result.feeder_invocations += 1
                 newly_ingested = self.feeder.feed_into_queue(self.session, max_items=5)
                 if newly_ingested:
@@ -272,6 +285,8 @@ class BoundedContinuationService:
                             QueueWorkItemState.WAITING_RESOURCE_LONG.value,
                             QueueWorkItemState.WAITING_DEPENDENCY.value,
                             QueueWorkItemState.WAITING_SCHEDULE.value,
+                            QueueWorkItemState.BLOCKED_AUTHORITY.value,
+                            QueueWorkItemState.BLOCKED_DECISION.value,
                         ):
                             waiting_count += 1
 
@@ -286,6 +301,8 @@ class BoundedContinuationService:
                             DurableWaitClass.RESOURCE_LONG.value,
                             DurableWaitClass.DEPENDENCY.value,
                             DurableWaitClass.SCHEDULE.value,
+                            DurableWaitClass.AUTHORITY.value,
+                            DurableWaitClass.DECISION.value,
                         )
                     ]
                     if uncleared and waiting_count == 0:

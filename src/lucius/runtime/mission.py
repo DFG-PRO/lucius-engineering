@@ -55,9 +55,16 @@ class DurableMissionSupervisor:
         canonical_sha: str,
         metadata: dict[str, Any] | None = None,
         mission_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> DurableMissionRecord:
         if mission_id is None:
             mission_id = f"mis_{uuid.uuid4().hex[:12]}"
+        if attempt_id is None:
+            attempt_id = f"att_{uuid.uuid4().hex[:12]}"
+
+        meta = dict(metadata or {})
+        meta["current_attempt_id"] = attempt_id
+        meta["attempts"] = meta.get("attempts", []) + [{"attempt_id": attempt_id, "started_at": utc_now().isoformat()}]
 
         mission_orm = DurableMissionORM(
             id=mission_id,
@@ -66,7 +73,7 @@ class DurableMissionSupervisor:
             completed_tasks_count=0,
             waiting_tasks_count=0,
             blocked_tasks_count=0,
-            mission_metadata=metadata or {},
+            mission_metadata=meta,
         )
         self.session.add(mission_orm)
         self.session.flush()
@@ -76,7 +83,7 @@ class DurableMissionSupervisor:
             actor=self.actor.value,
             action="create_mission",
             result="SUCCESS",
-            metadata={"mission_id": mission_id, "canonical_sha": canonical_sha},
+            metadata={"mission_id": mission_id, "attempt_id": attempt_id, "canonical_sha": canonical_sha},
         )
         return self._orm_to_record(mission_orm, [])
 
@@ -199,7 +206,7 @@ class DurableMissionSupervisor:
             return None
         return self.reconcile_mission_state(mission_id)
 
-    def recover_mission(self, mission_id: str, current_canonical_sha: str) -> DurableMissionRecord:
+    def recover_mission(self, mission_id: str, current_canonical_sha: str, attempt_id: str | None = None) -> DurableMissionRecord:
         mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
         if mission_orm is None:
             raise ValueError(f"Durable mission '{mission_id}' not found")
@@ -208,6 +215,16 @@ class DurableMissionSupervisor:
             raise ValueError(
                 f"Canonical SHA mismatch during mission recovery: mission sha={mission_orm.canonical_sha}, current sha={current_canonical_sha}"
             )
+
+        if attempt_id is None:
+            attempt_id = f"att_{uuid.uuid4().hex[:12]}"
+
+        meta = dict(mission_orm.mission_metadata or {})
+        meta["current_attempt_id"] = attempt_id
+        attempts = list(meta.get("attempts", []))
+        attempts.append({"attempt_id": attempt_id, "started_at": utc_now().isoformat(), "recovered": True})
+        meta["attempts"] = attempts
+        set_json_field(mission_orm, "mission_metadata", meta)
 
         now = utc_now()
         waits_orm = self.session.query(DurableWaitORM).filter_by(mission_id=mission_id, is_cleared=False).all()
@@ -234,9 +251,47 @@ class DurableMissionSupervisor:
             actor=self.actor.value,
             action="recover_mission",
             result="SUCCESS",
-            metadata={"mission_id": mission_id, "canonical_sha": current_canonical_sha},
+            metadata={"mission_id": mission_id, "attempt_id": attempt_id, "canonical_sha": current_canonical_sha},
         )
         return rec
+
+    def record_interruption(
+        self,
+        mission_id: str,
+        attempt_id: str | None = None,
+        reason: str = "SIGINT_OR_SIGTERM",
+        checkpoint_data: dict[str, Any] | None = None,
+    ) -> DurableMissionRecord:
+        mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
+        if mission_orm is None:
+            raise ValueError(f"Durable mission '{mission_id}' not found")
+
+        mission_orm.status = MissionStatus.PAUSED.value
+        meta = dict(mission_orm.mission_metadata or {})
+        eff_attempt = attempt_id or meta.get("current_attempt_id")
+        meta["last_interruption"] = {
+            "attempt_id": eff_attempt,
+            "timestamp": utc_now().isoformat(),
+            "reason": reason,
+            "checkpoint": checkpoint_data or {},
+        }
+        set_json_field(mission_orm, "mission_metadata", meta)
+        mission_orm.updated_at = utc_now()
+        self.session.flush()
+
+        self.audit.record(
+            event_type="DURABLE_MISSION_INTERRUPTED",
+            actor=self.actor.value,
+            action="record_interruption",
+            result="INTERRUPTED",
+            metadata={
+                "mission_id": mission_id,
+                "attempt_id": eff_attempt,
+                "reason": reason,
+                "checkpoint": checkpoint_data or {},
+            },
+        )
+        return self.reconcile_mission_state(mission_id)
 
     def reevaluate_durable_waits(self, mission_id: str | None = None) -> list[DurableWaitRecord]:
         now = utc_now()
@@ -329,7 +384,9 @@ class DurableMissionSupervisor:
         mission_orm.waiting_tasks_count = max(len(waiting_items), waiting_count)
         mission_orm.blocked_tasks_count = max(len(blocked_items), blocked_count)
 
-        if ready_items:
+        if mission_orm.status in (MissionStatus.PAUSED.value, MissionStatus.INTERRUPTED.value) and not ready_items:
+            pass
+        elif ready_items:
             mission_orm.status = MissionStatus.ACTIVE.value
         elif waiting_items or uncleared_waits:
             # If no ready items, but waiting/uncleared items exist, mission is SLEEPING/WAITING

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -676,6 +676,9 @@ class ResumeValidationORM(Base):
 
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_event_type_timestamp", "event_type", "timestamp"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

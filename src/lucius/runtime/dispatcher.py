@@ -129,7 +129,7 @@ class MultiProjectDispatcher:
             "MULTI_PROJECT_DISPATCH_PROJECTS_INSPECTED",
             "inspect_dispatchable_projects",
             str(len(bundles)),
-            metadata={"cycle_id": cycle_id, "projects": [_project_payload(bundle) for bundle in bundles]},
+            metadata={"cycle_id": cycle_id, "project_count": len(bundles)},
         )
 
         running = [evaluation for bundle in bundles for evaluation in self._evaluations(bundle) if evaluation.candidate.state == QueueWorkItemState.RUNNING]
@@ -151,14 +151,19 @@ class MultiProjectDispatcher:
         ]
         excluded = [evaluation for evaluation in evaluations if not evaluation.eligible and evaluation not in blocked]
 
-        for evaluation in evaluations:
-            self._audit(
-                "MULTI_PROJECT_DISPATCH_CANDIDATE_ELIGIBILITY_EVALUATED",
-                "evaluate_dispatch_candidate",
-                "ELIGIBLE" if evaluation.eligible else "EXCLUDED",
-                selected=evaluation.candidate,
-                metadata={"cycle_id": cycle_id, **evaluation.model_dump(mode="json")},
-            )
+        summary_meta = {
+            "cycle_id": cycle_id,
+            "total_candidates": len(evaluations),
+            "eligible_count": len(eligible),
+            "blocked_count": len(blocked),
+            "excluded_count": len(excluded),
+        }
+        self._audit(
+            "MULTI_PROJECT_DISPATCH_CANDIDATE_ELIGIBILITY_EVALUATED",
+            "evaluate_dispatch_candidate",
+            f"ELIGIBLE_{len(eligible)}",
+            metadata=summary_meta,
+        )
         if not eligible:
             selection = DispatchSelection(
                 cycle_id=cycle_id,
@@ -327,27 +332,71 @@ class MultiProjectDispatcher:
         return bundles
 
     def _audit_selection(self, selection: DispatchSelection, result: str) -> None:
-        metadata = selection.model_dump(mode="json")
-        self._audit(
-            "MULTI_PROJECT_DISPATCH_ELIGIBLE_CANDIDATE_SET",
-            "record_eligible_dispatch_candidates",
-            str(len(selection.eligible_candidates)),
-            metadata=metadata,
-        )
-        self._audit(
-            "MULTI_PROJECT_DISPATCH_SCHEDULING_POLICY_APPLIED",
-            "apply_deterministic_multi_project_policy",
-            selection.reason,
-            selected=selection.selected,
-            metadata=metadata,
-        )
+        raw = selection.model_dump(mode="json")
+        def _compact_eval(eval_dict: dict[str, Any]) -> dict[str, Any]:
+            cand = eval_dict.get("candidate") or {}
+            return {
+                "candidate": {
+                    "project_id": cand.get("project_id"),
+                    "workflow_id": cand.get("workflow_id"),
+                    "item_id": cand.get("item_id"),
+                    "task_id": cand.get("task_id"),
+                    "state": cand.get("state"),
+                    "priority": cand.get("priority"),
+                },
+                "eligible": eval_dict.get("eligible"),
+                "reasons": eval_dict.get("reasons"),
+            }
+
+        def _compact_cand(cand: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not cand:
+                return None
+            return {
+                "project_id": cand.get("project_id"),
+                "workflow_id": cand.get("workflow_id"),
+                "item_id": cand.get("item_id"),
+                "task_id": cand.get("task_id"),
+                "state": cand.get("state"),
+                "priority": cand.get("priority"),
+            }
+
+        raw["selected"] = _compact_cand(raw.get("selected"))
+        raw["eligible_candidates"] = [_compact_eval(e) for e in (raw.get("eligible_candidates") or [])[:3]]
+        raw["excluded_candidates"] = [_compact_eval(e) for e in (raw.get("excluded_candidates") or [])[:3]]
+        raw["blocked_candidates"] = [_compact_eval(e) for e in (raw.get("blocked_candidates") or [])[:3]]
+        metadata = raw
+
+        summary_meta = {
+            "cycle_id": selection.cycle_id,
+            "reason": selection.reason,
+            "eligible_count": len(selection.eligible_candidates),
+            "excluded_count": len(selection.excluded_candidates),
+            "blocked_count": len(selection.blocked_candidates),
+            "fairness_applied": selection.fairness_applied,
+        }
+
+        if selection.selected:
+            self._audit(
+                "MULTI_PROJECT_DISPATCH_ELIGIBLE_CANDIDATE_SET",
+                "record_eligible_dispatch_candidates",
+                str(len(selection.eligible_candidates)),
+                metadata={"cycle_id": selection.cycle_id, "eligible_count": len(selection.eligible_candidates)},
+            )
+            self._audit(
+                "MULTI_PROJECT_DISPATCH_SCHEDULING_POLICY_APPLIED",
+                "apply_deterministic_multi_project_policy",
+                selection.reason,
+                selected=selection.selected,
+                metadata={"cycle_id": selection.cycle_id, "reason": selection.reason, "fairness_applied": selection.fairness_applied},
+            )
+
         event_type = "MULTI_PROJECT_DISPATCH_CANDIDATE_SELECTED" if selection.selected else "MULTI_PROJECT_DISPATCH_NO_ELIGIBLE_WORK"
         self._audit(
             event_type,
             "select_multi_project_dispatch_candidate",
             result,
             selected=selection.selected,
-            metadata=metadata,
+            metadata=metadata if selection.selected else summary_meta,
         )
 
     def _audit(

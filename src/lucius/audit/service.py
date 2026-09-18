@@ -57,3 +57,62 @@ class AuditService:
         self.session.add(row)
         self.session.flush()
         return row
+
+    def get_audit_observability(self, scheduler_cycles: int = 1) -> dict[str, Any]:
+        """Calculates storage metrics, payload sizes, and oversized payload detection over recorded audit events."""
+        import json
+        events = self.session.query(AuditEventORM).all()
+        if not events:
+            return {
+                "event_count": 0,
+                "total_audit_bytes": 0,
+                "average_metadata_payload_size": 0.0,
+                "maximum_metadata_payload_size": 0,
+                "audit_bytes_per_cycle": 0.0,
+                "largest_event_types": {},
+                "oversized_events": [],
+            }
+
+        total_bytes = 0
+        total_meta_bytes = 0
+        max_meta_bytes = 0
+        event_type_bytes: dict[str, int] = {}
+        oversized_events: list[dict[str, Any]] = []
+
+        for ev in events:
+            meta_str = json.dumps(ev.event_metadata or {})
+            meta_len = len(meta_str.encode("utf-8"))
+            row_bytes = meta_len + len(ev.event_type or "") + len(ev.action or "") + len(ev.result or "") + 50
+
+            total_bytes += row_bytes
+            total_meta_bytes += meta_len
+            if meta_len > max_meta_bytes:
+                max_meta_bytes = meta_len
+
+            event_type_bytes[ev.event_type] = event_type_bytes.get(ev.event_type, 0) + row_bytes
+
+            if meta_len > 10240:  # 10 KB threshold
+                oversized_events.append({
+                    "id": ev.id,
+                    "event_type": ev.event_type,
+                    "metadata_bytes": meta_len,
+                    "action": ev.action,
+                })
+
+        event_count = len(events)
+        avg_meta_size = round(total_meta_bytes / event_count, 2) if event_count > 0 else 0.0
+        cycles = max(1, scheduler_cycles)
+        bytes_per_cycle = round(total_bytes / cycles, 2)
+
+        sorted_types = dict(sorted(event_type_bytes.items(), key=lambda item: item[1], reverse=True)[:5])
+
+        return {
+            "event_count": event_count,
+            "total_audit_bytes": total_bytes,
+            "total_metadata_bytes": total_meta_bytes,
+            "average_metadata_payload_size": avg_meta_size,
+            "maximum_metadata_payload_size": max_meta_bytes,
+            "audit_bytes_per_cycle": bytes_per_cycle,
+            "largest_event_types": sorted_types,
+            "oversized_events": oversized_events,
+        }

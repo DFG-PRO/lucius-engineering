@@ -138,18 +138,19 @@ class ScriptedExecutionAdapter:
         self.provider_version = provider_version
         self.available = available
         self._outcomes_by_item_id = dict(outcomes_by_item_id or {})
+        default_caps = ["code_modification", "inspection_reasoning", "read_only", "research_synthesis"]
         models = [
             RuntimeProviderModel(
                 model_id=model_id,
                 model_version=provider_version,
-                capabilities=capabilities or ["code_modification"],
+                capabilities=capabilities or default_caps,
             )
         ] if model_id else []
         self.registration = RuntimeProviderRegistration(
             provider_id=provider_id,
             provider_version=provider_version,
-            capabilities=capabilities or ["code_modification"],
-            supported_task_classes=["engineering"],
+            capabilities=capabilities or default_caps,
+            supported_task_classes=["engineering", "inspection_reasoning", "research", "inspection", "inspection_reasoning"],
             supports_code_modification=True,
             supported_workspace_kinds=["local_git_worktree"],
             supported_isolation_modes=["ISOLATED_WORKTREE"],

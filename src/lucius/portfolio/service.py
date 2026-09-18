@@ -258,10 +258,13 @@ class GlobalWorkPortfolioService:
     ) -> list[dict[str, Any]]:
         """Atomically ingests eligible runnable/preparable work packages across all projects into persistent workflows."""
         work_packages = self.discover_global_work(session, allowed_authority_classes=allowed_authority_classes)
+        existing_keys = self.feeder._get_existing_dedupe_keys(session)
         eligible_pkgs = [
             p for p in work_packages
             if p.current_state in (GlobalWorkState.READY, GlobalWorkState.AUTO_PREPARABLE)
             and p.provenance_refs
+            and p.dedupe_key not in existing_keys
+            and f"FEED-{p.source_record_id}" not in existing_keys
         ]
 
         if not eligible_pkgs:
@@ -422,7 +425,13 @@ class GlobalWorkPortfolioService:
                 pending_task_ids=[item_id],
                 actor=actor,
             )
-            ingested.append({"task_id": task.id, "workflow_id": workflow.id, "project_id": pkg.project_id, "item_id": item_id})
+            ingested.append({
+                "task_id": task.id,
+                "workflow_id": workflow.id,
+                "project_id": pkg.project_id,
+                "item_id": item_id,
+                "dedupe_key": pkg.dedupe_key,
+            })
 
         return ingested
 
