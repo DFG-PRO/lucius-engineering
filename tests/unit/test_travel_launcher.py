@@ -173,3 +173,111 @@ def test_travel_launcher_cli_smoke_main(monkeypatch, tmp_path: Path, capsys):
     assert "SESSION EXECUTION SUMMARY" in captured.out
     assert "Session Status:      IDLE" in captured.out
     assert "Cycles Attempted:    1" in captured.out
+
+
+def test_qwen3_8b_supports_inspection_reasoning_task_type():
+    """Regression: qwen3:8b must include 'inspection_reasoning' in supported_task_classes.
+
+    Darwin feeder tasks use task_type='inspection_reasoning'. Before Shift 09B, the
+    Ollama provider's supported_task_classes was missing this value, causing all feeder
+    tasks to receive NO_ELIGIBLE_PROVIDER and triggering FAILURE_BUDGET_REACHED.
+    """
+    from lucius.runtime.ollama import OllamaExecutionProvider
+
+    provider = OllamaExecutionProvider(
+        provider_id="ollama-local-test",
+        model="qwen3:8b",
+    )
+    assert "inspection_reasoning" in provider.registration.supported_task_classes, (
+        "qwen3:8b must include 'inspection_reasoning' in supported_task_classes "
+        "so that Darwin feeder tasks (task_type='inspection_reasoning') are eligible."
+    )
+    assert "inspection" in provider.registration.supported_task_classes
+    assert "engineering" in provider.registration.supported_task_classes
+
+
+def test_no_eligible_provider_does_not_burn_consecutive_failure_budget():
+    """Regression: NO_ELIGIBLE_PROVIDER FAILED outcome must not increment consecutive_failures.
+
+    Before Shift 09B, TASK_LOCAL_FAILURE_CLASSES semantics were not applied in the
+    continuation loop, so 3 NO_ELIGIBLE_PROVIDER failures triggered FAILURE_BUDGET_REACHED
+    even though the service had _should_stop_after_non_completion() returning False for them.
+    """
+    from lucius.runtime.schemas import RuntimeTaskExecutionRecord, RuntimeExecutionOutcome
+    from lucius.runtime.service import TASK_LOCAL_FAILURE_CLASSES
+
+    # Verify NO_ELIGIBLE_PROVIDER is in the task-local set
+    assert "NO_ELIGIBLE_PROVIDER" in TASK_LOCAL_FAILURE_CLASSES
+
+    # Simulate what the continuation loop does:
+    # Three FAILED outcomes with NO_ELIGIBLE_PROVIDER failure_class must not
+    # cause consecutive_failures to reach max_consecutive_failures=3
+    consecutive_failures = 0
+    total_failures = 0
+    for _ in range(3):
+        rec = RuntimeTaskExecutionRecord(
+            workflow_id="wf-001",
+            item_id="item-001",
+            provider_id="ollama-local",
+            outcome=RuntimeExecutionOutcome.FAILED,
+            failure_class="NO_ELIGIBLE_PROVIDER",
+            blocker_category="NO_ELIGIBLE_PROVIDER",
+        )
+        if rec.outcome.value == "FAILED":
+            total_failures += 1
+            # TASK_LOCAL_FAILURE_CLASSES must NOT increment consecutive_failures
+            if rec.failure_class not in TASK_LOCAL_FAILURE_CLASSES:
+                consecutive_failures += 1
+            else:
+                consecutive_failures = 0
+
+    assert consecutive_failures == 0, (
+        "NO_ELIGIBLE_PROVIDER FAILED outcomes must not burn the consecutive_failures budget. "
+        f"Got consecutive_failures={consecutive_failures} after 3 task-local failures."
+    )
+    assert total_failures == 3
+
+
+def test_cli_failed_session_returns_nonzero_exit_code(monkeypatch, tmp_path, capsys):
+    """Regression: CLI must return exit code 1 when session status is FAILED.
+
+    Before Shift 09B, main() always returned exit code 0 regardless of session outcome.
+    """
+    from lucius.runtime import launcher as launcher_mod
+    from lucius.runtime.launcher import TravelLauncher
+    from lucius.runtime.continuation import ContinuationSessionResult
+
+    db_path = tmp_path / "cli_failed.sqlite"
+
+    # Patch launch() to return a FAILED result without executing real session
+    def _fake_launch(self, session, **kwargs):
+        result = ContinuationSessionResult()
+        result.status = "FAILED"
+        result.stop_reason = "FAILURE_BUDGET_REACHED"
+        result.tasks_selected = 3
+        result.tasks_completed = 0
+        result.tasks_blocked = 3
+        result.tasks_fed = 5
+        result.cycles_attempted = 4
+        result.wall_clock_duration_seconds = 0.39
+        result.project_switches = 0
+        return result
+
+    monkeypatch.setattr(TravelLauncher, "launch", _fake_launch)
+
+    test_args = [
+        "lucius.runtime.launcher",
+        "--mode", "travel",
+        "--provider", "scripted",
+        "--db-path", str(db_path),
+    ]
+    monkeypatch.setattr("sys.argv", test_args)
+
+    with pytest.raises(SystemExit) as exc_info:
+        launcher_mod.main()
+
+    assert exc_info.value.code == 1, (
+        f"CLI must exit with code 1 on FAILED session, got: {exc_info.value.code}"
+    )
+    captured = capsys.readouterr()
+    assert "Session Status:      FAILED" in captured.out

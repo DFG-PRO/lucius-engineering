@@ -128,6 +128,8 @@ class ExecutionRuntimeLoopService:
                         evidence_count=len(adapter_result.evidence),
                         verification_count=len(adapter_result.verification),
                         documentation_count=len(adapter_result.documentation),
+                        failure_class=adapter_result.failure_class,
+                        blocker_category=adapter_result.blocker_category,
                     )
                 )
 

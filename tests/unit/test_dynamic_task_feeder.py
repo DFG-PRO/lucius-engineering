@@ -11,7 +11,7 @@ from lucius.runtime.feeder import DarwinBacklogFeeder, NormalizedTaskEnvelope
 
 @pytest.fixture
 def test_session(tmp_path: Path):
-    engine = create_sqlite_engine(f"sqlite:///{tmp_path / 'test-feeder.sqlite'}")
+    engine = create_sqlite_engine(tmp_path / "test-feeder.sqlite")
     create_all(engine)
     factory = make_session_factory(engine)
     session = factory()

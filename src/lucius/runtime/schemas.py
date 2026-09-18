@@ -402,6 +402,8 @@ class RuntimeTaskExecutionRecord(BaseModel):
     evidence_count: int = 0
     verification_count: int = 0
     documentation_count: int = 0
+    failure_class: str | None = None
+    blocker_category: str | None = None
 
 
 class ExecutionRuntimeLoopResult(BaseModel):

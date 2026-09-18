@@ -21,7 +21,7 @@ from lucius.runtime.schemas import (
     RuntimeLoopStatus,
     RuntimeTaskExecutionRecord,
 )
-from lucius.runtime.service import ExecutionRuntimeLoopService
+from lucius.runtime.service import ExecutionRuntimeLoopService, TASK_LOCAL_FAILURE_CLASSES
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,13 @@ class BoundedContinuationService:
                     elif rec.outcome.value == "FAILED":
                         result.tasks_failed += 1
                         result.total_failures += 1
-                        result.consecutive_failures += 1
+                        # Task-local failure classes (e.g. NO_ELIGIBLE_PROVIDER) are
+                        # recoverable structural mismatches, not genuine execution failures.
+                        # They must not burn the consecutive-failure budget.
+                        if rec.failure_class not in TASK_LOCAL_FAILURE_CLASSES:
+                            result.consecutive_failures += 1
+                        else:
+                            result.consecutive_failures = 0
                     elif rec.outcome.value == "BLOCKED":
                         # Blocked task does not count as failure budget hit, reset consecutive
                         result.consecutive_failures = 0

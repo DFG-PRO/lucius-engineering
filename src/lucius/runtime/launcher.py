@@ -291,13 +291,18 @@ def main() -> None:
     mode_label = "SMOKE TEST" if args.smoke else f"Budget = {args.hours} hours ({args.max_cycles} max cycles)"
     print(f"\nLaunching Travel Session ({args.mode}): {mode_label} [provider: {args.provider}]...")
     with get_default_session(Path(args.db_path)) as session:
-        result = launcher.launch(
-            session,
-            hours=args.hours,
-            max_cycles=args.max_cycles,
-            smoke=args.smoke,
-            provider_type=args.provider,
-        )
+        try:
+            result = launcher.launch(
+                session,
+                hours=args.hours,
+                max_cycles=args.max_cycles,
+                smoke=args.smoke,
+                provider_type=args.provider,
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
         print("\n=== SESSION EXECUTION SUMMARY ===")
         print(f"Session Status:      {result.status}")
         print(f"Stop Reason:         {result.stop_reason}")
@@ -308,6 +313,9 @@ def main() -> None:
         print(f"Cycles Attempted:    {result.cycles_attempted}")
         print(f"Wall Clock Time:     {result.wall_clock_duration_seconds:.2f}s")
         print(f"Project Switches:    {result.project_switches}")
+
+        if result.status == "FAILED":
+            sys.exit(1)
 
 
 if __name__ == "__main__":

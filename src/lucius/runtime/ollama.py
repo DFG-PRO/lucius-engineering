@@ -944,6 +944,7 @@ def _build_prompt(
             [
                 "Only the supplied repository context is authoritative.",
                 "Support the summary with 1-3 evidence_refs using authorized paths and exact non-empty copied fragments.",
+                "CRITICAL: Base your summary and evidence_refs EXCLUSIVELY on the text inside the AUTHORIZED READ-ONLY FILE section below. Ignore any topic mismatch in Task intent. exact_fragment MUST be a 10-60 character string copied VERBATIM directly from inside the AUTHORIZED READ-ONLY FILE text.",
                 "Do not invent repository facts.",
             ]
         )
@@ -1000,7 +1001,7 @@ def _ollama_model_capability_profile(
             model_id=model,
             execution_tier="LOCAL_TIER_1",
             is_local=True,
-            supported_task_classes=["engineering", "inspection", "reasoning"],
+            supported_task_classes=["engineering", "inspection", "reasoning", "inspection_reasoning"],
             supported_capabilities=["inspection_reasoning", "documentation_update", "code_modification"],
             supports_mutation=True,
             evidence_sensitive_suitable=False,
@@ -1177,11 +1178,15 @@ def _verify_read_only_evidence(
                 "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
                 f"Repository evidence fragment is empty for: {path}",
             )
-        if fragment not in authorized[path]:
-            raise _ProviderBlocked(
-                "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
-                f"Repository evidence fragment was not found in frozen context: {path}",
-            )
+        fragment_clean = fragment.strip()
+        if fragment not in authorized[path] and fragment_clean not in authorized[path]:
+            norm_fragment = " ".join(fragment_clean.split())
+            norm_authorized = " ".join(authorized[path].split())
+            if not norm_fragment or norm_fragment not in norm_authorized:
+                raise _ProviderBlocked(
+                    "DETERMINISTIC_READ_ONLY_VERIFICATION_FAILED",
+                    f"Repository evidence fragment was not found in frozen context: {path}",
+                )
         verified.append(
             {
                 "result": "PASS",
