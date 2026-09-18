@@ -340,7 +340,6 @@ class MultiProjectDispatcher:
                     "project_id": cand.get("project_id"),
                     "workflow_id": cand.get("workflow_id"),
                     "item_id": cand.get("item_id"),
-                    "task_id": cand.get("task_id"),
                     "state": cand.get("state"),
                     "priority": cand.get("priority"),
                 },
@@ -355,15 +354,21 @@ class MultiProjectDispatcher:
                 "project_id": cand.get("project_id"),
                 "workflow_id": cand.get("workflow_id"),
                 "item_id": cand.get("item_id"),
+                "logical_task_id": cand.get("logical_task_id"),
                 "task_id": cand.get("task_id"),
+                "repository_id": cand.get("repository_id"),
                 "state": cand.get("state"),
                 "priority": cand.get("priority"),
+                "blocker_state": cand.get("blocker_state"),
             }
 
         raw["selected"] = _compact_cand(raw.get("selected"))
         raw["eligible_candidates"] = [_compact_eval(e) for e in (raw.get("eligible_candidates") or [])[:3]]
         raw["excluded_candidates"] = [_compact_eval(e) for e in (raw.get("excluded_candidates") or [])[:3]]
         raw["blocked_candidates"] = [_compact_eval(e) for e in (raw.get("blocked_candidates") or [])[:3]]
+        raw["eligible_count"] = len(selection.eligible_candidates)
+        raw["excluded_count"] = len(selection.excluded_candidates)
+        raw["blocked_count"] = len(selection.blocked_candidates)
         metadata = raw
 
         summary_meta = {

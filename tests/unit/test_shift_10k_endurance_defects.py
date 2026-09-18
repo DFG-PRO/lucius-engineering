@@ -428,3 +428,54 @@ def test_shift_10k_controlled_accelerated_endurance_validation(memory_db):
     stats = audit.get_audit_observability(scheduler_cycles=cycles_completed)
     assert stats["audit_bytes_per_cycle"] < 5000.0
     assert len(stats["oversized_events"]) == 0
+
+
+def test_shift_10k_r_audit_reconstructibility(memory_db):
+    """R. Verifies that compact dispatch audit payloads preserve full decision reconstructibility."""
+    svcs = _setup_services(memory_db)
+    feeder = svcs["feeder"]
+    dispatcher = svcs["dispatcher"]
+
+    ingested = feeder.feed_into_queue(memory_db, max_items=5)
+    assert len(ingested) > 0
+
+    selection = dispatcher.select_next()
+    memory_db.commit()
+
+    assert selection.selected is not None
+
+    # Retrieve Audit Event from DB
+    audit_row = memory_db.scalars(
+        select(AuditEventORM)
+        .where(AuditEventORM.event_type == "MULTI_PROJECT_DISPATCH_CANDIDATE_SELECTED")
+        .order_by(AuditEventORM.timestamp.desc())
+    ).first()
+
+    assert audit_row is not None
+    meta = audit_row.event_metadata
+    assert meta is not None
+
+    # Verify 1. Selected candidate identity & lineage
+    selected_meta = meta.get("selected")
+    assert selected_meta is not None
+    assert selected_meta["project_id"] == selection.selected.project_id
+    assert selected_meta["workflow_id"] == selection.selected.workflow_id
+    assert selected_meta["item_id"] == selection.selected.item_id
+    assert selected_meta["logical_task_id"] == selection.selected.logical_task_id
+    assert selected_meta["task_id"] == selection.selected.task_id
+    assert selected_meta["repository_id"] == selection.selected.repository_id
+
+    # Verify 2. Scheduling decision & policy reason
+    assert meta["reason"] == selection.reason
+    assert meta["cycle_id"] == selection.cycle_id
+    assert "fairness_applied" in meta
+
+    # Verify 3. State & Authority
+    assert selected_meta["state"] == selection.selected.state.value
+    assert selected_meta["priority"] == selection.selected.priority
+    assert selected_meta["blocker_state"] == selection.selected.blocker_state
+
+    # Verify 4. Counts & compact candidate arrays
+    assert meta["eligible_count"] >= 1
+    assert "eligible_candidates" in meta
+    assert len(meta["eligible_candidates"]) <= 3
