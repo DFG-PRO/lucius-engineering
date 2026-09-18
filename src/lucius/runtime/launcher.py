@@ -173,36 +173,66 @@ class TravelLauncher:
         workflow_ids: list[str] | None = None,
         stop_on_block: bool = False,
         runtime_service: Any = None,
+        smoke: bool = False,
+        provider_type: str = "ollama",
+        provider_registry: Any = None,
     ) -> ContinuationSessionResult:
         """Executes a bounded travel-mode continuation session."""
         preflight_res = self.preflight()
         if not preflight_res.all_passed:
             raise RuntimeError(f"Preflight checks failed: {preflight_res.errors}")
 
-        budget = SessionBudget(
-            max_cycles=max_cycles,
-            max_wall_seconds=hours * 3600.0,
-            max_consecutive_failures=3,
-        )
+        if smoke:
+            budget = SessionBudget(
+                max_cycles=1,
+                max_wall_seconds=10.0,
+                max_consecutive_failures=1,
+            )
+        else:
+            budget = SessionBudget(
+                max_cycles=max_cycles,
+                max_wall_seconds=hours * 3600.0,
+                max_consecutive_failures=3,
+            )
 
         registry_path = self.lucius_root / "src" / "lucius" / "projects" / "dfg_canonical_registry.json"
         registry = DFGProjectRegistry.load_json(registry_path) if registry_path.exists() else None
         guard = RegressionGuardValidator(registry) if registry is not None else None
 
-        feeder = DarwinBacklogFeeder(
-            darwin_root=self.darwin_root,
-            registry=registry,
-            regression_guard=guard,
+        feeder = (
+            None
+            if smoke
+            else DarwinBacklogFeeder(
+                darwin_root=self.darwin_root,
+                registry=registry,
+                regression_guard=guard,
+            )
         )
         if runtime_service is None:
-            from lucius.runtime.adapters import ScriptedRuntimePlanningAdapter
+            from lucius.domain.enums import Actor
+            from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
             from lucius.runtime.dispatcher import MultiProjectDispatcher
+            from lucius.runtime.ollama import OllamaExecutionProvider
             from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
             from lucius.runtime.service import ExecutionRuntimeLoopService
 
             planning_adapter = ScriptedRuntimePlanningAdapter()
-            provider_registry = RuntimeProviderRegistry()
-            execution_router = ModelExecutionRouter(provider_registry)
+            if provider_registry is None:
+                if provider_type == "scripted":
+                    provider = ScriptedExecutionAdapter(provider_id="scripted-runtime-provider")
+                else:
+                    provider = OllamaExecutionProvider(
+                        provider_id="ollama-local",
+                        model="qwen3:8b",
+                        allowed_workspace_roots=[self.lucius_root, self.darwin_root, self.billy_root],
+                    )
+                provider_registry = RuntimeProviderRegistry([provider])
+
+            execution_router = ModelExecutionRouter(
+                session,
+                registry=provider_registry,
+                actor=Actor.LUCIUS,
+            )
             dispatcher = MultiProjectDispatcher(session)
             runtime_service = ExecutionRuntimeLoopService(
                 session=session,
@@ -227,9 +257,13 @@ class TravelLauncher:
 def main() -> None:
     """CLI entrypoint for lucius travel mode launcher."""
     parser = argparse.ArgumentParser(description="Lucius Travel Mode Launcher")
+    parser.add_argument("--mode", choices=["travel"], default="travel", help="Operational mode (default: travel)")
     parser.add_argument("--hours", type=float, default=4.0, help="Maximum session duration in hours (default: 4.0)")
     parser.add_argument("--max-cycles", type=int, default=25, help="Maximum task execution cycles (default: 25)")
     parser.add_argument("--preflight-only", action="store_true", help="Run preflight checks only")
+    parser.add_argument("--smoke", action="store_true", help="Run quick 1-cycle runtime smoke test without consuming backlog")
+    parser.add_argument("--provider", choices=["ollama", "scripted"], default="ollama", help="Execution provider type (default: ollama)")
+    parser.add_argument("--db-path", type=str, default=str(DEFAULT_DB_PATH), help="Path to state database")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -254,9 +288,16 @@ def main() -> None:
         print("Preflight completed successfully. Exiting (--preflight-only specified).")
         sys.exit(0)
 
-    print(f"\nLaunching Travel Session: Budget = {args.hours} hours ({args.max_cycles} max cycles)...")
-    with get_default_session() as session:
-        result = launcher.launch(session, hours=args.hours, max_cycles=args.max_cycles)
+    mode_label = "SMOKE TEST" if args.smoke else f"Budget = {args.hours} hours ({args.max_cycles} max cycles)"
+    print(f"\nLaunching Travel Session ({args.mode}): {mode_label} [provider: {args.provider}]...")
+    with get_default_session(Path(args.db_path)) as session:
+        result = launcher.launch(
+            session,
+            hours=args.hours,
+            max_cycles=args.max_cycles,
+            smoke=args.smoke,
+            provider_type=args.provider,
+        )
         print("\n=== SESSION EXECUTION SUMMARY ===")
         print(f"Session Status:      {result.status}")
         print(f"Stop Reason:         {result.stop_reason}")
@@ -264,8 +305,8 @@ def main() -> None:
         print(f"Tasks Completed:     {result.tasks_completed}")
         print(f"Tasks Blocked:       {result.tasks_blocked}")
         print(f"Tasks Fed:           {result.tasks_fed}")
-        print(f"Cycles Executed:     {result.cycles_executed}")
-        print(f"Wall Clock Time:     {result.wall_clock_elapsed_seconds:.2f}s")
+        print(f"Cycles Attempted:    {result.cycles_attempted}")
+        print(f"Wall Clock Time:     {result.wall_clock_duration_seconds:.2f}s")
         print(f"Project Switches:    {result.project_switches}")
 
 

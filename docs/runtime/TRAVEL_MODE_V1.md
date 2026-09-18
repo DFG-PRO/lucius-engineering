@@ -1,6 +1,6 @@
 # Lucius Travel Mode v1 Specification & Operational Contract
 
-**Version:** 1.0.0  
+**Version:** 1.0.1
 **Status:** CANONICAL OPERATIONAL SPECIFICATION  
 **Scope:** Multi-Hour Unattended Continuation Across DFG Universe
 
@@ -23,20 +23,38 @@ Travel Mode allows Lucius to operate safely and productively for bounded duratio
 ## 2. Architecture & Components
 
 - **`TravelLauncher` (`src/lucius/runtime/launcher.py`):**
-  Performs preflight checks (repository health, git porcelain worktree count <= 120, disk space >= 20GB, canonical registry integrity, Ollama model availability, Darwin backlog feeder discovery).
+  Performs preflight checks (repository health, git porcelain worktree count <= 150, disk space >= 5GB, canonical registry integrity, Ollama model availability, Darwin backlog feeder discovery). Initializes the execution runtime loop service, session budget, dynamic backlog feeder, and model execution router.
 - **`DarwinBacklogFeeder` (`src/lucius/runtime/feeder.py`):**
   Dynamically ingests validated backlog items from Darwin when local queues empty, enforcing regression guard rules.
 - **`BoundedContinuationService` (`src/lucius/runtime/continuation.py`):**
   Manages session budgets (max wall time, max cycles, failure thresholds) and executes multi-project task cycles via `MultiProjectDispatcher`.
 - **`ModelExecutionRouter` (`src/lucius/runtime/router.py`):**
-  Routes requests to verified provider adapters, logging full audit trails.
+  Routes requests to registered execution providers (e.g. local Ollama `qwen3:8b` or scripted test adapter), recording full audit trails and plan freeze enforcement.
 
 ---
 
-## 3. Preflight & Launch Command
+## 3. Preflight & Launch Commands
 
-Launch is initiated via single self-contained command block:
+### Fast Runtime Smoke Verification (< 1s)
+Verifies preflight checks and constructs the full runtime loop, router, provider registry, and session budget for 1 cycle without consuming backlog items:
 ```bash
-cd "/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering" && \
-./.venv/bin/python -m lucius.runtime.launcher --mode travel --budget-hours 4.0 --log-dir logs/travel
+./.venv/bin/python -m lucius.runtime.launcher --mode travel --smoke
+```
+
+### Preflight Inspection Only
+Runs preflight environment checks without starting a session:
+```bash
+./.venv/bin/python -m lucius.runtime.launcher --preflight-only
+```
+
+### Canonical 4-Hour Travel Mode Launch
+Executes unattended multi-project continuation bounded to 4.0 hours or 25 cycles:
+```bash
+./.venv/bin/python -m lucius.runtime.launcher --mode travel --hours 4.0 --max-cycles 25
+```
+
+### Scripted Offline / Test Provider
+Executes travel mode using deterministic scripted provider adapters:
+```bash
+./.venv/bin/python -m lucius.runtime.launcher --mode travel --hours 1.0 --max-cycles 10 --provider scripted
 ```
