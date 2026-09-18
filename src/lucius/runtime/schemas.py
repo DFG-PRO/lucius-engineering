@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from lucius.domain.enums import QueueWorkItemState
+from lucius.domain.enums import DurableWaitClass, MissionStatus, QueueWorkItemState
 
 
 class RuntimeExecutionOutcome(StrEnum):
@@ -47,6 +47,7 @@ class RuntimeExecutionSupervision(StrEnum):
 class RuntimeLoopStatus(StrEnum):
     COMPLETED = "COMPLETED"
     IDLE = "IDLE"
+    WAITING = "WAITING"
     BLOCKED = "BLOCKED"
     ESCALATED = "ESCALATED"
     FAILED = "FAILED"
@@ -428,3 +429,30 @@ class ExecutionRuntimeLoopResult(BaseModel):
     idle_eligible_work_time_seconds: float = 0.0
     single_dispatcher_enforced: bool = True
     stopped_reason: str | None = None
+
+
+class DurableWaitRecord(BaseModel):
+    wait_id: str
+    mission_id: str
+    item_id: str | None = None
+    task_id: str | None = None
+    wait_class: DurableWaitClass
+    reason: str
+    retry_after: datetime | None = None
+    cleared_at: datetime | None = None
+    is_cleared: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DurableMissionRecord(BaseModel):
+    mission_id: str
+    canonical_sha: str
+    status: MissionStatus = MissionStatus.ACTIVE
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_tasks_count: int = 0
+    waiting_tasks_count: int = 0
+    blocked_tasks_count: int = 0
+    wait_records: list[DurableWaitRecord] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)

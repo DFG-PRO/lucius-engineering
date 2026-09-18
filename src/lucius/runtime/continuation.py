@@ -11,10 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from lucius.audit.service import AuditService
-from lucius.domain.enums import Actor, QueueWorkItemState, TaskStatus
-from lucius.persistence.orm import utc_now
+from lucius.domain.enums import Actor, DurableWaitClass, QueueWorkItemState, TaskStatus
+from lucius.persistence.orm import PersistentWorkflowORM, utc_now
 from lucius.runtime.dispatcher import MultiProjectDispatcher
 from lucius.runtime.feeder import DarwinBacklogFeeder
+from lucius.runtime.mission import DurableMissionSupervisor
 from lucius.runtime.schemas import (
     ExecutionRuntimeLoopResult,
     RuntimeLoopConfig,
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 class ContinuationStopReason(StrEnum):
     IDLE_NO_ELIGIBLE_WORK = "IDLE_NO_ELIGIBLE_WORK"
+    IDLE_NO_WORK_EXISTS = "IDLE_NO_WORK_EXISTS"
+    WAITING_NO_CURRENTLY_RUNNABLE_WORK = "WAITING_NO_CURRENTLY_RUNNABLE_WORK"
     SESSION_WALL_BUDGET_REACHED = "SESSION_WALL_BUDGET_REACHED"
     SESSION_CYCLE_BUDGET_REACHED = "SESSION_CYCLE_BUDGET_REACHED"
     FAILURE_BUDGET_REACHED = "FAILURE_BUDGET_REACHED"
@@ -87,6 +90,7 @@ class BoundedContinuationService:
         runtime_service: ExecutionRuntimeLoopService,
         feeder: DarwinBacklogFeeder | None = None,
         dispatcher: MultiProjectDispatcher | None = None,
+        supervisor: DurableMissionSupervisor | None = None,
         actor: Actor = Actor.LUCIUS,
         clock=time.monotonic,
     ):
@@ -94,6 +98,7 @@ class BoundedContinuationService:
         self.runtime_service = runtime_service
         self.feeder = feeder
         self.dispatcher = dispatcher or runtime_service.dispatcher
+        self.supervisor = supervisor or DurableMissionSupervisor(session, actor=actor)
         self.actor = actor
         self.audit = AuditService(session)
         self.clock = clock
@@ -104,6 +109,8 @@ class BoundedContinuationService:
         *,
         workflow_ids: list[str] | None = None,
         stop_on_block: bool = False,
+        mission_id: str | None = None,
+        canonical_sha: str | None = None,
     ) -> ContinuationSessionResult:
         started_at = self.clock()
         result = ContinuationSessionResult()
@@ -111,12 +118,26 @@ class BoundedContinuationService:
         feeder_exhausted = False
         last_project_id: str | None = None
 
+        if mission_id is not None:
+            if canonical_sha:
+                self.supervisor.recover_mission(mission_id, canonical_sha)
+            else:
+                self.supervisor.get_mission(mission_id)
+        else:
+            current_sha = canonical_sha or "HEAD"
+            mission = self.supervisor.create_mission(canonical_sha=current_sha)
+            mission_id = mission.mission_id
+
         self.audit.record(
             event_type="BOUNDED_CONTINUATION_SESSION_STARTED",
             actor=self.actor.value,
             action="run_session",
             result="STARTED",
-            metadata={"budget": budget.model_dump(mode="json"), "workflow_ids": active_workflows},
+            metadata={
+                "budget": budget.model_dump(mode="json"),
+                "workflow_ids": active_workflows,
+                "mission_id": mission_id,
+            },
         )
 
         while True:
@@ -180,15 +201,11 @@ class BoundedContinuationService:
                     elif rec.outcome.value == "FAILED":
                         result.tasks_failed += 1
                         result.total_failures += 1
-                        # Task-local failure classes (e.g. NO_ELIGIBLE_PROVIDER) are
-                        # recoverable structural mismatches, not genuine execution failures.
-                        # They must not burn the consecutive-failure budget.
                         if rec.failure_class not in TASK_LOCAL_FAILURE_CLASSES:
                             result.consecutive_failures += 1
                         else:
                             result.consecutive_failures = 0
                     elif rec.outcome.value == "BLOCKED":
-                        # Blocked task does not count as failure budget hit, reset consecutive
                         result.consecutive_failures = 0
 
                 result.cycle_records.append(cycle_record)
@@ -198,13 +215,10 @@ class BoundedContinuationService:
                     result.status = "ESCALATED"
                     break
 
-                # Continue to next cycle
                 continue
 
             # If no task was selected:
-            # Check if runtime failed closed on critical error
             if runtime_res.status == RuntimeLoopStatus.FAILED:
-                # If selection had critical unresolvable error
                 cycle_record.stopped_reason = runtime_res.stopped_reason
                 result.cycle_records.append(cycle_record)
                 result.stop_reason = runtime_res.stopped_reason or "DISPATCH_FAILED"
@@ -227,14 +241,32 @@ class BoundedContinuationService:
                         result="SUCCESS",
                         metadata={"count": len(newly_ingested), "workflows": new_wf_ids},
                     )
-                    # Loop back to process new tasks
                     continue
                 else:
                     feeder_exhausted = True
 
-            # All work exhausted and feeder has no further tasks -> Clean IDLE
-            result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
-            result.status = "IDLE"
+            # Check if any tasks remain in WAITING state in the queue
+            waiting_count = 0
+            for wf in self.session.query(PersistentWorkflowORM).all():
+                for item in wf.task_backlog or []:
+                    if isinstance(item, dict) and item.get("state") in (
+                        QueueWorkItemState.WAITING_RESOURCE.value,
+                        QueueWorkItemState.WAITING_DEPENDENCY.value,
+                        QueueWorkItemState.WAITING_SCHEDULE.value,
+                        QueueWorkItemState.WAITING_HUMAN.value,
+                        QueueWorkItemState.WAITING_EXTERNAL.value,
+                    ):
+                        waiting_count += 1
+
+            if mission_id:
+                self.supervisor.reconcile_mission_state(mission_id)
+
+            if waiting_count > 0:
+                result.stop_reason = ContinuationStopReason.WAITING_NO_CURRENTLY_RUNNABLE_WORK.value
+                result.status = "WAITING"
+            else:
+                result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
+                result.status = "IDLE"
             break
 
         result.wall_clock_duration_seconds = max(0.0, self.clock() - started_at)
@@ -250,6 +282,7 @@ class BoundedContinuationService:
                 "blocked": result.tasks_blocked,
                 "switches": result.project_switches,
                 "duration": result.wall_clock_duration_seconds,
+                "mission_id": mission_id,
             },
         )
         return result

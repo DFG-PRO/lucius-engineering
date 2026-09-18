@@ -689,3 +689,33 @@ class AuditEventORM(Base):
     result: Mapped[str] = mapped_column(String(64), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class DurableMissionORM(Base):
+    __tablename__ = "durable_missions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    canonical_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    completed_tasks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    waiting_tasks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    blocked_tasks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    mission_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class DurableWaitORM(Base):
+    __tablename__ = "durable_waits"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mission_id: Mapped[str] = mapped_column(ForeignKey("durable_missions.id"), nullable=False, index=True)
+    item_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    wait_class: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_cleared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    wait_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)

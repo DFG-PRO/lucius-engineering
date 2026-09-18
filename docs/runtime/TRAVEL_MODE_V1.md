@@ -98,4 +98,24 @@ The session completed in 124s because all 7 fed tasks reached terminal states fo
 
 ### System Classification & Next Gate
 - **Classification:** `PASS_WITH_LIMITED_DURATION`
-- **Next Gate:** `SHIFT 10B — DURABLE MISSION SUPERVISOR + RESOURCE-AWARE SCHEDULER V0`
+- **Next Gate:** `SHIFT 10B — DURABLE MISSION SUPERVISOR + RESOURCE-AWARE SCHEDULER V0` (COMPLETED)
+
+---
+
+## 6. Shift 10B — Durable Mission Supervisor + Resource-Aware Scheduler V0
+
+### Architecture & Key Semantics
+1. **Durable Mission Supervisor (`src/lucius/runtime/mission.py`):**
+   - Implements `DurableMissionSupervisor` managing durable mission lifecycles, SQLite persistence (`durable_missions` and `durable_waits` tables), wait record checkpoints (`record_wait`, `clear_wait`), process restart recovery (`recover_mission`), canonical SHA verification, and wake rules.
+   - Preserves authority boundaries: `BLOCKED_AUTHORITY` and `BLOCKED_DECISION` states are immutable to automated clearing or retry.
+2. **Durable Wait States & Enums (`src/lucius/domain/enums.py` & `src/lucius/runtime/schemas.py`):**
+   - Added `WAITING_RESOURCE`, `WAITING_DEPENDENCY`, `WAITING_SCHEDULE`, `BLOCKED_AUTHORITY`, `BLOCKED_DECISION` to `QueueWorkItemState`.
+   - Added `MissionStatus` (`ACTIVE`, `WAITING`, `COMPLETED`, `FAILED`, `CANCELLED`) and `DurableWaitClass` (`RESOURCE`, `DEPENDENCY`, `SCHEDULE`, `HUMAN`, `AUTHORITY`, `DECISION`).
+3. **Session Idle Distinction & Bounded Continuation (`src/lucius/runtime/continuation.py`):**
+   - `BoundedContinuationService` distinguishes `IDLE_NO_ELIGIBLE_WORK` / `IDLE_NO_WORK_EXISTS` (when zero work items remain in queue or backlog) from `WAITING_NO_CURRENTLY_RUNNABLE_WORK` (when tasks exist in `WAITING_RESOURCE` or `WAITING_DEPENDENCY`), returning session status `WAITING` to preserve durable mission responsibility.
+4. **CLI Launch Flags & Process Recovery (`src/lucius/runtime/launcher.py`):**
+   - Added `--mission-id` and `--resume-mission` to `TravelLauncher` CLI, supporting seamless process restart recovery across system restarts while verifying canonical repository SHA matching.
+
+### Readiness & Verification
+- **Unit Suite:** 105 passed in `tests/unit/` (including 16 comprehensive durable mission supervisor & continuation test scenarios).
+- **Launcher Smoke Verification:** Real Ollama smoke test verified with `qwen3:8b` returning clean `SessionStatus: WAITING` / `WAITING_NO_CURRENTLY_RUNNABLE_WORK`.

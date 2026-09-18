@@ -176,6 +176,8 @@ class TravelLauncher:
         smoke: bool = False,
         provider_type: str = "ollama",
         provider_registry: Any = None,
+        mission_id: str | None = None,
+        resume_mission: str | None = None,
     ) -> ContinuationSessionResult:
         """Executes a bounded travel-mode continuation session."""
         preflight_res = self.preflight()
@@ -247,10 +249,12 @@ class TravelLauncher:
             feeder=feeder,
         )
 
+        target_mission_id = resume_mission or mission_id
         return continuation_svc.run_session(
             budget=budget,
             workflow_ids=workflow_ids,
             stop_on_block=stop_on_block,
+            mission_id=target_mission_id,
         )
 
 
@@ -264,6 +268,8 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true", help="Run quick 1-cycle runtime smoke test without consuming backlog")
     parser.add_argument("--provider", choices=["ollama", "scripted"], default="ollama", help="Execution provider type (default: ollama)")
     parser.add_argument("--db-path", type=str, default=str(DEFAULT_DB_PATH), help="Path to state database")
+    parser.add_argument("--mission-id", type=str, default=None, help="Target mission ID for session")
+    parser.add_argument("--resume-mission", type=str, default=None, help="Resume existing mission ID from database")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -298,6 +304,8 @@ def main() -> None:
                 max_cycles=args.max_cycles,
                 smoke=args.smoke,
                 provider_type=args.provider,
+                mission_id=args.mission_id,
+                resume_mission=args.resume_mission,
             )
             session.commit()
         except Exception:
