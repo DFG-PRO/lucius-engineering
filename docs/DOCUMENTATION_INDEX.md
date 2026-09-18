@@ -18,6 +18,7 @@ This file identifies the canonical Lucius documentation baseline.
 
 - `architecture/SYSTEM_OVERVIEW.md`
 - `architecture/PILOT_EVALUATION_DATA_MODEL.md`
+- `architecture/BOUNDED_CONTINUATION_AND_DYNAMIC_FEEDER.md`
 
 ## Evaluation
 
