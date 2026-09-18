@@ -17,6 +17,15 @@ def test_travel_launcher_preflight_validates_environment(tmp_path: Path):
     for r in (lucius_root, darwin_root, billy_root):
         (r / ".git").mkdir(parents=True)
 
+    reg_file = lucius_root / "src" / "lucius" / "projects" / "dfg_canonical_registry.json"
+    reg_file.parent.mkdir(parents=True)
+    real_reg = Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/src/lucius/projects/dfg_canonical_registry.json")
+    reg_file.write_text(real_reg.read_text())
+
+    backlog = darwin_root / "src" / "darwin" / "backlog" / "master_backlog.py"
+    backlog.parent.mkdir(parents=True)
+    backlog.write_text("CANONICAL_MASTER_BACKLOG_ITEMS = []")
+
     launcher = TravelLauncher(
         lucius_root=lucius_root,
         darwin_root=darwin_root,
@@ -28,6 +37,18 @@ def test_travel_launcher_preflight_validates_environment(tmp_path: Path):
     report = launcher.preflight()
     assert report.all_passed is True
     assert report.repository_checks == {"lucius": True, "darwin": True, "billy": True}
+    assert report.registry_ok is True
+    assert report.feeder_available is True
+    assert report.disk_ok is True
+    assert len(report.errors) == 0
+
+
+def test_travel_launcher_preflight_on_canonical_repositories():
+    launcher = TravelLauncher()
+    report = launcher.preflight()
+    assert report.all_passed is True
+    assert report.registry_ok is True
+    assert report.feeder_available is True
     assert report.disk_ok is True
     assert len(report.errors) == 0
 

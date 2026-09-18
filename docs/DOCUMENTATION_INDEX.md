@@ -13,6 +13,9 @@ This file identifies the canonical Lucius documentation baseline.
 - `foundation/SECURITY_PRINCIPLES.md`
 - `foundation/DEVELOPMENT_OPERATING_MODEL.md`
 - `foundation/DOCUMENTATION_POLICY.md`
+- `foundation/PROJECT_REGISTRY_STANDARD.md`
+- `foundation/DEVELOPMENT_BRIEF_STANDARD.md`
+- `foundation/REGRESSION_GUARD.md`
 
 ## Architecture
 
@@ -30,6 +33,7 @@ This file identifies the canonical Lucius documentation baseline.
 
 - `runtime/ARTIFACT_STORE.md`
 - `runtime/PILOT_OPERATOR_WORKFLOW.md`
+- `runtime/TRAVEL_MODE_V1.md`
 
 ## Decisions
 

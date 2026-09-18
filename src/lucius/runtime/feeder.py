@@ -28,6 +28,8 @@ from lucius.persistence.orm import (
     TaskORM,
 )
 from lucius.pilots.workflows import PersistentWorkflowService
+from lucius.projects.registry_schema import DFGProjectRegistry
+from lucius.projects.regression_guard import RegressionGuardValidator
 from lucius.runtime.adapters import ScriptedRuntimePlanningAdapter
 from lucius.tasks.service import TaskService
 
@@ -83,9 +85,18 @@ class DarwinBacklogFeeder:
         darwin_root: Path | str = DEFAULT_DARWIN_ROOT,
         *,
         custom_items: list[Any] | None = None,
+        registry: DFGProjectRegistry | None = None,
+        regression_guard: RegressionGuardValidator | None = None,
+        max_batch_size: int | None = None,
+        max_total_tasks: int | None = None,
     ):
         self.darwin_root = Path(darwin_root)
         self._custom_items = custom_items
+        self.registry = registry
+        self.regression_guard = regression_guard
+        self.max_batch_size = max_batch_size
+        self.max_total_tasks = max_total_tasks
+        self._total_fed = 0
 
     def load_raw_backlog_items(self) -> list[Any]:
         """Loads canonical backlog items from Darwin master_backlog without importing pydantic_settings."""
@@ -140,6 +151,23 @@ class DarwinBacklogFeeder:
                 envelope.is_eligible_for_unattended = False
                 continue
 
+            # Regression Guard Check if configured
+            if self.regression_guard is not None:
+                guard_res = self.regression_guard.validate_proposed_task(
+                    project_id=envelope.project_id,
+                    proposed_phase=envelope.raw_payload.get("phase"),
+                    proposed_gate=envelope.raw_payload.get("gate"),
+                    assumed_sha=envelope.raw_payload.get("assumed_sha"),
+                    is_engineering_mutation=(envelope.authority_class == "CLASS_C"),
+                )
+                if not guard_res.passed:
+                    logger.warning(
+                        "Backlog item %s rejected by Regression Guard: %s",
+                        envelope.source_item_id,
+                        [v.message for v in guard_res.violations],
+                    )
+                    continue
+
             envelopes.append(envelope)
 
         # Deterministic sort: priority weight first, then item_id
@@ -177,8 +205,10 @@ class DarwinBacklogFeeder:
             provenance_refs = [str(ref) for ref in data.get("provenance_refs", [])]
             dependencies = [str(dep) for dep in data.get("dependencies", [])]
 
-            # In v0, research backlog items are Class B (read-only research/analysis)
-            authority_class = "CLASS_B"
+            # Respect authority_class and task_type if specified in payload, default to Class B research
+            authority_class = str(data.get("authority_class", "CLASS_B")).upper()
+            task_type = str(data.get("task_type", "ENGINEERING" if authority_class == "CLASS_C" else "RESEARCH_BACKLOG_ITEM"))
+            is_unattended = authority_class in ("CLASS_A", "CLASS_B")
 
             dedupe_key = f"darwin:{item_id}"
 
@@ -190,13 +220,13 @@ class DarwinBacklogFeeder:
                 project_root=str(self.darwin_root),
                 title=f"[Darwin {item_id}] {title}",
                 objective=objective,
-                task_type="RESEARCH_BACKLOG_ITEM",
+                task_type=task_type,
                 authority_class=authority_class,
                 provider_requirement="qwen3:8b",
                 priority=norm_priority,
                 dependencies=dependencies,
                 provenance_refs=provenance_refs,
-                is_eligible_for_unattended=True,
+                is_eligible_for_unattended=is_unattended,
                 raw_payload=data,
             )
         except Exception as exc:
@@ -212,6 +242,9 @@ class DarwinBacklogFeeder:
         actor: Actor = Actor.LUCIUS,
     ) -> list[dict[str, Any]]:
         """Atomically ingests eligible, non-duplicate tasks into Lucius persistent queue."""
+        if self.max_total_tasks is not None and self._total_fed >= self.max_total_tasks:
+            return []
+
         eligible = self.discover_eligible_tasks(project_id=project_id)
         if not eligible:
             return []
@@ -220,7 +253,13 @@ class DarwinBacklogFeeder:
         existing_keys = self._get_existing_dedupe_keys(session)
 
         candidates = [env for env in eligible if env.dedupe_key not in existing_keys and env.is_eligible_for_unattended]
-        selected = candidates[:max_items]
+        effective_max = max_items
+        if self.max_batch_size is not None:
+            effective_max = min(effective_max, self.max_batch_size)
+        if self.max_total_tasks is not None:
+            effective_max = min(effective_max, self.max_total_tasks - self._total_fed)
+
+        selected = candidates[:effective_max]
 
         if not selected:
             return []
@@ -334,6 +373,7 @@ class DarwinBacklogFeeder:
                 }
             )
 
+        self._total_fed += len(ingested)
         session.flush()
         return ingested
 
@@ -368,7 +408,12 @@ class DarwinBacklogFeeder:
 
     def _ensure_repository_attachment(self, session: Session, project: ProjectORM) -> RepositoryRegistrationORM:
         reg_id = f"repo-{project.id}"
-        reg = session.get(RepositoryRegistrationORM, reg_id)
+        reg = session.scalar(
+            select(RepositoryRegistrationORM).where(
+                RepositoryRegistrationORM.project_id == project.id,
+                RepositoryRegistrationORM.location == str(self.darwin_root),
+            )
+        ) or session.get(RepositoryRegistrationORM, reg_id)
         if reg is None:
             reg = RepositoryRegistrationORM(
                 id=reg_id,

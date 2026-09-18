@@ -127,3 +127,13 @@ push, production deployment, credential changes, destructive Git, force push,
 broad cross-project autonomy, unrestricted architecture rewrites, silent
 migration/schema expansion, unlimited task spawning, unlimited repair cycles, or
 unrestricted autonomous operation.
+
+## Travel Mode Operational Authority Classes (Shift 09 Standard)
+
+To govern multi-hour unattended travel operations, Lucius maps core authority levels into operational classes:
+
+- **CLASS A (`DETERMINISTIC_READ_ONLY`) [L0]:** Unattended permitted. Read-only inspection, deterministic test runs, schema audits, hash verifications.
+- **CLASS B (`BOUNDED_RESEARCH_AND_SYNTHESIS`) [L0/L1]:** Unattended permitted. Darwin research package execution, Technology Scout, evidence recovery, dossier generation in `/artifacts/`. No source code mutation.
+- **CLASS C (`CONTROLLED_MUTATION`) [L1]:** Supervised ONLY. Code changes, new adapters, schema implementations in isolated worktree. Prohibited unattended under current local model qualifications.
+- **CLASS D (`BINDING_OR_EXTERNAL_ACTION`) [L2/L3]:** Human approval required. Merges to main, pushes, deployments, external messages, financial authorizations.
+- **CLASS E (`FORBIDDEN_IN_TRAVEL_MODE`) [L3+]:** Hard forbidden forever. Live trading, capital transfers, destructive git actions, credential alterations.
