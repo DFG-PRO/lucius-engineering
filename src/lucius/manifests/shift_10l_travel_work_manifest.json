@@ -1,0 +1,2177 @@
+{
+  "mission_id": "LUCIUS_SHIFT_10L_TRAVEL_MODE",
+  "manifest_version": "1.0.0",
+  "created_at": "2026-09-19T05:56:47.083027+00:00",
+  "canonical_sha": "080680b4ffb7ddcc5f6400b8f1fa7e33d477a375",
+  "travel_window": {
+    "start": "2026-09-19T01:37:09.956275-06:00",
+    "end": "2026-09-23T08:00:00-06:00"
+  },
+  "priority_policy": [
+    "P0_DARWIN_RESEARCH_ENGINE",
+    "P0_BILLY_PRODUCTION_ENGINE",
+    "P0_P1_ALFRED_UNIVERSE",
+    "P1_LUCIUS_ENGINEERING",
+    "P1_REVENUE_ENABLING",
+    "P2_OTHER_DFG_PROJECTS"
+  ],
+  "total_packages_count": 66,
+  "eligible_packages_count": 27,
+  "estimated_productive_hours": {
+    "low": 21.6,
+    "base": 48.6,
+    "high": 72.9
+  },
+  "replenishment_policy": "CANONICAL_ROADMAP_ONLY",
+  "stop_conditions": [
+    "MISSION_END_TIME_REACHED",
+    "PROVENANCE_VIOLATION",
+    "AUTHORITY_VIOLATION",
+    "UNSAFE_CONFLICTING_WRITER",
+    "OPERATOR_STOP_REQUEST"
+  ],
+  "work_packages": [
+    {
+      "work_package_id": "gate_work_billy-production-engine_phase_6_5_asset_lifecycle_acceptance",
+      "canonical_logical_task_id": "registry_gate:billy-production-engine:PHASE_6_5_ASSET_LIFECYCLE_ACCEPTANCE",
+      "project_id": "billy-production-engine",
+      "title": "[Billy Production Engine Next Gate] Phase 6 5 Asset Lifecycle Acceptance",
+      "objective": "Prepare and verify canonical next gate requirements (PHASE_6_5_ASSET_LIFECYCLE_ACCEPTANCE) for Billy Production Engine phase PHASE_6_UNIFIED_RUNTIME.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:billy-production-engine:PHASE_6_5_ASSET_LIFECYCLE_ACCEPTANCE",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "CRITICAL"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-001",
+      "canonical_logical_task_id": "darwin:RBACK-MON-001",
+      "project_id": "fp-labs",
+      "title": "[fp-labs] FP Labs External Services Commercialization",
+      "objective": "Package existing DFG workflow automation, webhook execution, and trading dashboard engineering into billable client services.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-001",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "P0_NOW"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-002",
+      "canonical_logical_task_id": "darwin:RBACK-MON-002",
+      "project_id": "commercial-photography",
+      "title": "[commercial-photography] Commercial Product Photography Studio Monetization",
+      "objective": "Validate commercial photography studio service offerings, day rates, and turnaround times in Mexico City.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-002",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "P0"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-003",
+      "canonical_logical_task_id": "darwin:RBACK-MON-003",
+      "project_id": "cinema-collection",
+      "title": "[cinema-collection] Cinema Collection Equipment Rental Deployment",
+      "objective": "Deploy owned cinema camera and optical gear onto rental networks in CDMX with verified deposit/insurance coverage.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-003",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "P0_NOW"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-004",
+      "canonical_logical_task_id": "darwin:RBACK-MON-004",
+      "project_id": "dfg-binance-executor",
+      "title": "[dfg-binance-executor] Trading Strategy Hardening & Forward Paper Validation",
+      "objective": "Paper-validate EMA trend, RSI mean-reversion, and VWAP strategies with real fee drag and execution slippage before live capital allocation.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-004",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "P0"
+    },
+    {
+      "work_package_id": "gate_work_lucius-engineering_4_hour_travel_run_pilot_verification",
+      "canonical_logical_task_id": "registry_gate:lucius-engineering:4_HOUR_TRAVEL_RUN_PILOT_VERIFICATION",
+      "project_id": "lucius-engineering",
+      "title": "[Lucius Engineering Next Gate] 4 Hour Travel Run Pilot Verification",
+      "objective": "Prepare and verify canonical next gate requirements (4_HOUR_TRAVEL_RUN_PILOT_VERIFICATION) for Lucius Engineering phase TRAVEL_MODE_CONTINUATION.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:lucius-engineering:4_HOUR_TRAVEL_RUN_PILOT_VERIFICATION",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_fpcc-trade-dashboard_metrics_engine_normalization_acceptance",
+      "canonical_logical_task_id": "registry_gate:fpcc-trade-dashboard:METRICS_ENGINE_NORMALIZATION_ACCEPTANCE",
+      "project_id": "fpcc-trade-dashboard",
+      "title": "[FPCC Trade Dashboard Next Gate] Metrics Engine Normalization Acceptance",
+      "objective": "Prepare and verify canonical next gate requirements (METRICS_ENGINE_NORMALIZATION_ACCEPTANCE) for FPCC Trade Dashboard phase DATA_QUALITY_AND_ALERTS.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "dfg-binance-executor"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:fpcc-trade-dashboard:METRICS_ENGINE_NORMALIZATION_ACCEPTANCE",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "READY",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_alfred-orchestration_alfred_ddb_freeze",
+      "canonical_logical_task_id": "registry_gate:alfred-orchestration:ALFRED_DDB_FREEZE",
+      "project_id": "alfred-orchestration",
+      "title": "[Alfred Orchestration Layer Next Gate] Alfred Ddb Freeze",
+      "objective": "Prepare and verify canonical next gate requirements (ALFRED_DDB_FREEZE) for Alfred Orchestration Layer phase CONCEPT_AND_GOVERNANCE.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "lucius-engineering",
+        "darwin-research-engine"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:alfred-orchestration:ALFRED_DDB_FREEZE",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_cinema-collection_operator_gear_manifest_confirmation",
+      "canonical_logical_task_id": "registry_gate:cinema-collection:OPERATOR_GEAR_MANIFEST_CONFIRMATION",
+      "project_id": "cinema-collection",
+      "title": "[Cinema Collection Equipment Rental Next Gate] Operator Gear Manifest Confirmation",
+      "objective": "Prepare and verify canonical next gate requirements (OPERATOR_GEAR_MANIFEST_CONFIRMATION) for Cinema Collection Equipment Rental phase RENTAL_DEPLOYMENT.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:cinema-collection:OPERATOR_GEAR_MANIFEST_CONFIRMATION",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_darwin-research-engine_monetization_evidence_proposal_dispatch",
+      "canonical_logical_task_id": "registry_gate:darwin-research-engine:MONETIZATION_EVIDENCE_PROPOSAL_DISPATCH",
+      "project_id": "darwin-research-engine",
+      "title": "[Darwin Research Engine Next Gate] Monetization Evidence Proposal Dispatch",
+      "objective": "Prepare and verify canonical next gate requirements (MONETIZATION_EVIDENCE_PROPOSAL_DISPATCH) for Darwin Research Engine phase OPERATIONAL_RESEARCH_LOOP.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:darwin-research-engine:MONETIZATION_EVIDENCE_PROPOSAL_DISPATCH",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_dfg-binance-executor_paper_validation_bridge_harness",
+      "canonical_logical_task_id": "registry_gate:dfg-binance-executor:PAPER_VALIDATION_BRIDGE_HARNESS",
+      "project_id": "dfg-binance-executor",
+      "title": "[DFG Binance Executor Next Gate] Paper Validation Bridge Harness",
+      "objective": "Prepare and verify canonical next gate requirements (PAPER_VALIDATION_BRIDGE_HARNESS) for DFG Binance Executor phase PAPER_VALIDATION_STAGING.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:dfg-binance-executor:PAPER_VALIDATION_BRIDGE_HARNESS",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_fp-labs_operator_rate_card_confirmation",
+      "canonical_logical_task_id": "registry_gate:fp-labs:OPERATOR_RATE_CARD_CONFIRMATION",
+      "project_id": "fp-labs",
+      "title": "[FP Labs External Services Next Gate] Operator Rate Card Confirmation",
+      "objective": "Prepare and verify canonical next gate requirements (OPERATOR_RATE_CARD_CONFIRMATION) for FP Labs External Services phase SERVICE_PACKAGING.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "lucius-engineering"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:fp-labs:OPERATOR_RATE_CARD_CONFIRMATION",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "gate_work_universe-core_regression_guard_integration",
+      "canonical_logical_task_id": "registry_gate:universe-core:REGRESSION_GUARD_INTEGRATION",
+      "project_id": "universe-core",
+      "title": "[DFG Universe Core Standards & Governance Next Gate] Regression Guard Integration",
+      "objective": "Prepare and verify canonical next gate requirements (REGRESSION_GUARD_INTEGRATION) for DFG Universe Core Standards & Governance phase CROSS_PROJECT_GOVERNANCE.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:universe-core:REGRESSION_GUARD_INTEGRATION",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "HIGH"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-005",
+      "canonical_logical_task_id": "darwin:RBACK-MON-005",
+      "project_id": "commerce-affiliate-engine",
+      "title": "[commerce-affiliate-engine] TikTok Shop Affiliate Creative Pipeline",
+      "objective": "Produce automated high-volume product showcase creative for TikTok Shop affiliate commissions.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-005",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1_HIGH"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-006",
+      "canonical_logical_task_id": "darwin:RBACK-MON-006",
+      "project_id": "fp-criptoclub",
+      "title": "[fp-criptoclub] FPCriptoClub Audience Monetization",
+      "objective": "Monetize crypto community through exchange affiliate links, VIP Telegram signals, and digital education products.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-006",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-007",
+      "canonical_logical_task_id": "darwin:RBACK-MON-007",
+      "project_id": "billy-the-trader",
+      "title": "[billy-the-trader] Billy The Trader Character Brand Monetization",
+      "objective": "Monetize the fictional trading character Billy The Trader through content publishing and commercial sponsorships.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-007",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-008",
+      "canonical_logical_task_id": "darwin:RBACK-MON-008",
+      "project_id": "billy-production-engine",
+      "title": "[billy-production-engine] Production Engine Economic Impact Measurement",
+      "objective": "Quantify internal labor cost reduction and external batch rendering service revenue from Billy Production Engine.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-008",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-009",
+      "canonical_logical_task_id": "darwin:RBACK-MON-009",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Airbnb Experiences Guided Photography Experiences",
+      "objective": "Host guided photo walks and portrait experiences booked through Airbnb Experiences in Mexico City.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-009",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-VAL-003",
+      "canonical_logical_task_id": "darwin:RBACK-VAL-003",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] External Real-World Build Pilot",
+      "objective": "Validate end-to-end execution of a scoped external client software delivery pilot via Lucius/FP Labs.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-VAL-003",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "gate_work_andy-finance_andy_operating_brief_v1",
+      "canonical_logical_task_id": "registry_gate:andy-finance:ANDY_OPERATING_BRIEF_V1",
+      "project_id": "andy-finance",
+      "title": "[Andy Financial & Administration Agent Next Gate] Andy Operating Brief V1",
+      "objective": "Prepare and verify canonical next gate requirements (ANDY_OPERATING_BRIEF_V1) for Andy Financial & Administration Agent phase CONCEPTUAL_FRAMEWORK.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "ledger-bookkeeping"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:andy-finance:ANDY_OPERATING_BRIEF_V1",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_billy-the-trader_sponsorship_and_merch_brief",
+      "canonical_logical_task_id": "registry_gate:billy-the-trader:SPONSORSHIP_AND_MERCH_BRIEF",
+      "project_id": "billy-the-trader",
+      "title": "[Billy the Trader Media Brand Next Gate] Sponsorship And Merch Brief",
+      "objective": "Prepare and verify canonical next gate requirements (SPONSORSHIP_AND_MERCH_BRIEF) for Billy the Trader Media Brand phase PERSONA_MONETIZATION.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "billy-production-engine"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:billy-the-trader:SPONSORSHIP_AND_MERCH_BRIEF",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_commercial-photography_sample_client_proposal_dispatch",
+      "canonical_logical_task_id": "registry_gate:commercial-photography:SAMPLE_CLIENT_PROPOSAL_DISPATCH",
+      "project_id": "commercial-photography",
+      "title": "[Commercial Product Photography Studio Next Gate] Sample Client Proposal Dispatch",
+      "objective": "Prepare and verify canonical next gate requirements (SAMPLE_CLIENT_PROPOSAL_DISPATCH) for Commercial Product Photography Studio phase STUDIO_PACKAGING.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "cinema-collection"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:commercial-photography:SAMPLE_CLIENT_PROPOSAL_DISPATCH",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_fp-criptoclub_subscriber_growth_report",
+      "canonical_logical_task_id": "registry_gate:fp-criptoclub:SUBSCRIBER_GROWTH_REPORT",
+      "project_id": "fp-criptoclub",
+      "title": "[FP CriptoClub Next Gate] Subscriber Growth Report",
+      "objective": "Prepare and verify canonical next gate requirements (SUBSCRIBER_GROWTH_REPORT) for FP CriptoClub phase COMMUNITY_MANAGEMENT.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "fpcc-trade-dashboard"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:fp-criptoclub:SUBSCRIBER_GROWTH_REPORT",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_ledger-bookkeeping_ledger_schema_v1_frozen",
+      "canonical_logical_task_id": "registry_gate:ledger-bookkeeping:LEDGER_SCHEMA_V1_FROZEN",
+      "project_id": "ledger-bookkeeping",
+      "title": "[Ledger Financial Data Layer Next Gate] Ledger Schema V1 Frozen",
+      "objective": "Prepare and verify canonical next gate requirements (LEDGER_SCHEMA_V1_FROZEN) for Ledger Financial Data Layer phase SCHEMA_DESIGN.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:ledger-bookkeeping:LEDGER_SCHEMA_V1_FROZEN",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_locations-concierge_initial_commission_structure_dossier",
+      "canonical_logical_task_id": "registry_gate:locations-concierge:INITIAL_COMMISSION_STRUCTURE_DOSSIER",
+      "project_id": "locations-concierge",
+      "title": "[Locations Concierge CDMX Next Gate] Initial Commission Structure Dossier",
+      "objective": "Prepare and verify canonical next gate requirements (INITIAL_COMMISSION_STRUCTURE_DOSSIER) for Locations Concierge CDMX phase MARKET_VALIDATION.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:locations-concierge:INITIAL_COMMISSION_STRUCTURE_DOSSIER",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "NORMAL"
+    },
+    {
+      "work_package_id": "gate_work_commerce-affiliate-engine_affiliate_program_feasibility_dossier",
+      "canonical_logical_task_id": "registry_gate:commerce-affiliate-engine:AFFILIATE_PROGRAM_FEASIBILITY_DOSSIER",
+      "project_id": "commerce-affiliate-engine",
+      "title": "[Commerce & Affiliate Intelligence Engine Next Gate] Affiliate Program Feasibility Dossier",
+      "objective": "Prepare and verify canonical next gate requirements (AFFILIATE_PROGRAM_FEASIBILITY_DOSSIER) for Commerce & Affiliate Intelligence Engine phase E-COMMERCE_INTELLIGENCE.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:commerce-affiliate-engine:AFFILIATE_PROGRAM_FEASIBILITY_DOSSIER",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "gate_work_dealhunter_tech_feasibility_report",
+      "canonical_logical_task_id": "registry_gate:dealhunter:TECH_FEASIBILITY_REPORT",
+      "project_id": "dealhunter",
+      "title": "[DealHunter Opportunity Scout Next Gate] Tech Feasibility Report",
+      "objective": "Prepare and verify canonical next gate requirements (TECH_FEASIBILITY_REPORT) for DealHunter Opportunity Scout phase OPPORTUNITY_DISCOVERY.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:dealhunter:TECH_FEASIBILITY_REPORT",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "AUTO_PREPARABLE",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-001",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-001",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Scrapling Web Scraping & Evasion Library Scout",
+      "objective": "Evaluate Scrapling Python library for upgrading Darwin's source content acquisition and anti-bot evasion stack.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-001",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P0"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-002",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-002",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Vibe-Trading Architecture Scout",
+      "objective": "Recover provenance and evaluate Vibe-Trading architecture for potential algorithmic or signal reuse in Trade Executor.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-002",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P0"
+    },
+    {
+      "work_package_id": "work_RBACK-VAL-001",
+      "canonical_logical_task_id": "darwin:RBACK-VAL-001",
+      "project_id": "locations-concierge",
+      "title": "[locations-concierge] Locations Concierge CDMX Validation Pack",
+      "objective": "Execute systematic business validation for Locations Concierge in Mexico City across workflow, pricing, supply density, and willingness-to-pay.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-VAL-001",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P0"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-001",
+      "canonical_logical_task_id": "darwin:RBACK-INT-001",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Prediction Market Intelligence Capability",
+      "objective": "Design Darwin intelligence subsystem to monitor, ingest, and calibrate odds from global prediction markets (Polymarket, Kalshi).",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-001",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-010",
+      "canonical_logical_task_id": "darwin:RBACK-MON-010",
+      "project_id": "dfg-prediction-engine",
+      "title": "[dfg-prediction-engine] LATAM Prediction Markets Platform Feasibility",
+      "objective": "Evaluate localized prediction market exchange for Latin American event contracts.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "Regulatory Licensing Gate"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-010",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-011",
+      "canonical_logical_task_id": "darwin:RBACK-MON-011",
+      "project_id": "arbitrage-engine",
+      "title": "[arbitrage-engine] Systematic Arbitrage Engine Feasibility",
+      "objective": "Build systematic cross-venue digital asset arbitrage strategies.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "Arbitrage Dependency Gate",
+        "Trading Strategy Hardening"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-011",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-MON-012",
+      "canonical_logical_task_id": "darwin:RBACK-MON-012",
+      "project_id": "section-8-real-estate",
+      "title": "[section-8-real-estate] Section 8 Residential Real Estate Subsidized Housing",
+      "objective": "Acquire and operate residential housing choice voucher properties for government-backed rental cash flow.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "Capital Acquisition Gate"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-MON-012",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-003",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-003",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] TikTok Shop Affiliate Tooling Layer Scout",
+      "objective": "Evaluate external AI creative generators, caption stylers, and TikTok product trend scrapers for pipeline integration.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-003",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_HIGH"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-004",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-004",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Fomo Marketing Automation Scout",
+      "objective": "Evaluate Fomo social proof and live conversion notification architectures.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-004",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-005",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-005",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Open Generative AI Framework Scout",
+      "objective": "Investigate open-source generative AI toolkits for synthetic video and avatar generation.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-005",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-006",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-006",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Zeely Growth Tooling Scout",
+      "objective": "Evaluate Zeely's mobile-first AI advertising generation and landing page patterns.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-006",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-007",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-007",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Claude Ads Copy Optimization Scout",
+      "objective": "Assess structured prompt architectures for generating high-converting programmatic advertising copy variants.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-007",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-VAL-002",
+      "canonical_logical_task_id": "darwin:RBACK-VAL-002",
+      "project_id": "dealhunter",
+      "title": "[dealhunter] DealHunter Business Models & Monetization Mechanics",
+      "objective": "Validate business model archetypes for DealHunter property and asset sourcing tooling.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-VAL-002",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-VAL-004",
+      "canonical_logical_task_id": "darwin:RBACK-VAL-004",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Capability Gap Analysis from Real Client Briefs",
+      "objective": "Analyze real-world client requests to identify recurring engineering gaps in existing DFG tools.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-VAL-004",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-002",
+      "canonical_logical_task_id": "darwin:RBACK-INT-002",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Market Intelligence Capability",
+      "objective": "Systematize multi-exchange spot and futures market intelligence feeds into Darwin evidence models.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-002",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-003",
+      "canonical_logical_task_id": "darwin:RBACK-INT-003",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Derivatives Intelligence Capability",
+      "objective": "Build automated funding rate, term structure, and options skew surveillance.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-003",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-004",
+      "canonical_logical_task_id": "darwin:RBACK-INT-004",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] On-Chain Intelligence Capability",
+      "objective": "Extract structured whale accumulation and exchange net-flow claims from blockchain explorers.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-004",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-005",
+      "canonical_logical_task_id": "darwin:RBACK-INT-005",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Tokenomics Intelligence Capability",
+      "objective": "Model circulating supply inflation schedules, staking yield decay, and treasury runway.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-005",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-006",
+      "canonical_logical_task_id": "darwin:RBACK-INT-006",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Wallet Graph Intelligence Capability",
+      "objective": "Construct entity-resolved wallet clustering graphs to track smart money and insider distribution.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-006",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-007",
+      "canonical_logical_task_id": "darwin:RBACK-INT-007",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] DeFi Intelligence Capability",
+      "objective": "Monitor automated market maker liquidity depth, pool impermanent loss, and lending protocol bad debt risk.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-007",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-008",
+      "canonical_logical_task_id": "darwin:RBACK-INT-008",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Fundamental Asset Intelligence Capability",
+      "objective": "Synthesize traditional financial reporting metrics for tokenized and physical DFG investment assets.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-008",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-009",
+      "canonical_logical_task_id": "darwin:RBACK-INT-009",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Macro Intelligence Capability",
+      "objective": "Track central bank interest rate expectations, treasury yields, and global liquidity indicators.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-009",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-010",
+      "canonical_logical_task_id": "darwin:RBACK-INT-010",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] News & Narrative Intelligence Capability",
+      "objective": "Detect nascent narrative clusters across crypto news and social feeds prior to peak retail attention.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-010",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-INT-011",
+      "canonical_logical_task_id": "darwin:RBACK-INT-011",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Telegram Opportunity Scout Capability",
+      "objective": "Automate keyword scanning and arbitrage alert detection across monitored public Telegram crypto channels.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-INT-011",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-014",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-014",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Dune Analytics SQL Engine Scout",
+      "objective": "Evaluate Dune Analytics API for executing parameterized SQL queries against decoded on-chain tables.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-014",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-015",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-015",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Conway Automaton Autonomous Agent Architecture Scout",
+      "objective": "Study Conway / Automaton architectural patterns for stateful multi-agent execution.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-015",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-016",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-016",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Cryptoneur Gas Intelligence Scout",
+      "objective": "Assess Cryptoneur gas fee prediction and EVM network congestion models.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-016",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "work_RBACK-VAL-005",
+      "canonical_logical_task_id": "darwin:RBACK-VAL-005",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] International Creative Market Entry Research",
+      "objective": "Evaluate expansion of DFG creative production services into international commercial markets (US/Europe remote).",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "Locations Concierge CDMX Validation"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-VAL-005",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "NOT_YET_ELIGIBLE",
+      "priority": "P2"
+    },
+    {
+      "work_package_id": "gate_work_arbitrage-engine_minimum_capital_allocation_approval",
+      "canonical_logical_task_id": "registry_gate:arbitrage-engine:MINIMUM_CAPITAL_ALLOCATION_APPROVAL",
+      "project_id": "arbitrage-engine",
+      "title": "[DFG Crypto Arbitrage Engine Next Gate] Minimum Capital Allocation Approval",
+      "objective": "Prepare and verify canonical next gate requirements (MINIMUM_CAPITAL_ALLOCATION_APPROVAL) for DFG Crypto Arbitrage Engine phase CAPITAL_REQUIREMENT_EVALUATION.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "dfg-binance-executor"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:arbitrage-engine:MINIMUM_CAPITAL_ALLOCATION_APPROVAL",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "gate_work_dfg-prediction-engine_legal_compliance_clearance",
+      "canonical_logical_task_id": "registry_gate:dfg-prediction-engine:LEGAL_COMPLIANCE_CLEARANCE",
+      "project_id": "dfg-prediction-engine",
+      "title": "[DFG Prediction Markets LATAM Engine Next Gate] Legal Compliance Clearance",
+      "objective": "Prepare and verify canonical next gate requirements (LEGAL_COMPLIANCE_CLEARANCE) for DFG Prediction Markets LATAM Engine phase REGULATORY_EVALUATION.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:dfg-prediction-engine:LEGAL_COMPLIANCE_CLEARANCE",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "gate_work_post-assistant_post_assistant_feature_brief",
+      "canonical_logical_task_id": "registry_gate:post-assistant:POST_ASSISTANT_FEATURE_BRIEF",
+      "project_id": "post-assistant",
+      "title": "[Production Post Assistant Next Gate] Post Assistant Feature Brief",
+      "objective": "Prepare and verify canonical next gate requirements (POST_ASSISTANT_FEATURE_BRIEF) for Production Post Assistant phase WORKFLOW_DISCOVERY.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "billy-production-engine"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:post-assistant:POST_ASSISTANT_FEATURE_BRIEF",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "gate_work_section-8-real-estate_jurisdictional_legal_clearance",
+      "canonical_logical_task_id": "registry_gate:section-8-real-estate:JURISDICTIONAL_LEGAL_CLEARANCE",
+      "project_id": "section-8-real-estate",
+      "title": "[Section 8 Real Estate Investment Engine Next Gate] Jurisdictional Legal Clearance",
+      "objective": "Prepare and verify canonical next gate requirements (JURISDICTIONAL_LEGAL_CLEARANCE) for Section 8 Real Estate Investment Engine phase LEGAL_COMPLIANCE.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:section-8-real-estate:JURISDICTIONAL_LEGAL_CLEARANCE",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "gate_work_social-engine_social_distribution_brief_v1",
+      "canonical_logical_task_id": "registry_gate:social-engine:SOCIAL_DISTRIBUTION_BRIEF_V1",
+      "project_id": "social-engine",
+      "title": "[Social Engine Distribution Pipeline Next Gate] Social Distribution Brief V1",
+      "objective": "Prepare and verify canonical next gate requirements (SOCIAL_DISTRIBUTION_BRIEF_V1) for Social Engine Distribution Pipeline phase EXPLORATION.",
+      "authority_class": "CLASS_A",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [
+        "billy-production-engine"
+      ],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of registry:social-engine:SOCIAL_DISTRIBUTION_BRIEF_V1",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "LOW"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-008",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-008",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] DefiLlama API & Yield Analytics Scout",
+      "objective": "Audit DefiLlama free/open REST APIs for TVL, protocol yields, and digital asset liquidity tracking.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-008",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-009",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-009",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] CoinGecko API Market Pricing Scout",
+      "objective": "Evaluate CoinGecko public vs pro API tiers for market cap, volume, and multi-asset price feeds.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-009",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-010",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-010",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] CoinGlass Derivatives Data Scout",
+      "objective": "Investigate CoinGlass funding rates, open interest, and liquidation heatmap data feeds.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-010",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-011",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-011",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Tokenomist Token Unlock Analytics Scout",
+      "objective": "Evaluate Tokenomist (formerly TokenUnlocks) for programmatic token emission and cliff vesting data.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-011",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-012",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-012",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Bubblemaps On-Chain Clustering Scout",
+      "objective": "Assess Bubblemaps supply distribution and wallet clustering visualization tools for token risk auditing.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-012",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    },
+    {
+      "work_package_id": "work_RBACK-TECH-013",
+      "canonical_logical_task_id": "darwin:RBACK-TECH-013",
+      "project_id": "darwin-research-engine",
+      "title": "[darwin-research-engine] Messari Protocol Research & Metrics Scout",
+      "objective": "Investigate Messari fundamental data feeds and protocol quarterly reporting metrics.",
+      "authority_class": "CLASS_B",
+      "authority_level": "L0",
+      "allowed_mutations": [
+        "READ_ONLY_RESEARCH",
+        "DOCUMENTATION",
+        "TESTS"
+      ],
+      "forbidden_mutations": [
+        "REAL_TRADING",
+        "EXTERNAL_DEPLOYMENT",
+        "CREDENTIAL_CHANGE"
+      ],
+      "dependencies": [],
+      "required_provider_class": "qwen3:8b",
+      "minimum_sufficient_resource": "LOCAL_COMPUTATION",
+      "completion_evidence": "Canonical verification of RBACK-TECH-013",
+      "validation_command": null,
+      "documentation_requirement": true,
+      "retry_policy": {
+        "max_retries": 3,
+        "backoff_seconds": 300
+      },
+      "blocked_behavior": "SKIP_AND_CONTINUE_NEXT_PROJECT",
+      "current_state": "BLOCKED_DECISION",
+      "priority": "P1_P2"
+    }
+  ]
+}
