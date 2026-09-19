@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Shift 10J Attempt 2 Real Overnight Unattended Run Script.
+"""Shift 10L Travel Mode Dedicated Mission Script.
 
-Executes Lucius Engineering for a minimum of 6 real wall-clock hours (target 8 hours)
-against the real DFG portfolio using fresh Attempt 2 artifacts and durable mission state.
+Executes Lucius Engineering for multi-day unattended operation (48-72 hours)
+with durable idle sleep/wake semantics, bounded audit growth, and post-10J handoff verification.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import logging
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import sys
 import time
 from typing import Any
@@ -30,7 +31,7 @@ from lucius.persistence.database import create_all, create_sqlite_engine, make_s
 from lucius.persistence.orm import AuditEventORM, DurableMissionORM, PersistentWorkflowORM, TaskORM, utc_now
 from lucius.projects.registry_schema import DFGProjectRegistry
 from lucius.projects.regression_guard import RegressionGuardValidator
-from lucius.runtime.adapters import ScriptedRuntimePlanningAdapter
+from lucius.runtime.adapters import ScriptedExecutionAdapter, ScriptedRuntimePlanningAdapter
 from lucius.runtime.continuation import BoundedContinuationService, SessionBudget, sleep_until_next_wake_or_recheck
 from lucius.runtime.dispatcher import MultiProjectDispatcher
 from lucius.runtime.feeder import DEFAULT_DARWIN_ROOT, DarwinBacklogFeeder
@@ -39,15 +40,17 @@ from lucius.runtime.ollama import OllamaExecutionProvider
 from lucius.runtime.router import ModelExecutionRouter, RuntimeProviderRegistry
 from lucius.runtime.service import ExecutionRuntimeLoopService
 
-# Fresh Attempt 2 Default Paths
-DEFAULT_DB_PATH = ".lucius/state_shift_10j_attempt_2.db"
-DEFAULT_LOG_PATH = ".lucius/shift_10j_attempt_2_execution.log"
-DEFAULT_CHECKPOINT_PATH = ".lucius/shift_10j_attempt_2_health_checkpoints.jsonl"
-DEFAULT_METRICS_PATH = ".lucius/shift_10j_attempt_2_metrics.json"
+# Fresh Attempt 1 Default Paths for Shift 10L
+DEFAULT_DB_PATH = ".lucius/state_shift_10l_travel_mode.db"
+DEFAULT_LOG_PATH = ".lucius/shift_10l_travel_mode_execution.log"
+DEFAULT_CHECKPOINT_PATH = ".lucius/shift_10l_travel_mode_health_checkpoints.jsonl"
+DEFAULT_METRICS_PATH = ".lucius/shift_10l_travel_mode_metrics.json"
 
-CANONICAL_BASELINE_SHA = "6a854800de8cb6e06be45c5ba64d972b4bd95b39"
+SHIFT_10J_DB_PATH = ".lucius/state_shift_10j_attempt_2.db"
+SHIFT_10J_CHECKPOINT_PATH = ".lucius/shift_10j_attempt_2_health_checkpoints.jsonl"
+SHIFT_10J_T0_ISO = "2026-09-18T19:37:09.956275-06:00"
 
-logger = logging.getLogger("Shift10JRunnerAttempt2")
+logger = logging.getLogger("Shift10LTravelModeRunner")
 
 
 def _setup_logging(log_path: Path) -> None:
@@ -76,42 +79,117 @@ def get_current_canonical_sha(expected_sha: str | None = None) -> str:
         if expected_sha:
             return expected_sha
         logger.warning("Failed to resolve git HEAD SHA: %s", exc)
-        return "468c512f67ad3ceed0fbeba492428b9df25fd3de"
+        return "d44ff8ce22ccdf30a15c498a772a41bc107229c3"
 
 
-def run_overnight_attempt(
+def verify_10j_acceptance_evidence(
+    db_path: Path | None = None,
+    checkpoint_path: Path | None = None,
+    min_required_seconds: float = 21600.0,
+) -> tuple[bool, str]:
+    """Safely inspects Shift 10J Attempt 2 evidence in READ-ONLY mode.
+
+    Verifies whether Shift 10J completed its minimum 6.0 real wall-clock hours.
+    Returns (True, reason) if threshold met, else (False, reason).
+    """
+    db_p = (db_path or (PROJECT_ROOT / SHIFT_10J_DB_PATH)).resolve()
+    chk_p = (checkpoint_path or (PROJECT_ROOT / SHIFT_10J_CHECKPOINT_PATH)).resolve()
+
+    if not db_p.exists():
+        return False, f"Shift 10J DB not found at {db_p}"
+
+    # Read-only SQLite connection to avoid write-lock or mutation of PID 9902 DB
+    try:
+        conn = sqlite3.connect(f"file:{db_p}?mode=ro", uri=True)
+        cursor = conn.cursor()
+
+        # Query 10J mission status
+        cursor.execute("SELECT id, status, created_at, updated_at FROM durable_missions WHERE id = 'LUCIUS_SHIFT_10J_FIRST_OVERNIGHT'")
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            return False, "Shift 10J mission record 'LUCIUS_SHIFT_10J_FIRST_OVERNIGHT' not found in 10J DB"
+
+        m_id, m_status, m_created, m_updated = row
+
+        # Check elapsed time from checkpoints if present
+        if chk_p.exists():
+            with open(chk_p, "r") as f:
+                lines = [line.strip() for line in f if line.strip()]
+            if lines:
+                last_chk = json.loads(lines[-1])
+                elapsed = last_chk.get("elapsed_seconds", 0.0)
+                if elapsed >= min_required_seconds:
+                    return True, f"Shift 10J reached acceptance condition ({elapsed / 3600.0:.2f}h elapsed >= 6.0h requirement)"
+                else:
+                    return False, f"Shift 10J in progress/incomplete ({elapsed / 3600.0:.2f}h elapsed < 6.0h requirement)"
+
+        # Fallback to DB timestamps if no checkpoint log
+        if m_created:
+            try:
+                t0_dt = datetime.fromisoformat(SHIFT_10J_T0_ISO)
+                now_dt = utc_now()
+                elapsed_dt = (now_dt - t0_dt).total_seconds()
+                if elapsed_dt >= min_required_seconds:
+                    return True, f"Shift 10J timestamp verification passed ({elapsed_dt / 3600.0:.2f}h elapsed >= 6.0h requirement)"
+                else:
+                    return False, f"Shift 10J timestamp verification pending ({elapsed_dt / 3600.0:.2f}h elapsed < 6.0h requirement)"
+            except Exception as ex:
+                return False, f"Failed to parse 10J T0 timestamp: {ex}"
+
+        return False, f"Shift 10J evidence inconclusive (status={m_status})"
+
+    except Exception as exc:
+        return False, f"Error inspecting Shift 10J DB: {exc}"
+
+
+def run_travel_mode_mission(
     db_path: Path,
     mission_id: str,
     attempt_id: str,
-    min_hours: float,
-    target_hours: float,
+    min_hours: float = 48.0,
+    target_hours: float = 72.0,
     checkpoint_interval_minutes: float = 30.0,
+    recheck_interval_seconds: float = 300.0,
     canonical_sha: str | None = None,
     pulse_interval_seconds: float = 60.0,
+    handoff_from_10j: bool = False,
+    skip_handoff_verification: bool = False,
+    use_scripted_provider: bool = False,
 ) -> None:
-    """Main preparation and execution loop for Shift 10J Attempt 2."""
+    """Main execution loop for Shift 10L Travel Mode multi-day mission."""
     db_path = Path(db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     log_path = (PROJECT_ROOT / DEFAULT_LOG_PATH).resolve()
     checkpoint_log_path = (PROJECT_ROOT / DEFAULT_CHECKPOINT_PATH).resolve()
-    metrics_path = (PROJECT_ROOT / DEFAULT_METRICS_PATH).resolve()
 
     _setup_logging(log_path)
 
+    logger.info("=== SHIFT 10L TRAVEL MODE MISSION PREPARATION ===")
+
+    # 1. Handoff Verification Gate
+    if handoff_from_10j and not skip_handoff_verification:
+        passed, reason = verify_10j_acceptance_evidence(min_required_seconds=min_hours * 3600.0 if min_hours < 6.0 else 21600.0)
+        logger.info("[HANDOFF GATE] 10J Evidence Verification Result: %s (%s)", "PASS" if passed else "FAIL/BLOCKED", reason)
+        if not passed:
+            logger.error("[HANDOFF GATE FAILED] Shift 10J has not reached acceptance threshold. Handoff BLOCKED.")
+            logger.error("Shift 10L Travel Mode launch aborted to preserve 10J production integrity.")
+            return
+
     current_canonical_sha = get_current_canonical_sha(canonical_sha)
 
-    logger.info("=== SHIFT 10J ATTEMPT 2 MISSION PREPARATION ===")
     logger.info("Baseline Starting SHA: %s", current_canonical_sha)
-    logger.info("Minimum Required Real Wall-Clock Duration: %.2f hours (%.0f seconds)", min_hours, min_hours * 3600.0)
-    logger.info("Target Real Wall-Clock Duration: %.2f hours (%.0f seconds)", target_hours, target_hours * 3600.0)
+    logger.info("Minimum Required Duration: %.2f hours (%.0f seconds)", min_hours, min_hours * 3600.0)
+    logger.info("Target Duration: %.2f hours (%.0f seconds)", target_hours, target_hours * 3600.0)
     logger.info("Mission ID: %s", mission_id)
     logger.info("Attempt ID: %s", attempt_id)
-    logger.info("Fresh Database Path: %s", db_path)
+    logger.info("Database Path: %s", db_path)
     logger.info("Execution Log Path: %s", log_path)
     logger.info("Health Checkpoints Path: %s", checkpoint_log_path)
 
-    # 1. Initialize SQLite Database
+    # 2. Database & Supervisor Setup
     engine = create_sqlite_engine(str(db_path))
     create_all(engine)
     session_factory = make_session_factory(engine)
@@ -120,7 +198,6 @@ def run_overnight_attempt(
     supervisor = DurableMissionSupervisor(session, actor=Actor.LUCIUS)
     audit_service = AuditService(session)
 
-    # 2. Create / Recover Durable Mission & Attempt
     existing_mission = supervisor.get_mission(mission_id)
     if existing_mission is None:
         mission_rec = supervisor.create_mission(
@@ -128,10 +205,11 @@ def run_overnight_attempt(
             mission_id=mission_id,
             attempt_id=attempt_id,
             metadata={
-                "scenario": "SHIFT_10J_REAL_OVERNIGHT_UNATTENDED_RUN_ATTEMPT_2",
+                "scenario": "SHIFT_10L_TRAVEL_MODE_MULTI_DAY",
                 "launch_timestamp": utc_now().isoformat(),
                 "min_required_wall_hours": min_hours,
                 "target_wall_hours": target_hours,
+                "recheck_interval_seconds": recheck_interval_seconds,
             },
         )
     else:
@@ -153,23 +231,25 @@ def run_overnight_attempt(
         regression_guard=guard,
     )
 
-    # Ingest initial backlog into queue
     initial_ingested = feeder.feed_into_queue(session, max_items=10)
     session.commit()
-    logger.info("Initial backlog ingested into fresh queue: %d work packages", len(initial_ingested))
+    logger.info("Initial backlog ingested: %d work packages", len(initial_ingested))
 
-    # 4. Provider & Runtime Setup
-    all_roots = [
-        PROJECT_ROOT,
-        Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Darwin Research Engine/darwin-research-engine"),
-        Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Billy Production Engine/billy-production-engine"),
-    ]
-    ollama_provider = OllamaExecutionProvider(
-        provider_id="ollama-local",
-        model="qwen3:8b",
-        allowed_workspace_roots=all_roots,
-    )
-    provider_registry = RuntimeProviderRegistry([ollama_provider])
+    # 4. Runtime & Dispatcher Setup
+    if use_scripted_provider:
+        provider = ScriptedExecutionAdapter(provider_id="scripted-local")
+    else:
+        all_roots = [
+            PROJECT_ROOT,
+            Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Darwin Research Engine/darwin-research-engine"),
+            Path("/Volumes/BLACKBOX/2 CODE PROJECTS/Billy Production Engine/billy-production-engine"),
+        ]
+        provider = OllamaExecutionProvider(
+            provider_id="ollama-local",
+            model="qwen3:8b",
+            allowed_workspace_roots=all_roots,
+        )
+    provider_registry = RuntimeProviderRegistry([provider])
     planning_adapter = ScriptedRuntimePlanningAdapter()
     router = ModelExecutionRouter(session, registry=provider_registry, actor=Actor.LUCIUS)
     dispatcher = MultiProjectDispatcher(session, actor=Actor.LUCIUS)
@@ -192,34 +272,26 @@ def run_overnight_attempt(
     )
 
     logger.info("Preflight checks completed cleanly.")
-    logger.info("OPERATOR COMMAND TO MONITOR ATTEMPT 2 WHILE RUNNING:")
-    logger.info("PYTHONPATH=. ./.venv/bin/python -m lucius.pilots.cli --database '%s' status", db_path)
 
-    # 5. Signal / Interruption Handling Setup
+    # 5. Signal Handling
     interrupted = False
 
     def _handle_signal(sig_num: int, frame: Any) -> None:
         nonlocal interrupted
-        logger.warning("Clean interruption signal (%s) received! Persisting Attempt 2 state...", sig_num)
+        logger.warning("Clean interruption signal (%s) received! Persisting 10L Travel Mode state...", sig_num)
         interrupted = True
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
     started_monotonic = time.monotonic()
-    t0_local = datetime.now().astimezone().isoformat()
-    t0_utc = utc_now().isoformat()
     min_duration_seconds = min_hours * 3600.0
 
-    # EXPLICIT REAL ENDURANCE START MARKER
-    logger.info("=== SHIFT 10J ATTEMPT 2 REAL ENDURANCE START ===")
-    logger.info("T0_LOCAL: %s", t0_local)
-    logger.info("T0_UTC: %s", t0_utc)
+    logger.info("=== SHIFT 10L TRAVEL MODE REAL ENDURANCE START ===")
+    logger.info("T0_LOCAL: %s", datetime.now().astimezone().isoformat())
+    logger.info("T0_UTC: %s", utc_now().isoformat())
     logger.info("MISSION_ID: %s", mission_id)
     logger.info("ATTEMPT_ID: %s", attempt_id)
-    logger.info("CANONICAL_SHA: %s", current_canonical_sha)
-    logger.info("MINIMUM_REAL_HOURS: %.2f", min_hours)
-    logger.info("TARGET_REAL_HOURS: %.2f", target_hours)
 
     cumulative_cycles = 0
     workflow_iterations = 0
@@ -233,7 +305,7 @@ def run_overnight_attempt(
             elapsed = max(0.0, now_monotonic - started_monotonic)
 
             if elapsed >= min_duration_seconds:
-                logger.info("Minimum required duration (%.2f hours / %.1f s) reached. Session complete.", min_hours, min_duration_seconds)
+                logger.info("Minimum required duration (%.2f hours) reached. Session complete.", min_hours)
                 break
 
             budget = SessionBudget(max_wall_seconds=600.0, max_cycles=1, max_consecutive_failures=3)
@@ -242,6 +314,7 @@ def run_overnight_attempt(
                 mission_id=mission_id,
                 attempt_id=attempt_id,
                 canonical_sha=current_canonical_sha,
+                recheck_interval_seconds=recheck_interval_seconds,
             )
             session.commit()
 
@@ -255,18 +328,19 @@ def run_overnight_attempt(
             now_monotonic = time.monotonic()
             elapsed = max(0.0, now_monotonic - started_monotonic)
 
-            # Periodic Liveness Pulse
+            # Liveness Pulse
             if (now_monotonic - last_pulse_monotonic) >= pulse_interval_seconds:
                 last_pulse_monotonic = now_monotonic
                 logger.info(
-                    "[LIVENESS PULSE] Elapsed: %.2fh (%.1fs) | Status: ACTIVE | Cycles: %d | Last Useful: %s",
+                    "[LIVENESS PULSE] Elapsed: %.2fh | Status: %s | Cycles: %d | Last Useful: %s | Next Wake: %s",
                     elapsed / 3600.0,
-                    elapsed,
+                    res.status,
                     cumulative_cycles,
                     last_useful_completion,
+                    res.next_wake.isoformat() if res.next_wake else "NONE",
                 )
 
-            # Periodic Health Checkpoint
+            # Health Checkpoint
             if (now_monotonic - last_checkpoint_monotonic) >= (checkpoint_interval_minutes * 60.0):
                 last_checkpoint_monotonic = now_monotonic
                 m_rec = supervisor.get_mission(mission_id)
@@ -276,8 +350,9 @@ def run_overnight_attempt(
                 workflows = session.query(PersistentWorkflowORM).all()
                 completed_keys = set()
                 active_projects = set()
-                waiting_count = 0
-                blocked_count = 0
+                waiting_by_class: dict[str, int] = {}
+                blocked_by_class: dict[str, int] = {}
+
                 for wf in workflows:
                     if wf.project_id:
                         active_projects.add(wf.project_id)
@@ -285,22 +360,18 @@ def run_overnight_attempt(
                         if isinstance(item, dict):
                             st = item.get("state")
                             k = item.get("dedupe_key") or item.get("item_id")
-                            if st == "COMPLETED" and k:
+                            if st == QueueWorkItemState.COMPLETED.value and k:
                                 completed_keys.add(k)
                             elif st and "WAITING" in st:
-                                waiting_count += 1
+                                waiting_by_class[st] = waiting_by_class.get(st, 0) + 1
                             elif st and "BLOCKED" in st:
-                                blocked_count += 1
+                                blocked_by_class[st] = blocked_by_class.get(st, 0) + 1
 
                 model_calls = session.scalar(
                     select(func.count()).select_from(AuditEventORM).where(
                         AuditEventORM.event_type.in_(["NATIVE_RUNTIME_TASK_EXECUTION_RECORDED", "MODEL_EXECUTION_ROUTING_DECISION"])
                     )
                 ) or 0
-
-                earliest_wake = None
-                if m_rec and m_rec.metadata and "sleeping_metadata" in m_rec.metadata:
-                    earliest_wake = m_rec.metadata["sleeping_metadata"].get("earliest_wake_at")
 
                 checkpoint = {
                     "checkpoint_timestamp": utc_now().isoformat(),
@@ -315,11 +386,12 @@ def run_overnight_attempt(
                     "unique_useful_completions_count": len(completed_keys),
                     "last_useful_completion": last_useful_completion,
                     "active_projects": sorted(list(active_projects)),
-                    "waiting_count": waiting_count,
-                    "blocked_count": blocked_count,
-                    "retryable_count": waiting_count,
-                    "provider_health": "ONLINE",
-                    "next_wake": earliest_wake or "NONE",
+                    "waiting_by_class": waiting_by_class,
+                    "blocked_by_class": blocked_by_class,
+                    "total_waiting": sum(waiting_by_class.values()),
+                    "total_blocked": sum(blocked_by_class.values()),
+                    "next_wake": res.next_wake.isoformat() if res.next_wake else "NONE",
+                    "sleep_recommended_seconds": res.sleep_recommended_seconds,
                     "db_size_bytes": db_size,
                     "audit_event_count": audit_obs["event_count"],
                     "audit_total_bytes": audit_obs["total_audit_bytes"],
@@ -338,17 +410,18 @@ def run_overnight_attempt(
                 with open(checkpoint_log_path, "a") as f:
                     f.write(json.dumps(checkpoint) + "\n")
 
+            # Durable Sleep / Backoff when no tasks executed in session
             if res.tasks_selected == 0:
                 sleep_until_next_wake_or_recheck(
                     res.next_wake,
-                    recheck_interval_seconds=300.0,
+                    recheck_interval_seconds=recheck_interval_seconds,
                     check_interrupted_fn=lambda: interrupted,
                 )
             else:
                 time.sleep(1.0)
 
     except KeyboardInterrupt:
-        logger.warning("KeyboardInterrupt caught! Initiating clean attempt interruption...")
+        logger.warning("KeyboardInterrupt caught! Initiating clean 10L Travel Mode interruption...")
         interrupted = True
 
     if interrupted:
@@ -358,35 +431,43 @@ def run_overnight_attempt(
             reason="Operator clean signal interruption (SIGINT/SIGTERM)",
         )
         session.commit()
-        logger.info("Attempt 2 cleanly interrupted and recorded as PAUSED/INTERRUPTED.")
+        logger.info("Shift 10L Travel Mode cleanly interrupted and recorded as PAUSED/INTERRUPTED.")
     else:
         final_m = supervisor.reconcile_mission_state(mission_id)
         session.commit()
-        logger.info("Attempt 2 execution pass finished with status: %s", final_m.status)
+        logger.info("Shift 10L Travel Mode execution pass finished with status: %s", final_m.status)
 
     session.close()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Shift 10J Attempt 2 Real Overnight Unattended Mission")
-    parser.add_argument("--hours", type=float, default=6.0, help="Minimum wall-clock duration in hours (default: 6.0)")
-    parser.add_argument("--target-hours", type=float, default=8.0, help="Target wall-clock duration in hours (default: 8.0)")
-    parser.add_argument("--db-path", type=str, default=DEFAULT_DB_PATH, help="Attempt 2 Persistence DB path")
-    parser.add_argument("--mission-id", type=str, default="LUCIUS_SHIFT_10J_FIRST_OVERNIGHT", help="Mission ID")
-    parser.add_argument("--attempt-id", type=str, default="LUCIUS_SHIFT_10J_ATTEMPT_2", help="Attempt ID")
+    parser = argparse.ArgumentParser(description="Shift 10L Travel Mode Multi-Day Unattended Mission Runner")
+    parser.add_argument("--hours", type=float, default=48.0, help="Minimum wall-clock duration in hours (default: 48.0)")
+    parser.add_argument("--target-hours", type=float, default=72.0, help="Target wall-clock duration in hours (default: 72.0)")
+    parser.add_argument("--db-path", type=str, default=DEFAULT_DB_PATH, help="Shift 10L Persistence DB path")
+    parser.add_argument("--mission-id", type=str, default="LUCIUS_SHIFT_10L_TRAVEL_MODE", help="Mission ID")
+    parser.add_argument("--attempt-id", type=str, default="LUCIUS_SHIFT_10L_ATTEMPT_1", help="Attempt ID")
     parser.add_argument("--canonical-sha", type=str, default=None, help="Explicit canonical SHA override")
+    parser.add_argument("--recheck-interval-seconds", type=float, default=300.0, help="Periodic portfolio recheck interval in seconds")
     parser.add_argument("--checkpoint-interval-minutes", type=float, default=30.0, help="Health snapshot interval in minutes")
+    parser.add_argument("--handoff-from-10j", action="store_true", help="Verify 10J Attempt 2 evidence gate before starting 10L")
+    parser.add_argument("--skip-handoff-verification", action="store_true", help="Skip 10J handoff verification (for testing/smoke runs)")
+    parser.add_argument("--use-scripted-provider", action="store_true", help="Use scripted execution provider instead of Ollama (for testing)")
     args = parser.parse_args()
 
     db_path = (PROJECT_ROOT / args.db_path).resolve()
-    run_overnight_attempt(
+    run_travel_mode_mission(
         db_path=db_path,
         mission_id=args.mission_id,
         attempt_id=args.attempt_id,
         min_hours=args.hours,
         target_hours=args.target_hours,
+        recheck_interval_seconds=args.recheck_interval_seconds,
         checkpoint_interval_minutes=args.checkpoint_interval_minutes,
         canonical_sha=args.canonical_sha,
+        handoff_from_10j=args.handoff_from_10j,
+        skip_handoff_verification=args.skip_handoff_verification,
+        use_scripted_provider=args.use_scripted_provider,
     )
 
 

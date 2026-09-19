@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import logging
 import time
@@ -78,6 +78,8 @@ class ContinuationSessionResult:
     post_launch_external_instructions: int = 0
     cycle_records: list[ContinuationCycleRecord] = field(default_factory=list)
     project_ids_seen: list[str] = field(default_factory=list)
+    next_wake: datetime | None = None
+    sleep_recommended_seconds: float = 0.0
 
 
 class BoundedContinuationService:
@@ -112,6 +114,7 @@ class BoundedContinuationService:
         mission_id: str | None = None,
         attempt_id: str | None = None,
         canonical_sha: str | None = None,
+        recheck_interval_seconds: float = 300.0,
     ) -> ContinuationSessionResult:
         started_at = self.clock()
         result = ContinuationSessionResult()
@@ -326,6 +329,27 @@ class BoundedContinuationService:
                 else:
                     result.stop_reason = ContinuationStopReason.IDLE_NO_ELIGIBLE_WORK.value
                     result.status = "IDLE"
+
+            # Compute next_wake and sleep_recommended_seconds when no runnable work is selected
+            earliest_wake: datetime | None = None
+            if mission_id:
+                m_rec = self.supervisor.get_mission(mission_id)
+                if m_rec and m_rec.wait_records:
+                    uncleared = [w for w in m_rec.wait_records if not w.is_cleared]
+                    retry_dates = [
+                        w.retry_after if w.retry_after.tzinfo is not None else w.retry_after.replace(tzinfo=timezone.utc)
+                        for w in uncleared if w.retry_after
+                    ]
+                    if retry_dates:
+                        earliest_wake = min(retry_dates)
+
+            now_utc = utc_now()
+            if earliest_wake is not None and earliest_wake > now_utc:
+                result.next_wake = earliest_wake
+                result.sleep_recommended_seconds = max(1.0, (earliest_wake - now_utc).total_seconds())
+            else:
+                result.next_wake = now_utc + timedelta(seconds=recheck_interval_seconds)
+                result.sleep_recommended_seconds = recheck_interval_seconds
             break
 
         if mission_id:
@@ -348,3 +372,32 @@ class BoundedContinuationService:
             },
         )
         return result
+
+
+def sleep_until_next_wake_or_recheck(
+    next_wake: datetime | None = None,
+    recheck_interval_seconds: float = 300.0,
+    check_interrupted_fn: Any | None = None,
+    tick_seconds: float = 1.0,
+) -> float:
+    """Sleeps in responsive tick increments until next_wake or recheck interval expires.
+
+    Returns total seconds slept.
+    """
+    now_dt = utc_now()
+    if next_wake is not None:
+        target_wake = next_wake if next_wake.tzinfo is not None else next_wake.replace(tzinfo=timezone.utc)
+        sleep_dur = max(1.0, (target_wake - now_dt).total_seconds())
+    else:
+        sleep_dur = max(1.0, recheck_interval_seconds)
+
+    sleep_dur = min(sleep_dur, recheck_interval_seconds)
+
+    slept = 0.0
+    while slept < sleep_dur:
+        if check_interrupted_fn and check_interrupted_fn():
+            break
+        step = min(tick_seconds, sleep_dur - slept)
+        time.sleep(step)
+        slept += step
+    return slept
