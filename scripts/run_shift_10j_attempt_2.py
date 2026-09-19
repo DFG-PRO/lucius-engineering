@@ -60,6 +60,22 @@ def _setup_logging(log_path: Path) -> None:
     logger.addHandler(handler_stdout)
 
 
+def get_current_canonical_sha(expected_sha: str | None = None) -> str:
+    try:
+        import subprocess
+        head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), text=True).strip()
+        if expected_sha and head_sha != expected_sha:
+            raise ValueError(f"Canonical SHA mismatch: expected {expected_sha}, but git HEAD is {head_sha}")
+        return head_sha
+    except ValueError:
+        raise
+    except Exception as exc:
+        if expected_sha:
+            return expected_sha
+        logger.warning("Failed to resolve git HEAD SHA: %s", exc)
+        return "468c512f67ad3ceed0fbeba492428b9df25fd3de"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Shift 10J Attempt 2 Real Overnight Unattended Mission")
     parser.add_argument("--hours", type=float, default=6.0, help="Minimum wall-clock duration in hours (default: 6.0)")
@@ -67,8 +83,11 @@ def main() -> None:
     parser.add_argument("--db-path", type=str, default=DEFAULT_DB_PATH, help="Attempt 2 Persistence DB path")
     parser.add_argument("--mission-id", type=str, default="LUCIUS_SHIFT_10J_FIRST_OVERNIGHT", help="Mission ID")
     parser.add_argument("--attempt-id", type=str, default="LUCIUS_SHIFT_10J_ATTEMPT_2", help="Attempt ID")
+    parser.add_argument("--canonical-sha", type=str, default=None, help="Explicit canonical SHA override")
     parser.add_argument("--checkpoint-interval-minutes", type=float, default=30.0, help="Health snapshot interval in minutes")
     args = parser.parse_args()
+
+    current_canonical_sha = get_current_canonical_sha(args.canonical_sha)
 
     db_path = (PROJECT_ROOT / args.db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +98,7 @@ def main() -> None:
     _setup_logging(log_path)
 
     logger.info("=== SHIFT 10J ATTEMPT 2 MISSION PREPARATION ===")
-    logger.info("Baseline Starting SHA: %s", CANONICAL_BASELINE_SHA)
+    logger.info("Baseline Starting SHA: %s", current_canonical_sha)
     logger.info("Minimum Required Real Wall-Clock Duration: %.2f hours (%.0f seconds)", args.hours, args.hours * 3600.0)
     logger.info("Target Real Wall-Clock Duration: %.2f hours (%.0f seconds)", args.target_hours, args.target_hours * 3600.0)
     logger.info("Mission ID: %s", args.mission_id)
@@ -101,7 +120,7 @@ def main() -> None:
     existing_mission = supervisor.get_mission(args.mission_id)
     if existing_mission is None:
         mission_rec = supervisor.create_mission(
-            canonical_sha=CANONICAL_BASELINE_SHA,
+            canonical_sha=current_canonical_sha,
             mission_id=args.mission_id,
             attempt_id=args.attempt_id,
             metadata={
@@ -114,7 +133,7 @@ def main() -> None:
     else:
         mission_rec = supervisor.recover_mission(
             args.mission_id,
-            canonical_sha=CANONICAL_BASELINE_SHA,
+            current_canonical_sha=current_canonical_sha,
             attempt_id=args.attempt_id,
         )
     session.commit()
@@ -207,6 +226,28 @@ def run_overnight_attempt(
     supervisor = DurableMissionSupervisor(session, actor=Actor.LUCIUS)
     audit_service = AuditService(session)
 
+    current_sha = get_current_canonical_sha()
+    existing_mission = supervisor.get_mission(mission_id)
+    if existing_mission is None:
+        supervisor.create_mission(
+            canonical_sha=current_sha,
+            mission_id=mission_id,
+            attempt_id=attempt_id,
+            metadata={
+                "scenario": "SHIFT_10J_REAL_OVERNIGHT_UNATTENDED_RUN_ATTEMPT_2",
+                "launch_timestamp": utc_now().isoformat(),
+                "min_required_wall_hours": min_hours,
+                "target_wall_hours": target_hours,
+            },
+        )
+    else:
+        supervisor.recover_mission(
+            mission_id,
+            current_canonical_sha=current_sha,
+            attempt_id=attempt_id,
+        )
+    session.commit()
+
     reg_path = PROJECT_ROOT / "src" / "lucius" / "projects" / "dfg_canonical_registry.json"
     registry = DFGProjectRegistry.load_json(reg_path) if reg_path.exists() else None
     guard = RegressionGuardValidator(registry) if registry is not None else None
@@ -280,7 +321,7 @@ def run_overnight_attempt(
                 budget,
                 mission_id=mission_id,
                 attempt_id=attempt_id,
-                canonical_sha=CANONICAL_BASELINE_SHA,
+                canonical_sha=get_current_canonical_sha(),
             )
             session.commit()
 

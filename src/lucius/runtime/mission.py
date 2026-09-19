@@ -206,14 +206,22 @@ class DurableMissionSupervisor:
             return None
         return self.reconcile_mission_state(mission_id)
 
-    def recover_mission(self, mission_id: str, current_canonical_sha: str, attempt_id: str | None = None) -> DurableMissionRecord:
+    def recover_mission(
+        self,
+        mission_id: str,
+        current_canonical_sha: str | None = None,
+        attempt_id: str | None = None,
+        *,
+        canonical_sha: str | None = None,
+    ) -> DurableMissionRecord:
+        target_sha = current_canonical_sha or canonical_sha or "HEAD"
         mission_orm = self.session.query(DurableMissionORM).filter_by(id=mission_id).first()
         if mission_orm is None:
             raise ValueError(f"Durable mission '{mission_id}' not found")
 
-        if mission_orm.canonical_sha != current_canonical_sha:
+        if mission_orm.canonical_sha != target_sha:
             raise ValueError(
-                f"Canonical SHA mismatch during mission recovery: mission sha={mission_orm.canonical_sha}, current sha={current_canonical_sha}"
+                f"Canonical SHA mismatch during mission recovery: mission sha={mission_orm.canonical_sha}, current sha={target_sha}"
             )
 
         if attempt_id is None:
