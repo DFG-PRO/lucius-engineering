@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lucius.boot-recovery</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/.venv/bin/python</string>
+        <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/scripts/lucius_boot_recovery.py</string>
+        <string>--execute</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>WorkingDirectory</key>
+    <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering</string>
+    <key>StandardOutPath</key>
+    <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/.lucius/boot_recovery_launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/.lucius/boot_recovery_launchd_stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering</string>
+        <key>PATH</key>
+        <string>/Volumes/BLACKBOX/2 CODE PROJECTS/Lucius Engineering/lucius-engineering/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
