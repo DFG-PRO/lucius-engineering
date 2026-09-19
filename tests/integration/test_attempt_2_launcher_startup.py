@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 import pytest
 from sqlalchemy.orm import Session
 
@@ -84,3 +85,40 @@ def test_attempt_2_run_overnight_attempt_smoke(tmp_path: Path):
     assert (mission.metadata or {}).get("current_attempt_id") == "LUCIUS_SHIFT_10J_ATTEMPT_2_SMOKE"
     session.close()
 
+
+def test_attempt_2_launcher_non_zero_duration_liveness(tmp_path: Path):
+    """Proves that with a non-zero configured duration, the launcher does NOT exit after preflight.
+
+    Verifies:
+    1. Preparation completes and execution loop is entered.
+    2. Process remains alive for the configured real duration (e.g. ~2.0 seconds).
+    3. Elapsed wall-clock time is > 1.5s.
+    4. Clean final state is reconciled in durable mission storage.
+    """
+    db_file = tmp_path / "liveness_attempt_2.db"
+    t_start = time.monotonic()
+
+    # Configure min_hours = 0.0006 (2.16 seconds)
+    run_overnight_attempt(
+        db_path=db_file,
+        mission_id="LUCIUS_SHIFT_10J_FIRST_OVERNIGHT",
+        attempt_id="LUCIUS_SHIFT_10J_ATTEMPT_2_LIVENESS",
+        min_hours=0.0006,
+        target_hours=0.001,
+        checkpoint_interval_minutes=0.01,
+        pulse_interval_seconds=0.5,
+    )
+
+    t_elapsed = time.monotonic() - t_start
+
+    assert db_file.exists()
+    assert t_elapsed >= 1.5, f"Expected launcher to remain active for >= 1.5s, but exited in {t_elapsed:.2f}s"
+
+    engine = create_sqlite_engine(str(db_file))
+    factory = make_session_factory(engine)
+    session = factory()
+    supervisor = DurableMissionSupervisor(session, actor=Actor.LUCIUS)
+    mission = supervisor.get_mission("LUCIUS_SHIFT_10J_FIRST_OVERNIGHT")
+    assert mission is not None
+    assert (mission.metadata or {}).get("current_attempt_id") == "LUCIUS_SHIFT_10J_ATTEMPT_2_LIVENESS"
+    session.close()
