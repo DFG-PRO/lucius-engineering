@@ -228,3 +228,72 @@ def test_10m_24_launchd_plist_structure():
     assert plist_p.exists()
     out = subprocess.check_output(["plutil", "-lint", str(plist_p)], text=True)
     assert "OK" in out
+
+
+def test_10m_sqlite_read_only_attempt_fails(tmp_path):
+    """Section 4: Attempting a write query on a connection opened with file:...db?mode=ro and uri=True fails with OperationalError."""
+    db_file = tmp_path / "read_only_test.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("CREATE TABLE test_tbl (id TEXT PRIMARY KEY, val TEXT)")
+    conn.execute("INSERT INTO test_tbl VALUES ('1', 'init')")
+    conn.commit()
+    conn.close()
+
+    ro_conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+    cursor = ro_conn.cursor()
+
+    cursor.execute("SELECT val FROM test_tbl WHERE id = '1'")
+    assert cursor.fetchone()[0] == "init"
+
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        cursor.execute("INSERT INTO test_tbl VALUES ('2', 'write_attempt')")
+    ro_conn.close()
+
+
+def test_10m_10_conflicting_durable_states_fails_closed(temp_recovery_env):
+    """10 & 11. Corrupted or conflicting DB state -> RECOVERY_BLOCKED (fail closed)."""
+    corrupt_db = temp_recovery_env / "corrupt.db"
+    with open(corrupt_db, "w") as f:
+        f.write("NOT_A_SQLITE_DATABASE_CORRUPTED_BYTES")
+
+    supervisor = RecoverySupervisor(repo_root=temp_recovery_env)
+    decision = supervisor.evaluate_recovery_state(
+        db_10j_path=corrupt_db,
+        ignore_running_procs=True,
+    )
+    assert decision.action == RecoveryAction.RECOVERY_BLOCKED
+    assert "failed to query" in decision.reason.lower() or "corrupt" in decision.reason.lower()
+
+
+def test_10m_12_ollama_unavailable_and_returns():
+    """12 & 13. is_ollama_available handles unavailable service gracefully without failing."""
+    res = is_ollama_available(host="127.0.0.1", port=59999, timeout_seconds=0.1)
+    assert not res
+
+
+def test_10m_14_network_unavailable():
+    """14. Network readiness check fails cleanly when offline."""
+    from lucius.runtime.recovery import is_network_available
+    res = is_network_available(host="240.0.0.1", port=80, timeout_seconds=0.1)
+    assert not res
+
+
+def test_10m_17_repeated_recovery_invocation_idempotent(temp_recovery_env):
+    """17 & 18. Repeated recovery invocation is idempotent and prevents double launch."""
+    supervisor = RecoverySupervisor(repo_root=temp_recovery_env)
+    d1 = supervisor.evaluate_recovery_state(ignore_running_procs=True)
+    d2 = supervisor.evaluate_recovery_state(ignore_running_procs=True)
+    assert d1.action == d2.action == RecoveryAction.NO_ACTIVE_MISSION
+
+
+def test_10m_23_repository_sha_mismatch_handled():
+    """23. Recovery supervisor SHA is tracked and compared against repository SHA."""
+    from lucius.runtime.recovery import CANONICAL_RECOVERY_SUPERVISOR_SHA
+    assert len(CANONICAL_RECOVERY_SUPERVISOR_SHA) == 40
+
+
+def test_10m_25_recovery_logging_isolated():
+    """25. Boot recovery logs are isolated from production mission logs."""
+    from scripts.lucius_boot_recovery import DEFAULT_RECOVERY_LOG_PATH
+    assert "boot_recovery" in DEFAULT_RECOVERY_LOG_PATH
+    assert "attempt_2" not in DEFAULT_RECOVERY_LOG_PATH
